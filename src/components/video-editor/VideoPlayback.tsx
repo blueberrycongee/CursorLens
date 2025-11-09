@@ -23,6 +23,7 @@ interface VideoPlaybackProps {
   onSelectZoom: (id: string | null) => void;
   onZoomFocusChange: (id: string, focus: ZoomFocus) => void;
   isPlaying: boolean;
+  showShadow?: boolean;
 }
 
 export interface VideoPlaybackRef {
@@ -44,6 +45,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
   onSelectZoom,
   onZoomFocusChange,
   isPlaying,
+  showShadow,
 }, ref) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -528,7 +530,15 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
       className="relative aspect-video rounded-sm overflow-hidden bg-cover bg-center"
       style={{ ...backgroundStyle, width: '100%' }}
     >
-      <div ref={containerRef} className="absolute inset-0" />
+      <div
+        ref={containerRef}
+        className="absolute inset-0"
+        style={{
+          filter: showShadow
+            ? 'drop-shadow(0 8px 32px rgba(0,0,0,0.55)) drop-shadow(0 2px 8px rgba(0,0,0,0.25))'
+            : 'none',
+        }}
+      />
       <div
         ref={overlayRef}
         className="absolute inset-0 select-none"

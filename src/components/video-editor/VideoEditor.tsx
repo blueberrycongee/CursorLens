@@ -27,6 +27,7 @@ export default function VideoEditor() {
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [wallpaper, setWallpaper] = useState<string>(WALLPAPER_PATHS[0]);
+  const [showShadow, setShowShadow] = useState(false);
   const [zoomRegions, setZoomRegions] = useState<ZoomRegion[]>([]);
   const [selectedZoomId, setSelectedZoomId] = useState<string | null>(null);
 
@@ -185,6 +186,7 @@ export default function VideoEditor() {
                   onSelectZoom={handleSelectZoom}
                   onZoomFocusChange={handleZoomFocusChange}
                   isPlaying={isPlaying}
+                  showShadow={showShadow}
                 />
               </div>
               <PlaybackControls
@@ -216,6 +218,8 @@ export default function VideoEditor() {
         onZoomDepthChange={handleZoomDepthChange}
         selectedZoomId={selectedZoomId}
         onZoomDelete={handleZoomDelete}
+        showShadow={showShadow}
+        onShadowChange={setShowShadow}
       />
     </div>
   );

@@ -32,6 +32,8 @@ interface SettingsPanelProps {
   onZoomDepthChange?: (depth: ZoomDepth) => void;
   selectedZoomId?: string | null;
   onZoomDelete?: (id: string) => void;
+  showShadow?: boolean;
+  onShadowChange?: (showShadow: boolean) => void;
 }
 
 const ZOOM_DEPTH_OPTIONS: Array<{ depth: ZoomDepth; label: string }> = [
@@ -42,7 +44,7 @@ const ZOOM_DEPTH_OPTIONS: Array<{ depth: ZoomDepth; label: string }> = [
   { depth: 5, label: "3.5×" },
 ];
 
-export function SettingsPanel({ selected, onWallpaperChange, selectedZoomDepth, onZoomDepthChange, selectedZoomId, onZoomDelete }: SettingsPanelProps) {
+export function SettingsPanel({ selected, onWallpaperChange, selectedZoomDepth, onZoomDepthChange, selectedZoomId, onZoomDelete, showShadow, onShadowChange }: SettingsPanelProps) {
   const [hsva, setHsva] = useState({ h: 0, s: 0, v: 68, a: 1 });
   const [gradient, setGradient] = useState<string>(GRADIENTS[0]);
 
@@ -106,7 +108,10 @@ export function SettingsPanel({ selected, onWallpaperChange, selectedZoomDepth, 
       </div>
       <div className="mb-6">
         <div className="flex items-center gap-2 mb-4">
-          <Switch/>
+          <Switch
+            checked={showShadow}
+            onCheckedChange={onShadowChange}
+          />
           <div className="text-sm">Shadow</div>
         </div>
       </div>
