@@ -97,7 +97,8 @@ export function createSourceSelectorWindow(): BrowserWindow {
     frame: false,
     resizable: false,
     alwaysOnTop: true,
-    backgroundColor: '#ffffff',
+    transparent: true,
+    backgroundColor: '#00000000',
     webPreferences: {
       preload: path.join(__dirname, 'preload.mjs'),
       nodeIntegration: false,

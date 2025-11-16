@@ -3,6 +3,7 @@ import { Button } from "../ui/button";
 import { MdCheck } from "react-icons/md";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { Card } from "../ui/card";
+import styles from "./SourceSelector.module.css";
 
 interface DesktopSource {
   id: string;
@@ -57,100 +58,102 @@ export function SourceSelector() {
 
   if (loading) {
     return (
-      <div className="h-full flex items-center justify-center bg-white">
+      <div className={`h-full flex items-center justify-center ${styles.glassContainer}`} style={{ minHeight: '100vh' }}>
         <div className="text-center">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-600 mx-auto mb-3" />
-          <p className="text-sm text-gray-600">Loading sources...</p>
+          <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-zinc-600 mx-auto mb-2" />
+          <p className="text-xs text-zinc-300">Loading sources...</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen flex flex-col bg-white">
-      <div className="flex-1 flex flex-col p-4 bg-white">
+    <div className={`min-h-screen flex flex-col items-center justify-center ${styles.glassContainer}`}>
+      <div className="flex-1 flex flex-col w-full max-w-xl" style={{ padding: 0 }}>
         <Tabs defaultValue="screens">
-          <TabsList className="grid grid-cols-2 mb-4 bg-blue-50 rounded-full">
-            <TabsTrigger value="screens" className="data-[state=active]:bg-blue-600 data-[state=active]:text-white text-blue-700 rounded-full">Screens</TabsTrigger>
-            <TabsTrigger value="windows" className="data-[state=active]:bg-blue-600 data-[state=active]:text-white text-blue-700 rounded-full">Windows</TabsTrigger>
+          <TabsList className="grid grid-cols-2 mb-3 bg-zinc-900/40 rounded-full">
+            <TabsTrigger value="screens" className="data-[state=active]:bg-violet-700 data-[state=active]:text-white text-zinc-200 rounded-full text-xs py-1">Screens</TabsTrigger>
+            <TabsTrigger value="windows" className="data-[state=active]:bg-violet-700 data-[state=active]:text-white text-zinc-200 rounded-full text-xs py-1">Windows</TabsTrigger>
           </TabsList>
-          <div className="h-64">
+            <div className="h-60 flex flex-col justify-stretch">
             <TabsContent value="screens" className="h-full">
-              <div className="grid grid-cols-2 gap-3 h-full overflow-y-auto pr-2">
+              <div className="grid grid-cols-2 gap-2 h-full overflow-y-auto pr-1 relative">
                 {screenSources.map(source => (
                   <Card
                     key={source.id}
-                    className={`cursor-pointer transition hover:shadow-lg h-fit p-3 scale-90 ${selectedSource?.id === source.id ? 'ring-2 ring-blue-600 bg-blue-50 z-10' : 'hover:ring-1 hover:ring-blue-200 bg-white border border-blue-100'}`}
-                    style={{ margin: 12, width: '80%', maxWidth: 320 }}
+                    className={`${styles.sourceCard} ${selectedSource?.id === source.id ? styles.selected : ''} cursor-pointer h-fit p-2 scale-95`}
+                    style={{ margin: 8, width: '90%', maxWidth: 220 }}
                     onClick={() => handleSourceSelect(source)}
                   >
-                    <div className="p-2">
-                      <div className="relative mb-2">
+                    <div className="p-1">
+                      <div className="relative mb-1">
                         <img
                           src={source.thumbnail || ''}
                           alt={source.name}
-                          className="w-full aspect-video object-cover rounded border border-gray-300"
+                          className="w-full aspect-video object-cover rounded border border-zinc-800"
                         />
                         {selectedSource?.id === source.id && (
                           <div className="absolute -top-1 -right-1">
-                            <div className="w-5 h-5 bg-blue-600 rounded-full flex items-center justify-center shadow-md">
-                              <MdCheck className="w-3 h-3 text-white" />
+                            <div className="w-4 h-4 bg-blue-600 rounded-full flex items-center justify-center shadow-md">
+                              <MdCheck className={styles.icon} />
                             </div>
                           </div>
                         )}
                       </div>
-                      <div className="text-xs font-medium text-blue-700 truncate">{source.name}</div>
+                      <div className={styles.name + " truncate"}>{source.name}</div>
                     </div>
                   </Card>
                 ))}
+                {/* Removed scroll hint gradient for clean look */}
               </div>
             </TabsContent>
             <TabsContent value="windows" className="h-full">
-              <div className="grid grid-cols-2 gap-3 h-full overflow-y-auto pr-2">
+              <div className="grid grid-cols-2 gap-2 h-full overflow-y-auto pr-1 relative">
                 {windowSources.map(source => (
                   <Card
                     key={source.id}
-                    className={`cursor-pointer transition hover:shadow-lg h-fit p-3 scale-90 ${selectedSource?.id === source.id ? 'ring-2 ring-blue-600 bg-blue-50 z-10' : 'hover:ring-1 hover:ring-blue-200 bg-white border border-blue-100'}`}
-                    style={{ margin: 12, width: '80%', maxWidth: 320 }}
+                    className={`${styles.sourceCard} ${selectedSource?.id === source.id ? styles.selected : ''} cursor-pointer h-fit p-2 scale-95`}
+                    style={{ margin: 8, width: '90%', maxWidth: 220 }}
                     onClick={() => handleSourceSelect(source)}
                   >
-                    <div className="p-2">
-                      <div className="relative mb-2">
+                    <div className="p-1">
+                      <div className="relative mb-1">
                         <img
                           src={source.thumbnail || ''}
                           alt={source.name}
-                          className="w-full aspect-video object-cover rounded border border-gray-300"
+                          className="w-full aspect-video object-cover rounded border border-gray-700"
                         />
                         {selectedSource?.id === source.id && (
                           <div className="absolute -top-1 -right-1">
-                            <div className="w-5 h-5 bg-blue-600 rounded-full flex items-center justify-center shadow-md">
-                              <MdCheck className="w-3 h-3 text-white" />
+                            <div className="w-4 h-4 bg-blue-600 rounded-full flex items-center justify-center shadow-md">
+                              <MdCheck className={styles.icon} />
                             </div>
                           </div>
                         )}
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1">
                         {source.appIcon && (
                           <img
                             src={source.appIcon}
                             alt="App icon"
-                            className="w-3 h-3 flex-shrink-0"
+                            className={styles.icon + " flex-shrink-0"}
                           />
                         )}
-                        <div className="text-xs font-medium text-blue-700 truncate">{source.name}</div>
+                        <div className={styles.name + " truncate"}>{source.name}</div>
                       </div>
                     </div>
                   </Card>
                 ))}
+                {/* Removed scroll hint gradient for clean look */}
               </div>
             </TabsContent>
           </div>
         </Tabs>
       </div>
-      <div className="border-t border-blue-100 p-3">
-        <div className="flex justify-center gap-3">
-          <Button variant="outline" onClick={() => window.close()} className="px-6 py-1.5 text-sm bg-blue-600 border-blue-600 text-white hover:bg-blue-700">Cancel</Button>
-          <Button onClick={handleShare} disabled={!selectedSource} className="px-6 py-1.5 text-sm bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:bg-blue-300">Share</Button>
+      <div className="border-t border-zinc-800 p-2 w-full max-w-xl">
+        <div className="flex justify-center gap-2">
+          <Button variant="outline" onClick={() => window.close()} className="px-4 py-1 text-xs bg-zinc-800 border-zinc-700 text-zinc-200 hover:bg-zinc-700">Cancel</Button>
+          <Button onClick={handleShare} disabled={!selectedSource} className="px-4 py-1 text-xs bg-violet-700 text-white hover:bg-violet-800 disabled:opacity-50 disabled:bg-zinc-700">Share</Button>
         </div>
       </div>
     </div>
