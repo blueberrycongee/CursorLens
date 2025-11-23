@@ -24,7 +24,7 @@
     "clsx": "^2.1.1",
     "dnd-timeline": "^2.2.0",
     "lucide-react": "^0.545.0",
-    "mp4-muxer": "^5.2.2",
+    "mediabunny": "^1.25.1",
     "mp4box": "^2.2.0",
     "pixi.js": "^8.14.0",
     "react": "^18.2.0",

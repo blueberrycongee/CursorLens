@@ -21,12 +21,14 @@ export class VideoExporter {
   private encoder: VideoEncoder | null = null;
   private muxer: VideoMuxer | null = null;
   private cancelled = false;
-  private encodedChunks: EncodedVideoChunk[] = [];
   private encodeQueue = 0;
   // Increased queue size for better throughput with hardware encoding
   private readonly MAX_ENCODE_QUEUE = 120;
   private videoDescription: Uint8Array | undefined;
   private videoColorSpace: VideoColorSpaceInit | undefined;
+  // Track muxing promises for parallel processing
+  private muxingPromises: Promise<void>[] = [];
+  private chunkCount = 0;
 
   constructor(config: VideoExporterConfig) {
     this.config = config;
@@ -69,72 +71,67 @@ export class VideoExporter {
         throw new Error('Video element not available');
       }
 
-      // Process frames with optimized seeking
+      // Process frames continuously without batching delays
       const frameDuration = 1_000_000 / this.config.frameRate; // in microseconds
       let frameIndex = 0;
       const timeStep = 1 / this.config.frameRate;
-      const BATCH_SIZE = 5; // Process frames in batches for better throughput
 
       while (frameIndex < totalFrames && !this.cancelled) {
-        // Process a batch of frames
-        const batchEnd = Math.min(frameIndex + BATCH_SIZE, totalFrames);
-        
-        for (let i = frameIndex; i < batchEnd && !this.cancelled; i++) {
-          const timestamp = i * frameDuration;
-          const videoTime = i * timeStep;
+        const i = frameIndex;
+        const timestamp = i * frameDuration;
+        const videoTime = i * timeStep;
           
-          // Seek if needed or wait for first frame to be ready
-          const needsSeek = Math.abs(videoElement.currentTime - videoTime) > 0.001;
-          if (needsSeek || i === 0) {
-            if (needsSeek) {
-              videoElement.currentTime = videoTime;
-            }
-            // Wait for video frame to be ready
-            await new Promise<void>(resolve => {
-              videoElement.requestVideoFrameCallback(() => resolve());
-            });
+        // Seek if needed or wait for first frame to be ready
+        const needsSeek = Math.abs(videoElement.currentTime - videoTime) > 0.001;
+        if (needsSeek || i === 0) {
+          if (needsSeek) {
+            videoElement.currentTime = videoTime;
           }
-
-          // Create a VideoFrame from the video element (on GPU!)
-          const videoFrame = new VideoFrame(videoElement, {
-            timestamp,
+          // Wait for video frame to be ready
+          await new Promise<void>(resolve => {
+            videoElement.requestVideoFrameCallback(() => resolve());
           });
-
-          // Render the frame with all effects
-          await this.renderer!.renderFrame(videoFrame, timestamp);
-          
-          videoFrame.close();
-
-          const canvas = this.renderer!.getCanvas();
-
-          // Create VideoFrame from canvas on GPU without reading pixels
-          // @ts-ignore - colorSpace not in TypeScript definitions but works at runtime
-          const exportFrame = new VideoFrame(canvas, {
-            timestamp,
-            duration: frameDuration,
-            colorSpace: {
-              primaries: 'bt709',
-              transfer: 'iec61966-2-1',
-              matrix: 'rgb',
-              fullRange: true,
-            },
-          });
-
-          if (this.encoder && this.encoder.state === 'configured') {
-            this.encodeQueue++;
-            this.encoder.encode(exportFrame, { keyFrame: i % 150 === 0 });
-          }
-          exportFrame.close();
         }
+
+        // Create a VideoFrame from the video element (on GPU!)
+        const videoFrame = new VideoFrame(videoElement, {
+          timestamp,
+        });
+
+        // Render the frame with all effects
+        await this.renderer!.renderFrame(videoFrame, timestamp);
         
-        // Wait for encoder queue once per batch
+        videoFrame.close();
+
+        const canvas = this.renderer!.getCanvas();
+
+        // Create VideoFrame from canvas on GPU without reading pixels
+        // @ts-ignore - colorSpace not in TypeScript definitions but works at runtime
+        const exportFrame = new VideoFrame(canvas, {
+          timestamp,
+          duration: frameDuration,
+          colorSpace: {
+            primaries: 'bt709',
+            transfer: 'iec61966-2-1',
+            matrix: 'rgb',
+            fullRange: true,
+          },
+        });
+
+        // Check encoder queue before encoding to keep it full
         while (this.encodeQueue >= this.MAX_ENCODE_QUEUE && !this.cancelled) {
           await new Promise(resolve => setTimeout(resolve, 0));
         }
 
-        frameIndex = batchEnd;
+        if (this.encoder && this.encoder.state === 'configured') {
+          this.encodeQueue++;
+          this.encoder.encode(exportFrame, { keyFrame: i % 150 === 0 });
+        }
+        exportFrame.close();
 
-        // Batch progress updates to reduce callback overhead
+        frameIndex++;
+
+        // Update progress
         if (this.config.onProgress) {
           this.config.onProgress({
             currentFrame: frameIndex,
@@ -154,35 +151,11 @@ export class VideoExporter {
         await this.encoder.flush();
       }
 
-      // Add all chunks to muxer with metadata
-      for (let i = 0; i < this.encodedChunks.length; i++) {
-        const chunk = this.encodedChunks[i];
-        const meta: EncodedVideoChunkMetadata = {};
-        
-        // Add decoder config for the first chunk
-        if (i === 0 && this.videoDescription) {
-          // Use captured colorSpace from encoder or fallback to default sRGB colorspace
-          const colorSpace = this.videoColorSpace || {
-            primaries: 'bt709',
-            transfer: 'iec61966-2-1',
-            matrix: 'rgb',
-            fullRange: true,
-          };
-          
-          meta.decoderConfig = {
-            codec: this.config.codec || 'avc1.640033',
-            codedWidth: this.config.width,
-            codedHeight: this.config.height,
-            description: this.videoDescription,
-            colorSpace,
-          };
-        }
-        
-        this.muxer!.addVideoChunk(chunk, meta);
-      }
+      // Wait for all muxing operations to complete
+      await Promise.all(this.muxingPromises);
 
       // Finalize muxer and get output blob
-      const blob = this.muxer!.finalize();
+      const blob = await this.muxer!.finalize();
 
       return { success: true, blob };
     } catch (error) {
@@ -197,8 +170,9 @@ export class VideoExporter {
   }
 
   private async initializeEncoder(): Promise<void> {
-    this.encodedChunks = [];
     this.encodeQueue = 0;
+    this.muxingPromises = [];
+    this.chunkCount = 0;
     let videoDescription: Uint8Array | undefined;
 
     this.encoder = new VideoEncoder({
@@ -213,7 +187,42 @@ export class VideoExporter {
         if (meta?.decoderConfig?.colorSpace && !this.videoColorSpace) {
           this.videoColorSpace = meta.decoderConfig.colorSpace;
         }
-        this.encodedChunks.push(chunk);
+        
+        // Stream chunk to muxer immediately (parallel processing)
+        const isFirstChunk = this.chunkCount === 0;
+        this.chunkCount++;
+        
+        const muxingPromise = (async () => {
+          try {
+            if (isFirstChunk && this.videoDescription) {
+              // Add decoder config for the first chunk
+              const colorSpace = this.videoColorSpace || {
+                primaries: 'bt709',
+                transfer: 'iec61966-2-1',
+                matrix: 'rgb',
+                fullRange: true,
+              };
+              
+              const metadata: EncodedVideoChunkMetadata = {
+                decoderConfig: {
+                  codec: this.config.codec || 'avc1.640033',
+                  codedWidth: this.config.width,
+                  codedHeight: this.config.height,
+                  description: this.videoDescription,
+                  colorSpace,
+                },
+              };
+              
+              await this.muxer!.addVideoChunk(chunk, metadata);
+            } else {
+              await this.muxer!.addVideoChunk(chunk, meta);
+            }
+          } catch (error) {
+            console.error('Muxing error:', error);
+          }
+        })();
+        
+        this.muxingPromises.push(muxingPromise);
         this.encodeQueue--;
       },
       error: (error) => {
@@ -271,8 +280,9 @@ export class VideoExporter {
     }
 
     this.muxer = null;
-    this.encodedChunks = [];
     this.encodeQueue = 0;
+    this.muxingPromises = [];
+    this.chunkCount = 0;
     this.videoDescription = undefined;
     this.videoColorSpace = undefined;
   }

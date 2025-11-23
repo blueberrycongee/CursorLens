@@ -1,31 +1,20 @@
 import type { ExportConfig } from './types';
-
-interface MP4MuxerOptions {
-  target: any; // ArrayBufferTarget instance
-  video: {
-    codec: string;
-    width: number;
-    height: number;
-  };
-  audio?: {
-    codec: string;
-    numberOfChannels: number;
-    sampleRate: number;
-  };
-  fastStart?: 'in-memory' | 'fragmented';
-}
-
-interface Muxer {
-  addVideoChunk(chunk: EncodedVideoChunk, meta?: EncodedVideoChunkMetadata): void;
-  addAudioChunk(chunk: EncodedAudioChunk, meta?: EncodedAudioChunkMetadata): void;
-  finalize(): void;
-  target?: any;
-}
+import { 
+  Output, 
+  Mp4OutputFormat, 
+  BufferTarget, 
+  EncodedVideoPacketSource, 
+  EncodedAudioPacketSource,
+  EncodedPacket 
+} from 'mediabunny';
 
 export class VideoMuxer {
-  private muxer: Muxer | null = null;
-  private config: ExportConfig;
+  private output: Output | null = null;
+  private videoSource: EncodedVideoPacketSource | null = null;
+  private audioSource: EncodedAudioPacketSource | null = null;
   private hasAudio: boolean;
+  private target: BufferTarget | null = null;
+  private config: ExportConfig;
 
   constructor(config: ExportConfig, hasAudio = false) {
     this.config = config;
@@ -33,57 +22,68 @@ export class VideoMuxer {
   }
 
   async initialize(): Promise<void> {
-    const MP4MuxerModule = await import('mp4-muxer');
-    const MP4MuxerClass = (MP4MuxerModule as any).Muxer || MP4MuxerModule.default;
-    const ArrayBufferTarget = (MP4MuxerModule as any).ArrayBufferTarget;
+    // Create the buffer target
+    this.target = new BufferTarget();
     
-    const target = new ArrayBufferTarget();
-    
-    const options: MP4MuxerOptions = {
-      target,
-      video: {
-        codec: 'avc',
-        width: this.config.width,
-        height: this.config.height,
-      },
-      fastStart: 'in-memory',
-    };
+    this.output = new Output({
+      format: new Mp4OutputFormat({
+        fastStart: 'in-memory',
+      }),
+      target: this.target,
+    });
 
+    // Create video source - codec will be deduced from metadata
+    this.videoSource = new EncodedVideoPacketSource('avc');
+    this.output.addVideoTrack(this.videoSource, {
+      frameRate: this.config.frameRate,
+    });
+
+    // Create audio source if needed
     if (this.hasAudio) {
-      options.audio = {
-        codec: 'opus',
-        numberOfChannels: 2,
-        sampleRate: 48000,
-      };
+      this.audioSource = new EncodedAudioPacketSource('opus');
+      this.output.addAudioTrack(this.audioSource);
     }
 
-    this.muxer = new MP4MuxerClass(options) as Muxer;
+    // Start the output to begin accepting media data
+    await this.output.start();
   }
 
-  addVideoChunk(chunk: EncodedVideoChunk, meta?: EncodedVideoChunkMetadata): void {
-    if (!this.muxer) {
+  async addVideoChunk(chunk: EncodedVideoChunk, meta?: EncodedVideoChunkMetadata): Promise<void> {
+    if (!this.videoSource) {
       throw new Error('Muxer not initialized');
     }
-    this.muxer.addVideoChunk(chunk, meta);
+    
+    // Convert WebCodecs chunk to Mediabunny packet
+    const packet = EncodedPacket.fromEncodedChunk(chunk);
+    
+    // Add metadata with the first chunk
+    await this.videoSource.add(packet, meta);
   }
 
-  addAudioChunk(chunk: EncodedAudioChunk, meta?: EncodedAudioChunkMetadata): void {
-    if (!this.muxer) {
-      throw new Error('Muxer not initialized');
-    }
-    if (!this.hasAudio) {
+  async addAudioChunk(chunk: EncodedAudioChunk, meta?: EncodedAudioChunkMetadata): Promise<void> {
+    if (!this.audioSource) {
       throw new Error('Audio not configured for this muxer');
     }
-    this.muxer.addAudioChunk(chunk, meta);
+    
+    // Convert WebCodecs chunk to Mediabunny packet
+    const packet = EncodedPacket.fromEncodedChunk(chunk);
+    
+    // Add metadata with the first chunk
+    await this.audioSource.add(packet, meta);
   }
 
-  finalize(): Blob {
-    if (!this.muxer) {
+  async finalize(): Promise<Blob> {
+    if (!this.output || !this.target) {
       throw new Error('Muxer not initialized');
     }
     
-    this.muxer.finalize();
-    const buffer = this.muxer.target.buffer;
+    await this.output.finalize();
+    const buffer = this.target.buffer;
+    
+    if (!buffer) {
+      throw new Error('Failed to finalize output');
+    }
+    
     return new Blob([buffer], { type: 'video/mp4' });
   }
 }
