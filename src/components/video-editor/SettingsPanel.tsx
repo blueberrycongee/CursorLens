@@ -7,8 +7,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { useState } from "react";
 import Block from '@uiw/react-color-block';
-import { Trash2, Download, Crop, X, Bug, Upload } from "lucide-react";
-import { GiHearts } from "react-icons/gi";
+import { Trash2, Download, Crop, X, Bug, Upload, Star } from "lucide-react";
 import { toast } from "sonner";
 import type { ZoomDepth, CropRegion, AnnotationRegion, AnnotationType } from "./types";
 import { CropControl } from "./CropControl";
@@ -602,7 +601,7 @@ export function SettingsPanel({
           <button
             type="button"
             onClick={() => {
-              window.electronAPI?.openExternalUrl('https://github.com/siddharthvaddem/openscreen/issues/new');
+              window.electronAPI?.openExternalUrl('https://github.com/siddharthvaddem/openscreen/issues/new/choose');
             }}
             className="flex-1 flex items-center justify-center gap-2 text-xs py-2"
           >
@@ -612,12 +611,12 @@ export function SettingsPanel({
           <button
             type="button"
             onClick={() => {
-              window.electronAPI?.openExternalUrl('https://buymeacoffee.com/siddharthvaddem');
+              window.electronAPI?.openExternalUrl('https://github.com/siddharthvaddem/openscreen');
             }}
             className="flex-1 flex items-center justify-center gap-2 text-xs"
           >
-            <GiHearts className="w-3 h-3 text-red-500" />
-            <span>Support my work</span>
+            <Star className="w-3 h-3 text-yellow-400" />
+            <span>Star on GitHub</span>
           </button>
         </div>
       </div>
