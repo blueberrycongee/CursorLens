@@ -183,7 +183,7 @@ local.settings.json
 # KIRO AI ASSISTANT
 # ============================================================================
 # Settings contain personal API tokens - NEVER commit
-.kiro
+.kiro/settings/
 
 # Keep specs, steering, and hooks (shared with team)
 # .kiro/specs/ - COMMIT
