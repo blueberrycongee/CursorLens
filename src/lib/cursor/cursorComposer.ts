@@ -12,6 +12,7 @@ import {
 } from './types';
 
 const CLICK_PULSE_MS = 420;
+const CURSOR_GLYPH_HOTSPOT = { x: -4, y: -8 };
 
 function clamp01(value: number): number {
   if (!Number.isFinite(value)) return 0;
@@ -331,11 +332,14 @@ export function drawCompositedCursor(
     ctx.shadowBlur = 10 * scale;
     ctx.shadowOffsetX = 0;
     ctx.shadowOffsetY = 2 * scale;
+    // Align OS hotspot with synthetic glyph tip to avoid visible drift versus source cursor.
+    ctx.translate(-CURSOR_GLYPH_HOTSPOT.x * scale, -CURSOR_GLYPH_HOTSPOT.y * scale);
     ctx.scale(scale, scale);
     drawCursorGlyph(ctx);
     ctx.restore();
   } else {
     ctx.save();
+    ctx.translate(-CURSOR_GLYPH_HOTSPOT.x * scale, -CURSOR_GLYPH_HOTSPOT.y * scale);
     ctx.scale(scale, scale);
     drawCursorGlyph(ctx);
     ctx.restore();

@@ -4,6 +4,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { RECORDINGS_DIR } from '../main'
 import {
+  isPointInsideBounds,
   normalizePointToBounds,
   resolveCursorBoundsForSource,
   type CaptureBounds,
@@ -87,16 +88,18 @@ function pushCursorSample(
 ): void {
   const timeMs = Math.max(0, now - tracker.startedAt)
   const normalized = normalizePointToBounds(point, tracker.bounds)
+  const inCaptureBounds = isPointInsideBounds(point, tracker.bounds, 0.5)
+  const visible = tracker.boundsMode === 'virtual-desktop' ? true : inCaptureBounds
 
   tracker.samples.push({
     timeMs,
     x: normalized.x,
     y: normalized.y,
-    click,
-    visible: true,
+    click: click && visible,
+    visible,
   })
 
-  if (click) {
+  if (click && visible) {
     tracker.clickCount += 1
   }
 
@@ -344,7 +347,8 @@ export function registerIpcHandlers(
     const initialPoint = screen.getCursorScreenPoint()
     const sourceRef = normalizeSourceRef(options?.source) ?? normalizeSourceRef(selectedSource)
     const captureSize = normalizeCaptureSize(options?.captureSize)
-    const displaySnapshot = screen.getAllDisplays().map((display) => ({
+    const displayObjects = screen.getAllDisplays()
+    const displaySnapshot = displayObjects.map((display) => ({
       id: display.id,
       bounds: display.bounds,
     }))
@@ -353,6 +357,28 @@ export function registerIpcHandlers(
       source: sourceRef,
       pointHint: initialPoint,
     })
+    let captureBounds = initialResolution.bounds
+    let captureMode = initialResolution.mode
+    let captureDisplayId = initialResolution.displayId
+
+    if (sourceRef?.id?.startsWith('window:') && captureSize) {
+      const displayForScale = displayObjects.find((display) => String(display.id) === initialResolution.displayId)
+        ?? screen.getDisplayNearestPoint(initialPoint)
+      const displayBounds = displayForScale?.bounds ?? initialResolution.bounds
+      const scaleFactor = Math.max(1, Number(displayForScale?.scaleFactor) || 1)
+      const width = Math.max(1, captureSize.width / scaleFactor)
+      const height = Math.max(1, captureSize.height / scaleFactor)
+      const normalizedOnDisplay = normalizePointToBounds(initialPoint, displayBounds)
+
+      captureBounds = {
+        x: initialPoint.x - normalizedOnDisplay.x * width,
+        y: initialPoint.y - normalizedOnDisplay.y * height,
+        width,
+        height,
+      }
+      captureMode = 'source-display'
+      captureDisplayId = displayForScale ? String(displayForScale.id) : initialResolution.displayId
+    }
 
     const tracker: CursorTrackerRuntime = {
       timer: globalThis.setInterval(() => {
@@ -360,19 +386,6 @@ export function registerIpcHandlers(
 
         const now = Date.now()
         const point = screen.getCursorScreenPoint()
-        if (cursorTracker.sourceRef?.id?.startsWith('window:')) {
-          const dynamicResolution = resolveCursorBoundsForSource({
-            displays: screen.getAllDisplays().map((display) => ({
-              id: display.id,
-              bounds: display.bounds,
-            })),
-            source: cursorTracker.sourceRef,
-            pointHint: point,
-          })
-          cursorTracker.bounds = dynamicResolution.bounds
-          cursorTracker.boundsMode = dynamicResolution.mode
-          cursorTracker.displayId = dynamicResolution.displayId
-        }
 
         if (!cursorTracker.lastPoint) {
           cursorTracker.lastPoint = { x: point.x, y: point.y }
@@ -415,9 +428,9 @@ export function registerIpcHandlers(
       }, 16),
       startedAt,
       samples: [],
-      bounds: initialResolution.bounds,
-      boundsMode: initialResolution.mode,
-      displayId: initialResolution.displayId,
+      bounds: captureBounds,
+      boundsMode: captureMode,
+      displayId: captureDisplayId,
       sourceRef,
       captureSize,
       lastPoint: null,

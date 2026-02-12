@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  isPointInsideBounds,
   normalizePointToBounds,
   resolveCursorBoundsForSource,
   resolveVirtualDesktopBounds,
@@ -65,5 +66,12 @@ describe('captureSpace', () => {
     );
 
     expect(normalized).toEqual({ x: 0, y: 1 });
+  });
+
+  it('checks if point is inside bounds with optional padding', () => {
+    const bounds = { x: 100, y: 50, width: 300, height: 200 };
+    expect(isPointInsideBounds({ x: 120, y: 80 }, bounds)).toBe(true);
+    expect(isPointInsideBounds({ x: 420, y: 80 }, bounds)).toBe(false);
+    expect(isPointInsideBounds({ x: 420, y: 80 }, bounds, 25)).toBe(true);
   });
 });

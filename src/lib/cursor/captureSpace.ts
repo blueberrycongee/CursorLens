@@ -181,3 +181,17 @@ export function normalizePointToBounds(point: CapturePoint, bounds: CaptureBound
     y: clamp01((point.y - safeBounds.y) / safeBounds.height),
   };
 }
+
+export function isPointInsideBounds(
+  point: CapturePoint,
+  bounds: CaptureBounds,
+  padding = 0,
+): boolean {
+  const safeBounds = ensureBounds(bounds);
+  return (
+    point.x >= safeBounds.x - padding
+    && point.x <= safeBounds.x + safeBounds.width + padding
+    && point.y >= safeBounds.y - padding
+    && point.y <= safeBounds.y + safeBounds.height + padding
+  );
+}

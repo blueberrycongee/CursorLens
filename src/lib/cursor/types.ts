@@ -66,5 +66,5 @@ export const DEFAULT_CURSOR_STYLE: CursorStyleConfig = {
   highlight: 0.75,
   ripple: 0.7,
   shadow: 0.45,
-  smoothingMs: 60,
+  smoothingMs: 28,
 };
