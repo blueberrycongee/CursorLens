@@ -1,4 +1,4 @@
-import { ipcMain, desktopCapturer, BrowserWindow, shell, app, dialog } from 'electron'
+import { ipcMain, desktopCapturer, BrowserWindow, shell, app, dialog, screen } from 'electron'
 
 import fs from 'node:fs/promises'
 import path from 'node:path'
@@ -23,6 +23,78 @@ type CurrentVideoMetadata = {
       visible?: boolean
     }>
   }
+}
+
+type CursorTrackPayload = NonNullable<CurrentVideoMetadata['cursorTrack']>
+
+type CursorTrackerRuntime = {
+  timer: NodeJS.Timeout
+  startedAt: number
+  samples: CursorTrackPayload['samples']
+  bounds: { x: number; y: number; width: number; height: number }
+  lastPoint: { x: number; y: number } | null
+  lastTickAt: number
+  lastSampleAt: number
+  lastSpeed: number
+  stillFrames: number
+  lastClickAt: number
+}
+
+function clamp01(value: number): number {
+  if (!Number.isFinite(value)) return 0
+  return Math.min(1, Math.max(0, value))
+}
+
+function resolveVirtualBounds(): { x: number; y: number; width: number; height: number } {
+  const displays = screen.getAllDisplays()
+  if (!displays.length) {
+    return { x: 0, y: 0, width: 1, height: 1 }
+  }
+
+  let minX = Number.POSITIVE_INFINITY
+  let minY = Number.POSITIVE_INFINITY
+  let maxX = Number.NEGATIVE_INFINITY
+  let maxY = Number.NEGATIVE_INFINITY
+
+  for (const display of displays) {
+    const { x, y, width, height } = display.bounds
+    minX = Math.min(minX, x)
+    minY = Math.min(minY, y)
+    maxX = Math.max(maxX, x + width)
+    maxY = Math.max(maxY, y + height)
+  }
+
+  return {
+    x: minX,
+    y: minY,
+    width: Math.max(1, maxX - minX),
+    height: Math.max(1, maxY - minY),
+  }
+}
+
+function pushCursorSample(
+  tracker: CursorTrackerRuntime,
+  now: number,
+  point: { x: number; y: number },
+  click = false,
+): void {
+  const timeMs = Math.max(0, now - tracker.startedAt)
+  const x = clamp01((point.x - tracker.bounds.x) / tracker.bounds.width)
+  const y = clamp01((point.y - tracker.bounds.y) / tracker.bounds.height)
+
+  tracker.samples.push({
+    timeMs,
+    x,
+    y,
+    click,
+    visible: true,
+  })
+
+  if (tracker.samples.length > 12_000) {
+    tracker.samples.splice(0, 2_000)
+  }
+
+  tracker.lastSampleAt = now
 }
 
 function sanitizeCursorTrack(input?: CurrentVideoMetadata['cursorTrack'] | null): CurrentVideoMetadata['cursorTrack'] | undefined {
@@ -125,6 +197,93 @@ export function registerIpcHandlers(
 ) {
   let currentVideoPath: string | null = null
   let currentVideoMetadata: CurrentVideoMetadata | null = null
+  let cursorTracker: CursorTrackerRuntime | null = null
+
+  const stopCursorTracker = (): CursorTrackPayload | undefined => {
+    if (!cursorTracker) return undefined
+    globalThis.clearInterval(cursorTracker.timer)
+    const payload = sanitizeCursorTrack({
+      source: 'recorded',
+      samples: cursorTracker.samples,
+    })
+    cursorTracker = null
+    return payload
+  }
+
+  ipcMain.handle('cursor-tracker-start', () => {
+    stopCursorTracker()
+
+    const startedAt = Date.now()
+    const bounds = resolveVirtualBounds()
+    const initialPoint = screen.getCursorScreenPoint()
+
+    const tracker: CursorTrackerRuntime = {
+      timer: globalThis.setInterval(() => {
+        if (!cursorTracker) return
+
+        const now = Date.now()
+        const point = screen.getCursorScreenPoint()
+
+        if (!cursorTracker.lastPoint) {
+          cursorTracker.lastPoint = { x: point.x, y: point.y }
+          cursorTracker.lastTickAt = now
+          pushCursorSample(cursorTracker, now, point, false)
+          return
+        }
+
+        const dt = Math.max(1, now - cursorTracker.lastTickAt)
+        const dx = point.x - cursorTracker.lastPoint.x
+        const dy = point.y - cursorTracker.lastPoint.y
+        const distance = Math.hypot(dx, dy)
+        const speed = (distance * 1000) / dt
+
+        if (distance <= 1) {
+          cursorTracker.stillFrames += 1
+        } else {
+          cursorTracker.stillFrames = 0
+        }
+
+        let click = false
+        if (
+          cursorTracker.stillFrames >= 2
+          && cursorTracker.lastSpeed > 950
+          && now - cursorTracker.lastClickAt > 240
+        ) {
+          click = true
+          cursorTracker.lastClickAt = now
+          cursorTracker.stillFrames = 0
+        }
+
+        const shouldStore = click || distance >= 0.35 || now - cursorTracker.lastSampleAt >= 100
+        if (shouldStore) {
+          pushCursorSample(cursorTracker, now, point, click)
+        }
+
+        cursorTracker.lastSpeed = speed
+        cursorTracker.lastPoint = { x: point.x, y: point.y }
+        cursorTracker.lastTickAt = now
+      }, 16),
+      startedAt,
+      samples: [],
+      bounds,
+      lastPoint: null,
+      lastTickAt: startedAt,
+      lastSampleAt: startedAt,
+      lastSpeed: 0,
+      stillFrames: 0,
+      lastClickAt: 0,
+    }
+
+    cursorTracker = tracker
+    pushCursorSample(tracker, startedAt, initialPoint, false)
+
+    return { success: true }
+  })
+
+  ipcMain.handle('cursor-tracker-stop', () => {
+    const track = stopCursorTracker()
+    return { success: true, track }
+  })
 
   ipcMain.handle('get-sources', async (_, opts) => {
     const sources = await desktopCapturer.getSources(opts)

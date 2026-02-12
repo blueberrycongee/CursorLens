@@ -46,6 +46,8 @@ interface Window {
     }>
     getRecordedVideoPath: () => Promise<{ success: boolean; path?: string; message?: string }>
     setRecordingState: (recording: boolean) => Promise<void>
+    startCursorTracking: () => Promise<{ success: boolean }>
+    stopCursorTracking: () => Promise<{ success: boolean; track?: CursorTrackMetadata }>
     onStopRecordingFromTray: (callback: () => void) => () => void
     openExternalUrl: (url: string) => Promise<{ success: boolean; error?: string }>
     saveExportedVideo: (videoData: ArrayBuffer, fileName: string, locale?: string) => Promise<{ success: boolean; path?: string; message?: string; cancelled?: boolean }>

@@ -40,6 +40,8 @@ interface Window {
     }>
     getAssetBasePath: () => Promise<string | null>
     setRecordingState: (recording: boolean) => Promise<void>
+    startCursorTracking: () => Promise<{ success: boolean }>
+    stopCursorTracking: () => Promise<{ success: boolean; track?: CursorTrackMetadata }>
     onStopRecordingFromTray: (callback: () => void) => () => void
     openExternalUrl: (url: string) => Promise<{ success: boolean; error?: string }>
     saveExportedVideo: (videoData: ArrayBuffer, fileName: string, locale?: string) => Promise<{
