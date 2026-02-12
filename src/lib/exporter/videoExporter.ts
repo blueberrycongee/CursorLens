@@ -3,6 +3,7 @@ import { VideoFileDecoder } from './videoDecoder';
 import { FrameRenderer } from './frameRenderer';
 import { VideoMuxer } from './muxer';
 import type { ZoomRegion, CropRegion, TrimRegion, AnnotationRegion } from '@/components/video-editor/types';
+import { frameDurationUs, frameIndexToTimestampUs, normalizeFrameRate } from './frameClock';
 
 interface VideoExporterConfig extends ExportConfig {
   videoUrl: string;
@@ -48,9 +49,14 @@ export class VideoExporter {
   private muxingPromises: Promise<void>[] = [];
   private muxingError: Error | null = null;
   private chunkCount = 0;
+  private readonly PLAYBACK_SEEK_THRESHOLD_SECONDS = 0.45;
+  private readonly PLAYBACK_WAIT_TIMEOUT_MS = 900;
 
   constructor(config: VideoExporterConfig) {
-    this.config = config;
+    this.config = {
+      ...config,
+      frameRate: normalizeFrameRate(config.frameRate),
+    };
   }
 
   // Calculate the total duration excluding trim regions (in seconds)
@@ -135,87 +141,21 @@ export class VideoExporter {
       console.log('[VideoExporter] Effective duration:', effectiveDuration, 's');
       console.log('[VideoExporter] Total frames to export:', totalFrames);
 
-      // Process frames continuously without batching delays
-      const frameDuration = 1_000_000 / this.config.frameRate; // in microseconds
       let frameIndex = 0;
-      const timeStep = 1 / this.config.frameRate;
-
-      while (frameIndex < totalFrames && !this.cancelled) {
-        const i = frameIndex;
-        const timestamp = i * frameDuration;
-
-        // Map effective time to source time (accounting for trim regions)
-        const effectiveTimeMs = (i * timeStep) * 1000;
-        const sourceTimeMs = this.mapEffectiveToSourceTime(effectiveTimeMs);
-        const videoTime = sourceTimeMs / 1000;
-          
-        // Seek if needed or wait for first frame to be ready
-        const needsSeek = shouldSeekToTime(videoElement.currentTime, videoTime, this.config.frameRate);
-
-        if (needsSeek) {
-          // Attach listener BEFORE setting currentTime to avoid race condition
-          const seekedPromise = new Promise<void>(resolve => {
-            videoElement.addEventListener('seeked', () => resolve(), { once: true });
-          });
-          
-          videoElement.currentTime = videoTime;
-          await seekedPromise;
-          await this.waitForVideoFrame(videoElement);
-        } else if (i === 0) {
-          await this.waitForVideoFrame(videoElement);
+      if (typeof videoElement.requestVideoFrameCallback === 'function') {
+        frameIndex = await this.exportFramesWithPlaybackSampling(videoElement, totalFrames);
+        if (frameIndex < totalFrames && !this.cancelled) {
+          console.warn(
+            `[VideoExporter] Playback sampling ended at frame ${frameIndex}/${totalFrames}; falling back to seek mode for the remainder.`,
+          );
+          frameIndex = await this.exportFramesBySeeking(videoElement, totalFrames, frameIndex);
         }
+      } else {
+        frameIndex = await this.exportFramesBySeeking(videoElement, totalFrames, frameIndex);
+      }
 
-        // Create a VideoFrame from the video element (on GPU!)
-        const videoFrame = new VideoFrame(videoElement, {
-          timestamp,
-        });
-
-        // Render the frame with all effects using source timestamp
-        const sourceTimestamp = sourceTimeMs * 1000; // Convert to microseconds
-        await this.renderer!.renderFrame(videoFrame, sourceTimestamp);
-        
-        videoFrame.close();
-
-        const canvas = this.renderer!.getCanvas();
-
-        // Create VideoFrame from canvas on GPU without reading pixels
-        // @ts-ignore - colorSpace not in TypeScript definitions but works at runtime
-        const exportFrame = new VideoFrame(canvas, {
-          timestamp,
-          duration: frameDuration,
-          colorSpace: {
-            primaries: 'bt709',
-            transfer: 'iec61966-2-1',
-            matrix: 'rgb',
-            fullRange: true,
-          },
-        });
-
-        // Check encoder queue before encoding to keep it full
-        while (this.encodeQueue >= this.MAX_ENCODE_QUEUE && !this.cancelled) {
-          await new Promise(resolve => setTimeout(resolve, 0));
-        }
-
-        if (this.encoder && this.encoder.state === 'configured') {
-          this.encodeQueue++;
-          this.encoder.encode(exportFrame, { keyFrame: i % 150 === 0 });
-        } else {
-          console.warn(`[Frame ${i}] Encoder not ready! State: ${this.encoder?.state}`);
-        }
-
-        exportFrame.close();
-
-        frameIndex++;
-
-        // Update progress
-        if (this.config.onProgress) {
-          this.config.onProgress({
-            currentFrame: frameIndex,
-            totalFrames,
-            percentage: (frameIndex / totalFrames) * 100,
-            estimatedTimeRemaining: 0,
-          });
-        }
+      if (frameIndex < totalFrames && !this.cancelled) {
+        throw new Error(`Export ended early: rendered ${frameIndex} of ${totalFrames} frames.`);
       }
 
       if (this.cancelled) {
@@ -254,6 +194,212 @@ export class VideoExporter {
     } finally {
       this.cleanup();
     }
+  }
+
+  private getSourceTimeMsForFrame(frameIndex: number): number {
+    const timeStepMs = 1000 / this.config.frameRate;
+    const effectiveTimeMs = frameIndex * timeStepMs;
+    return this.mapEffectiveToSourceTime(effectiveTimeMs);
+  }
+
+  private updateProgress(currentFrame: number, totalFrames: number): void {
+    if (!this.config.onProgress) return;
+
+    this.config.onProgress({
+      currentFrame,
+      totalFrames,
+      percentage: totalFrames > 0 ? (currentFrame / totalFrames) * 100 : 100,
+      estimatedTimeRemaining: 0,
+    });
+  }
+
+  private getKeyFrameIntervalFrames(): number {
+    return Math.max(1, Math.round(this.config.frameRate * 2.5));
+  }
+
+  private async renderAndEncodeFrame(
+    videoElement: HTMLVideoElement,
+    frameIndex: number,
+    totalFrames: number,
+    sourceTimeMs: number,
+  ): Promise<void> {
+    const timestamp = frameIndexToTimestampUs(frameIndex, this.config.frameRate);
+    const duration = frameDurationUs(frameIndex, this.config.frameRate);
+
+    const videoFrame = new VideoFrame(videoElement, { timestamp });
+    await this.renderer!.renderFrame(videoFrame, Math.round(sourceTimeMs * 1000));
+    videoFrame.close();
+
+    const canvas = this.renderer!.getCanvas();
+
+    // @ts-ignore - colorSpace not in TypeScript definitions but works at runtime.
+    const exportFrame = new VideoFrame(canvas, {
+      timestamp,
+      duration,
+      colorSpace: {
+        primaries: 'bt709',
+        transfer: 'iec61966-2-1',
+        matrix: 'rgb',
+        fullRange: true,
+      },
+    });
+
+    while (this.encodeQueue >= this.MAX_ENCODE_QUEUE && !this.cancelled) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    if (this.encoder && this.encoder.state === 'configured') {
+      this.encodeQueue++;
+      this.encoder.encode(exportFrame, { keyFrame: frameIndex % this.getKeyFrameIntervalFrames() === 0 });
+    } else {
+      console.warn(`[Frame ${frameIndex}] Encoder not ready! State: ${this.encoder?.state}`);
+    }
+
+    exportFrame.close();
+    this.updateProgress(frameIndex + 1, totalFrames);
+  }
+
+  private async seekVideoTo(videoElement: HTMLVideoElement, targetTimeSeconds: number): Promise<void> {
+    const safeDuration = Number.isFinite(videoElement.duration) ? videoElement.duration : targetTimeSeconds + 1;
+    const epsilon = 1 / Math.max(this.config.frameRate, 30);
+    const clampedTime = Math.max(0, Math.min(targetTimeSeconds, Math.max(0, safeDuration - epsilon)));
+
+    if (!shouldSeekToTime(videoElement.currentTime, clampedTime, this.config.frameRate)) {
+      await this.waitForVideoFrame(videoElement);
+      return;
+    }
+
+    const seekedPromise = new Promise<void>((resolve) => {
+      videoElement.addEventListener('seeked', () => resolve(), { once: true });
+    });
+    videoElement.currentTime = clampedTime;
+    await seekedPromise;
+    await this.waitForVideoFrame(videoElement);
+  }
+
+  private async exportFramesBySeeking(
+    videoElement: HTMLVideoElement,
+    totalFrames: number,
+    startFrameIndex = 0,
+  ): Promise<number> {
+    let frameIndex = startFrameIndex;
+
+    while (frameIndex < totalFrames && !this.cancelled) {
+      const sourceTimeMs = this.getSourceTimeMsForFrame(frameIndex);
+      await this.seekVideoTo(videoElement, sourceTimeMs / 1000);
+      await this.renderAndEncodeFrame(videoElement, frameIndex, totalFrames, sourceTimeMs);
+      frameIndex++;
+    }
+
+    return frameIndex;
+  }
+
+  private async waitForVideoTime(
+    videoElement: HTMLVideoElement,
+    targetTimeSeconds: number,
+    toleranceSeconds: number,
+  ): Promise<void> {
+    if (videoElement.currentTime + toleranceSeconds >= targetTimeSeconds) {
+      return;
+    }
+
+    if (typeof videoElement.requestVideoFrameCallback === 'function') {
+      await new Promise<void>((resolve) => {
+        let settled = false;
+        const timeout = window.setTimeout(() => {
+          if (!settled) {
+            settled = true;
+            resolve();
+          }
+        }, this.PLAYBACK_WAIT_TIMEOUT_MS);
+
+        const check = (_now: number, metadata: VideoFrameCallbackMetadata) => {
+          const mediaTime = Number.isFinite(metadata.mediaTime) ? metadata.mediaTime : videoElement.currentTime;
+          if (
+            mediaTime + toleranceSeconds >= targetTimeSeconds
+            || videoElement.paused
+            || videoElement.ended
+          ) {
+            if (!settled) {
+              settled = true;
+              window.clearTimeout(timeout);
+              resolve();
+            }
+            return;
+          }
+
+          videoElement.requestVideoFrameCallback(check);
+        };
+
+        videoElement.requestVideoFrameCallback(check);
+      });
+      return;
+    }
+
+    while (
+      videoElement.currentTime + toleranceSeconds < targetTimeSeconds
+      && !videoElement.paused
+      && !videoElement.ended
+    ) {
+      await new Promise((resolve) => window.setTimeout(resolve, 4));
+    }
+  }
+
+  private async exportFramesWithPlaybackSampling(videoElement: HTMLVideoElement, totalFrames: number): Promise<number> {
+    let frameIndex = 0;
+    const tolerance = getSeekToleranceSeconds(this.config.frameRate);
+    const seekThreshold = Math.max(this.PLAYBACK_SEEK_THRESHOLD_SECONDS, 4 / this.config.frameRate);
+    const playbackRate = this.config.frameRate > 90 ? 0.5 : this.config.frameRate > 60 ? 0.75 : 1;
+
+    videoElement.pause();
+    videoElement.currentTime = 0;
+    videoElement.playbackRate = playbackRate;
+    await this.waitForVideoFrame(videoElement, 500);
+
+    try {
+      await videoElement.play();
+    } catch (error) {
+      console.warn('[VideoExporter] Unable to enter playback sampling mode, using seek mode instead.', error);
+      videoElement.playbackRate = 1;
+      return frameIndex;
+    }
+
+    while (frameIndex < totalFrames && !this.cancelled) {
+      const sourceTimeMs = this.getSourceTimeMsForFrame(frameIndex);
+      const sourceTimeSeconds = sourceTimeMs / 1000;
+      const drift = sourceTimeSeconds - videoElement.currentTime;
+
+      if (!Number.isFinite(videoElement.currentTime) || Math.abs(drift) > seekThreshold) {
+        videoElement.pause();
+        await this.seekVideoTo(videoElement, sourceTimeSeconds);
+        await this.renderAndEncodeFrame(videoElement, frameIndex, totalFrames, sourceTimeMs);
+        frameIndex++;
+
+        if (!this.cancelled && frameIndex < totalFrames) {
+          await videoElement.play().catch(() => undefined);
+        }
+        continue;
+      }
+
+      await this.waitForVideoTime(videoElement, sourceTimeSeconds, tolerance);
+
+      if (this.cancelled) {
+        break;
+      }
+
+      videoElement.pause();
+      await this.waitForVideoFrame(videoElement);
+      await this.renderAndEncodeFrame(videoElement, frameIndex, totalFrames, sourceTimeMs);
+      frameIndex++;
+
+      if (!this.cancelled && frameIndex < totalFrames) {
+        await videoElement.play().catch(() => undefined);
+      }
+    }
+
+    videoElement.pause();
+    videoElement.playbackRate = 1;
+    return frameIndex;
   }
 
   private async initializeEncoder(): Promise<void> {
