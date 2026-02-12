@@ -226,9 +226,7 @@ export class VideoExporter {
     const timestamp = frameIndexToTimestampUs(frameIndex, this.config.frameRate);
     const duration = frameDurationUs(frameIndex, this.config.frameRate);
 
-    const videoFrame = new VideoFrame(videoElement, { timestamp });
-    await this.renderer!.renderFrame(videoFrame, Math.round(sourceTimeMs * 1000));
-    videoFrame.close();
+    await this.renderer!.renderFrame(videoElement, Math.round(sourceTimeMs * 1000));
 
     const canvas = this.renderer!.getCanvas();
 

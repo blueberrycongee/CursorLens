@@ -50,6 +50,7 @@ export class FrameRenderer {
   private animationState: AnimationState;
   private layoutCache: any = null;
   private currentVideoTime = 0;
+  private currentVideoSource: HTMLVideoElement | VideoFrame | null = null;
 
   constructor(config: FrameRenderConfig) {
     this.config = config;
@@ -250,25 +251,48 @@ export class FrameRenderer {
     this.backgroundSprite = bgCanvas as any;
   }
 
-  async renderFrame(videoFrame: VideoFrame, timestamp: number): Promise<void> {
+  private updateVideoSpriteSource(videoSource: HTMLVideoElement | VideoFrame): void {
+    if (!this.videoContainer) {
+      throw new Error('Renderer not initialized');
+    }
+
+    const sourceIsReusableVideo =
+      this.currentVideoSource instanceof HTMLVideoElement
+      && videoSource instanceof HTMLVideoElement
+      && this.currentVideoSource === videoSource;
+
+    if (!this.videoSprite) {
+      const texture = Texture.from(videoSource as any);
+      this.videoSprite = new Sprite(texture);
+      this.videoContainer.addChild(this.videoSprite);
+      this.currentVideoSource = videoSource;
+      return;
+    }
+
+    if (sourceIsReusableVideo) {
+      const textureSource = (this.videoSprite.texture as any)?.source;
+      if (textureSource && typeof textureSource.update === 'function') {
+        textureSource.update();
+      }
+      return;
+    }
+
+    const oldTexture = this.videoSprite.texture;
+    const newTexture = Texture.from(videoSource as any);
+    this.videoSprite.texture = newTexture;
+    this.currentVideoSource = videoSource;
+    if (oldTexture !== newTexture) {
+      oldTexture.destroy(true);
+    }
+  }
+
+  async renderFrame(videoSource: HTMLVideoElement | VideoFrame, timestamp: number): Promise<void> {
     if (!this.app || !this.videoContainer || !this.cameraContainer) {
       throw new Error('Renderer not initialized');
     }
 
     this.currentVideoTime = timestamp / 1000000;
-
-    // Create or update video sprite from VideoFrame
-    if (!this.videoSprite) {
-      const texture = Texture.from(videoFrame as any);
-      this.videoSprite = new Sprite(texture);
-      this.videoContainer.addChild(this.videoSprite);
-    } else {
-      // Destroy old texture to avoid memory leaks, then create new one
-      const oldTexture = this.videoSprite.texture;
-      const newTexture = Texture.from(videoFrame as any);
-      this.videoSprite.texture = newTexture;
-      oldTexture.destroy(true);
-    }
+    this.updateVideoSpriteSource(videoSource);
 
     // Apply layout
     this.updateLayout();
@@ -516,6 +540,7 @@ export class FrameRenderer {
       this.videoSprite.destroy();
       this.videoSprite = null;
     }
+    this.currentVideoSource = null;
     this.backgroundSprite = null;
     if (this.app) {
       this.app.destroy(true, { children: true, texture: true, textureSource: true });
