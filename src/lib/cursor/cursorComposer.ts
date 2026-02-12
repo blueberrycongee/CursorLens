@@ -41,6 +41,8 @@ function normalizeCursorStyle(input?: Partial<CursorStyleConfig>): CursorStyleCo
     ripple: clamp01(merged.ripple),
     shadow: clamp01(merged.shadow),
     smoothingMs: Math.max(0, Math.min(220, Math.round(merged.smoothingMs))),
+    offsetX: Math.max(-240, Math.min(240, Number.isFinite(merged.offsetX) ? merged.offsetX : 0)),
+    offsetY: Math.max(-240, Math.min(240, Number.isFinite(merged.offsetY) ? merged.offsetY : 0)),
   };
 }
 
@@ -297,9 +299,11 @@ export function drawCompositedCursor(
 
   const normalized = normalizeCursorStyle(style);
   const scale = state.scale;
+  const translatedX = point.x + normalized.offsetX;
+  const translatedY = point.y + normalized.offsetY;
 
   ctx.save();
-  ctx.translate(point.x, point.y);
+  ctx.translate(translatedX, translatedY);
 
   if (state.rippleAlpha > 0.001) {
     ctx.save();

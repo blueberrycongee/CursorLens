@@ -34,6 +34,8 @@ export interface CursorStyleConfig {
   ripple: number;
   shadow: number;
   smoothingMs: number;
+  offsetX: number;
+  offsetY: number;
 }
 
 export interface CursorResolveParams {
@@ -67,4 +69,6 @@ export const DEFAULT_CURSOR_STYLE: CursorStyleConfig = {
   ripple: 0.7,
   shadow: 0.45,
   smoothingMs: 28,
+  offsetX: 0,
+  offsetY: 0,
 };

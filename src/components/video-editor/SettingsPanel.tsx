@@ -202,6 +202,11 @@ export function SettingsPanel({
     });
   };
 
+  const formatSignedPx = (value: number) => {
+    const rounded = Math.round(value);
+    return `${rounded > 0 ? "+" : ""}${rounded}px`;
+  };
+
   const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
     if (!files || files.length === 0) return;
@@ -429,6 +434,45 @@ export function SettingsPanel({
                       step={5}
                       className="w-full [&_[role=slider]]:bg-[#34B27B] [&_[role=slider]]:border-[#34B27B] [&_[role=slider]]:h-3 [&_[role=slider]]:w-3"
                     />
+                  </div>
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="text-[10px] text-slate-400">{t("settings.cursorOffsetX")}</div>
+                      <span className="text-[10px] text-slate-500 font-mono">{formatSignedPx(cursorStyle.offsetX)}</span>
+                    </div>
+                    <Slider
+                      value={[cursorStyle.offsetX]}
+                      onValueChange={(values) => updateCursorStyle({ offsetX: values[0] })}
+                      min={-120}
+                      max={120}
+                      step={1}
+                      className="w-full [&_[role=slider]]:bg-[#34B27B] [&_[role=slider]]:border-[#34B27B] [&_[role=slider]]:h-3 [&_[role=slider]]:w-3"
+                    />
+                  </div>
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="text-[10px] text-slate-400">{t("settings.cursorOffsetY")}</div>
+                      <span className="text-[10px] text-slate-500 font-mono">{formatSignedPx(cursorStyle.offsetY)}</span>
+                    </div>
+                    <Slider
+                      value={[cursorStyle.offsetY]}
+                      onValueChange={(values) => updateCursorStyle({ offsetY: values[0] })}
+                      min={-120}
+                      max={120}
+                      step={1}
+                      className="w-full [&_[role=slider]]:bg-[#34B27B] [&_[role=slider]]:border-[#34B27B] [&_[role=slider]]:h-3 [&_[role=slider]]:w-3"
+                    />
+                  </div>
+                  <div className="col-span-2 flex justify-end">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-6 px-2 text-[10px] bg-white/5 border-white/10 text-slate-300 hover:bg-white/10 hover:text-white"
+                      onClick={() => updateCursorStyle({ offsetX: 0, offsetY: 0 })}
+                    >
+                      {t("settings.cursorOffsetReset")}
+                    </Button>
                   </div>
                 </div>
               </div>
