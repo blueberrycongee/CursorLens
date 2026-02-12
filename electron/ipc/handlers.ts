@@ -3,6 +3,7 @@ import { ipcMain, desktopCapturer, BrowserWindow, shell, app, dialog, screen } f
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { RECORDINGS_DIR } from '../main'
+import { getWindowBoundsById, parseWindowIdFromSourceId } from './windowBounds'
 import {
   isPointInsideBounds,
   normalizePointToBounds,
@@ -64,12 +65,15 @@ type CursorTrackerStartOptions = {
 
 type CursorTrackerRuntime = {
   timer: NodeJS.Timeout
+  boundsRefreshTimer: NodeJS.Timeout | null
+  refreshingBounds: boolean
   startedAt: number
   samples: CursorTrackPayload['samples']
   bounds: CaptureBounds
   boundsMode: CaptureBoundsMode
   displayId?: string
   sourceRef?: CaptureSourceRef
+  windowId?: number
   captureSize?: { width: number; height: number }
   lastPoint: { x: number; y: number } | null
   lastTickAt: number
@@ -318,6 +322,10 @@ export function registerIpcHandlers(
   const stopCursorTracker = (): CursorTrackPayload | undefined => {
     if (!cursorTracker) return undefined
     globalThis.clearInterval(cursorTracker.timer)
+    if (cursorTracker.boundsRefreshTimer) {
+      globalThis.clearInterval(cursorTracker.boundsRefreshTimer)
+      cursorTracker.boundsRefreshTimer = null
+    }
     const payload = sanitizeCursorTrack({
       source: 'recorded',
       samples: cursorTracker.samples,
@@ -340,13 +348,14 @@ export function registerIpcHandlers(
     return payload
   }
 
-  ipcMain.handle('cursor-tracker-start', (_, options?: CursorTrackerStartOptions) => {
+  ipcMain.handle('cursor-tracker-start', async (_, options?: CursorTrackerStartOptions) => {
     stopCursorTracker()
 
     const startedAt = Date.now()
     const initialPoint = screen.getCursorScreenPoint()
     const sourceRef = normalizeSourceRef(options?.source) ?? normalizeSourceRef(selectedSource)
     const captureSize = normalizeCaptureSize(options?.captureSize)
+    const windowId = parseWindowIdFromSourceId(sourceRef?.id)
     const displayObjects = screen.getAllDisplays()
     const displaySnapshot = displayObjects.map((display) => ({
       id: display.id,
@@ -360,8 +369,23 @@ export function registerIpcHandlers(
     let captureBounds = initialResolution.bounds
     let captureMode = initialResolution.mode
     let captureDisplayId = initialResolution.displayId
+    let hasNativeWindowBounds = false
 
-    if (sourceRef?.id?.startsWith('window:') && captureSize) {
+    if (windowId) {
+      const nativeWindowBounds = await getWindowBoundsById(windowId)
+      if (nativeWindowBounds) {
+        hasNativeWindowBounds = true
+        captureBounds = nativeWindowBounds
+        captureMode = 'source-display'
+        const displayForWindow = screen.getDisplayNearestPoint({
+          x: Math.round(nativeWindowBounds.x + nativeWindowBounds.width / 2),
+          y: Math.round(nativeWindowBounds.y + nativeWindowBounds.height / 2),
+        })
+        captureDisplayId = displayForWindow ? String(displayForWindow.id) : captureDisplayId
+      }
+    }
+
+    if (windowId && !hasNativeWindowBounds && captureSize) {
       const displayForScale = displayObjects.find((display) => String(display.id) === initialResolution.displayId)
         ?? screen.getDisplayNearestPoint(initialPoint)
       const displayBounds = displayForScale?.bounds ?? initialResolution.bounds
@@ -426,12 +450,15 @@ export function registerIpcHandlers(
         cursorTracker.lastPoint = { x: point.x, y: point.y }
         cursorTracker.lastTickAt = now
       }, 16),
+      boundsRefreshTimer: null,
+      refreshingBounds: false,
       startedAt,
       samples: [],
       bounds: captureBounds,
       boundsMode: captureMode,
       displayId: captureDisplayId,
       sourceRef,
+      windowId,
       captureSize,
       lastPoint: null,
       lastTickAt: startedAt,
@@ -443,6 +470,33 @@ export function registerIpcHandlers(
     }
 
     cursorTracker = tracker
+    if (windowId) {
+      tracker.boundsRefreshTimer = globalThis.setInterval(() => {
+        void (async () => {
+          if (!cursorTracker || cursorTracker !== tracker || !tracker.windowId || tracker.refreshingBounds) {
+            return
+          }
+
+          tracker.refreshingBounds = true
+          try {
+            const nextBounds = await getWindowBoundsById(tracker.windowId)
+            if (!nextBounds || !cursorTracker || cursorTracker !== tracker) return
+
+            tracker.bounds = nextBounds
+            tracker.boundsMode = 'source-display'
+            const displayForWindow = screen.getDisplayNearestPoint({
+              x: Math.round(nextBounds.x + nextBounds.width / 2),
+              y: Math.round(nextBounds.y + nextBounds.height / 2),
+            })
+            if (displayForWindow) {
+              tracker.displayId = String(displayForWindow.id)
+            }
+          } finally {
+            tracker.refreshingBounds = false
+          }
+        })()
+      }, 120)
+    }
     pushCursorSample(tracker, startedAt, initialPoint, false)
 
     return { success: true }
