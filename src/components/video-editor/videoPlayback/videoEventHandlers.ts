@@ -26,9 +26,16 @@ export function createVideoEventHandlers(params: VideoEventHandlersParams) {
     trimRegionsRef,
   } = params;
 
-  const emitTime = (timeValue: number) => {
+  const UI_TIME_UPDATE_INTERVAL_MS = 1000 / 30;
+  let lastUiUpdateAt = 0;
+
+  const emitTime = (timeValue: number, force = false) => {
     currentTimeRef.current = timeValue * 1000;
-    onTimeUpdate(timeValue);
+    const now = performance.now();
+    if (force || now - lastUiUpdateAt >= UI_TIME_UPDATE_INTERVAL_MS) {
+      lastUiUpdateAt = now;
+      onTimeUpdate(timeValue);
+    }
   };
 
   // Helper function to check if current time is within a trim region
@@ -54,7 +61,7 @@ export function createVideoEventHandlers(params: VideoEventHandlersParams) {
         video.pause();
       } else {
         video.currentTime = skipToTime;
-        emitTime(skipToTime);
+        emitTime(skipToTime, true);
       }
     } else {
       emitTime(video.currentTime);
@@ -91,7 +98,7 @@ export function createVideoEventHandlers(params: VideoEventHandlersParams) {
       cancelAnimationFrame(timeUpdateAnimationRef.current);
       timeUpdateAnimationRef.current = null;
     }
-    emitTime(video.currentTime);
+    emitTime(video.currentTime, true);
   };
 
   const handleSeeked = () => {
@@ -108,13 +115,13 @@ export function createVideoEventHandlers(params: VideoEventHandlersParams) {
         video.pause();
       } else {
         video.currentTime = skipToTime;
-        emitTime(skipToTime);
+        emitTime(skipToTime, true);
       }
     } else {
       if (!isPlayingRef.current && !video.paused) {
         video.pause();
       }
-      emitTime(video.currentTime);
+      emitTime(video.currentTime, true);
     }
   };
 
@@ -124,7 +131,7 @@ export function createVideoEventHandlers(params: VideoEventHandlersParams) {
     if (!isPlayingRef.current && !video.paused) {
       video.pause();
     }
-    emitTime(video.currentTime);
+    emitTime(video.currentTime, true);
   };
 
   return {

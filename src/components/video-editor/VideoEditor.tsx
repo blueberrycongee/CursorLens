@@ -36,6 +36,14 @@ import { useI18n } from "@/i18n";
 const WALLPAPER_COUNT = 18;
 const WALLPAPER_PATHS = Array.from({ length: WALLPAPER_COUNT }, (_, i) => `/wallpapers/wallpaper${i + 1}.jpg`);
 
+function resolveExportFrameRate(sourceFrameRate?: number): number {
+  if (!Number.isFinite(sourceFrameRate)) return 60;
+  const normalized = Math.round(sourceFrameRate || 60);
+  if (normalized < 24) return 24;
+  if (normalized > 120) return 120;
+  return normalized;
+}
+
 export default function VideoEditor() {
   const { t, locale } = useI18n();
   const [videoPath, setVideoPath] = useState<string | null>(null);
@@ -67,6 +75,7 @@ export default function VideoEditor() {
   const [gifFrameRate, setGifFrameRate] = useState<GifFrameRate>(15);
   const [gifLoop, setGifLoop] = useState(true);
   const [gifSizePreset, setGifSizePreset] = useState<GifSizePreset>('medium');
+  const [sourceFrameRate, setSourceFrameRate] = useState<number | undefined>(undefined);
 
   const videoPlaybackRef = useRef<VideoPlaybackRef>(null);
   const nextZoomIdRef = useRef(1);
@@ -107,6 +116,9 @@ export default function VideoEditor() {
         if (result.success && result.path) {
           const videoUrl = toFileUrl(result.path);
           setVideoPath(videoUrl);
+          setSourceFrameRate(
+            Number.isFinite(result.metadata?.frameRate) ? result.metadata?.frameRate : undefined,
+          );
         } else {
           setError(t('editor.noVideo'));
         }
@@ -608,11 +620,12 @@ export default function VideoEditor() {
           }
         }
 
+        const exportFrameRate = resolveExportFrameRate(sourceFrameRate);
         const exporter = new VideoExporter({
           videoUrl: videoPath,
           width: exportWidth,
           height: exportHeight,
-          frameRate: 60,
+          frameRate: exportFrameRate,
           bitrate,
           codec: 'avc1.640033',
           wallpaper,
@@ -673,7 +686,7 @@ export default function VideoEditor() {
       setShowExportDialog(false);
       setExportProgress(null);
     }
-  }, [videoPath, wallpaper, zoomRegions, trimRegions, shadowIntensity, showBlur, motionBlurEnabled, borderRadius, padding, cropRegion, annotationRegions, isPlaying, aspectRatio, exportQuality, locale, t]);
+  }, [videoPath, wallpaper, zoomRegions, trimRegions, shadowIntensity, showBlur, motionBlurEnabled, borderRadius, padding, cropRegion, annotationRegions, isPlaying, aspectRatio, exportQuality, locale, sourceFrameRate, t]);
 
   const handleOpenExportDialog = useCallback(() => {
     if (!videoPath) {

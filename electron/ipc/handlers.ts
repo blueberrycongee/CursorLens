@@ -7,6 +7,13 @@ import { RECORDINGS_DIR } from '../main'
 let selectedSource: any = null
 
 type Locale = 'en' | 'zh-CN'
+type CurrentVideoMetadata = {
+  frameRate?: number
+  width?: number
+  height?: number
+  mimeType?: string
+  capturedAt?: number
+}
 
 function normalizeLocale(input?: string): Locale {
   return (input ?? '').toLowerCase().startsWith('zh') ? 'zh-CN' : 'en'
@@ -38,6 +45,34 @@ function tt(locale: Locale, key: string): string {
   return (locale === 'zh-CN' ? zh : en)[key] ?? key
 }
 
+function sanitizeVideoMetadata(metadata?: CurrentVideoMetadata | null): CurrentVideoMetadata | null {
+  if (!metadata) return null
+
+  const frameRate = Number(metadata.frameRate)
+  const width = Number(metadata.width)
+  const height = Number(metadata.height)
+  const capturedAt = Number(metadata.capturedAt)
+
+  const normalized: CurrentVideoMetadata = {}
+  if (Number.isFinite(frameRate) && frameRate >= 1 && frameRate <= 240) {
+    normalized.frameRate = Math.round(frameRate)
+  }
+  if (Number.isFinite(width) && width >= 2) {
+    normalized.width = Math.floor(width)
+  }
+  if (Number.isFinite(height) && height >= 2) {
+    normalized.height = Math.floor(height)
+  }
+  if (typeof metadata.mimeType === 'string' && metadata.mimeType.trim().length > 0) {
+    normalized.mimeType = metadata.mimeType.trim()
+  }
+  if (Number.isFinite(capturedAt) && capturedAt > 0) {
+    normalized.capturedAt = Math.floor(capturedAt)
+  }
+
+  return Object.keys(normalized).length > 0 ? normalized : null
+}
+
 export function registerIpcHandlers(
   createEditorWindow: () => void,
   createSourceSelectorWindow: () => BrowserWindow,
@@ -45,6 +80,9 @@ export function registerIpcHandlers(
   getSourceSelectorWindow: () => BrowserWindow | null,
   onRecordingStateChange?: (recording: boolean, sourceName: string) => void
 ) {
+  let currentVideoPath: string | null = null
+  let currentVideoMetadata: CurrentVideoMetadata | null = null
+
   ipcMain.handle('get-sources', async (_, opts) => {
     const sources = await desktopCapturer.getSources(opts)
     return sources.map(source => ({
@@ -88,14 +126,16 @@ export function registerIpcHandlers(
 
 
 
-  ipcMain.handle('store-recorded-video', async (_, videoData: ArrayBuffer, fileName: string) => {
+  ipcMain.handle('store-recorded-video', async (_, videoData: ArrayBuffer, fileName: string, metadata?: CurrentVideoMetadata) => {
     try {
       const videoPath = path.join(RECORDINGS_DIR, fileName)
       await fs.writeFile(videoPath, Buffer.from(videoData))
-      currentVideoPath = videoPath;
+      currentVideoPath = videoPath
+      currentVideoMetadata = sanitizeVideoMetadata(metadata)
       return {
         success: true,
         path: videoPath,
+        metadata: currentVideoMetadata ?? undefined,
         message: 'Video stored successfully'
       }
     } catch (error) {
@@ -232,19 +272,21 @@ export function registerIpcHandlers(
     }
   });
 
-  let currentVideoPath: string | null = null;
-
-  ipcMain.handle('set-current-video-path', (_, path: string) => {
-    currentVideoPath = path;
+  ipcMain.handle('set-current-video-path', (_, path: string, metadata?: CurrentVideoMetadata) => {
+    currentVideoPath = path
+    currentVideoMetadata = sanitizeVideoMetadata(metadata)
     return { success: true };
   });
 
   ipcMain.handle('get-current-video-path', () => {
-    return currentVideoPath ? { success: true, path: currentVideoPath } : { success: false };
+    return currentVideoPath
+      ? { success: true, path: currentVideoPath, metadata: currentVideoMetadata ?? undefined }
+      : { success: false };
   });
 
   ipcMain.handle('clear-current-video-path', () => {
     currentVideoPath = null;
+    currentVideoMetadata = null;
     return { success: true };
   });
 

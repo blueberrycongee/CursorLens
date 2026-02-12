@@ -16,11 +16,16 @@ interface Window {
     openSourceSelector: () => Promise<void>
     selectSource: (source: any) => Promise<any>
     getSelectedSource: () => Promise<any>
-    storeRecordedVideo: (videoData: ArrayBuffer, fileName: string) => Promise<{
+    storeRecordedVideo: (
+      videoData: ArrayBuffer,
+      fileName: string,
+      metadata?: { frameRate?: number; width?: number; height?: number; mimeType?: string; capturedAt?: number }
+    ) => Promise<{
       success: boolean
       path?: string
       message: string
       error?: string
+      metadata?: { frameRate?: number; width?: number; height?: number; mimeType?: string; capturedAt?: number }
     }>
     getRecordedVideoPath: () => Promise<{
       success: boolean
@@ -39,8 +44,15 @@ interface Window {
       cancelled?: boolean
     }>
     openVideoFilePicker: (locale?: string) => Promise<{ success: boolean; path?: string; cancelled?: boolean }>
-    setCurrentVideoPath: (path: string) => Promise<{ success: boolean }>
-    getCurrentVideoPath: () => Promise<{ success: boolean; path?: string }>
+    setCurrentVideoPath: (
+      path: string,
+      metadata?: { frameRate?: number; width?: number; height?: number; mimeType?: string; capturedAt?: number }
+    ) => Promise<{ success: boolean }>
+    getCurrentVideoPath: () => Promise<{
+      success: boolean
+      path?: string
+      metadata?: { frameRate?: number; width?: number; height?: number; mimeType?: string; capturedAt?: number }
+    }>
     clearCurrentVideoPath: () => Promise<{ success: boolean }>
     getPlatform: () => Promise<string>
     hudOverlayHide: () => void

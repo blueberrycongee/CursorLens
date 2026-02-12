@@ -475,14 +475,21 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
         try {
           const videoBlob = await fixWebmDuration(buggyBlob, duration);
           const arrayBuffer = await videoBlob.arrayBuffer();
-          const videoResult = await window.electronAPI.storeRecordedVideo(arrayBuffer, videoFileName);
+          const captureMetadata = {
+            frameRate,
+            width,
+            height,
+            mimeType: recordedMimeType,
+            capturedAt: timestamp,
+          };
+          const videoResult = await window.electronAPI.storeRecordedVideo(arrayBuffer, videoFileName, captureMetadata);
           if (!videoResult.success) {
             console.error('Failed to store video:', videoResult.message);
             return;
           }
 
           if (videoResult.path) {
-            await window.electronAPI.setCurrentVideoPath(videoResult.path);
+            await window.electronAPI.setCurrentVideoPath(videoResult.path, videoResult.metadata ?? captureMetadata);
           }
 
           await window.electronAPI.switchToEditor();

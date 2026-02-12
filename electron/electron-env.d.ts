@@ -29,15 +29,31 @@ interface Window {
     openSourceSelector: () => Promise<void>
     selectSource: (source: any) => Promise<any>
     getSelectedSource: () => Promise<any>
-    storeRecordedVideo: (videoData: ArrayBuffer, fileName: string) => Promise<{ success: boolean; path?: string; message?: string }>
+    storeRecordedVideo: (
+      videoData: ArrayBuffer,
+      fileName: string,
+      metadata?: { frameRate?: number; width?: number; height?: number; mimeType?: string; capturedAt?: number }
+    ) => Promise<{
+      success: boolean
+      path?: string
+      message?: string
+      metadata?: { frameRate?: number; width?: number; height?: number; mimeType?: string; capturedAt?: number }
+    }>
     getRecordedVideoPath: () => Promise<{ success: boolean; path?: string; message?: string }>
     setRecordingState: (recording: boolean) => Promise<void>
     onStopRecordingFromTray: (callback: () => void) => () => void
     openExternalUrl: (url: string) => Promise<{ success: boolean; error?: string }>
     saveExportedVideo: (videoData: ArrayBuffer, fileName: string, locale?: string) => Promise<{ success: boolean; path?: string; message?: string; cancelled?: boolean }>
     openVideoFilePicker: (locale?: string) => Promise<{ success: boolean; path?: string; cancelled?: boolean }>
-    setCurrentVideoPath: (path: string) => Promise<{ success: boolean }>
-    getCurrentVideoPath: () => Promise<{ success: boolean; path?: string }>
+    setCurrentVideoPath: (
+      path: string,
+      metadata?: { frameRate?: number; width?: number; height?: number; mimeType?: string; capturedAt?: number }
+    ) => Promise<{ success: boolean }>
+    getCurrentVideoPath: () => Promise<{
+      success: boolean
+      path?: string
+      metadata?: { frameRate?: number; width?: number; height?: number; mimeType?: string; capturedAt?: number }
+    }>
     clearCurrentVideoPath: () => Promise<{ success: boolean }>
     getPlatform: () => Promise<string>
     hudOverlayHide: () => void;
