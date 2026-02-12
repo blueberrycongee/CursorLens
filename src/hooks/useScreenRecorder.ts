@@ -71,12 +71,14 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
   const TARGET_WIDTH = 3840;
   const TARGET_HEIGHT = 2160;
   const FOUR_K_PIXELS = TARGET_WIDTH * TARGET_HEIGHT;
+
   const selectMimeType = () => {
+    // Prefer widely decodable codecs in Electron preview to avoid "Failed to load video".
     const preferred = [
-      "video/webm;codecs=av1",
-      "video/webm;codecs=h264",
       "video/webm;codecs=vp9",
       "video/webm;codecs=vp8",
+      "video/webm;codecs=h264",
+      "video/webm;codecs=av1",
       "video/webm"
     ];
 
@@ -104,7 +106,13 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
     bitrate: number
   ): MediaRecorder => {
     const mimeCandidates = dedupe(
-      [preferredMimeType, "video/webm;codecs=vp8", "video/webm"].filter((mime) => MediaRecorder.isTypeSupported(mime)),
+      [
+        preferredMimeType,
+        "video/webm;codecs=vp9",
+        "video/webm;codecs=vp8",
+        "video/webm;codecs=h264",
+        "video/webm",
+      ].filter((mime) => MediaRecorder.isTypeSupported(mime)),
     );
 
     let lastError: unknown = null;
@@ -134,25 +142,30 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
     throw lastError instanceof Error ? lastError : new Error("Failed to create MediaRecorder with available codecs.");
   };
 
-  const stopRecording = useRef(() => {
-    if (mediaRecorder.current?.state === "recording") {
-      if (compositionCleanup.current) {
-        compositionCleanup.current();
-        compositionCleanup.current = null;
-      }
-      if (cameraStream.current) {
-        cameraStream.current.getTracks().forEach(track => track.stop());
-        cameraStream.current = null;
-      }
-      if (stream.current) {
-        stream.current.getTracks().forEach(track => track.stop());
-        stream.current = null;
-      }
-      mediaRecorder.current.stop();
-      setRecording(false);
-
-      window.electronAPI?.setRecordingState(false);
+  const cleanupActiveMedia = () => {
+    if (compositionCleanup.current) {
+      compositionCleanup.current();
+      compositionCleanup.current = null;
     }
+    if (cameraStream.current) {
+      cameraStream.current.getTracks().forEach(track => track.stop());
+      cameraStream.current = null;
+    }
+    if (stream.current) {
+      stream.current.getTracks().forEach(track => track.stop());
+      stream.current = null;
+    }
+  };
+
+  const stopRecording = useRef(() => {
+    const recorder = mediaRecorder.current;
+    if (recorder?.state === "recording") {
+      recorder.stop();
+      setRecording(false);
+      window.electronAPI?.setRecordingState(false);
+      return;
+    }
+    cleanupActiveMedia();
   });
 
   useEffect(() => {
@@ -166,22 +179,14 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
 
     return () => {
       if (cleanup) cleanup();
-      
-      if (mediaRecorder.current?.state === "recording") {
-        mediaRecorder.current.stop();
+
+      const recorder = mediaRecorder.current;
+      if (recorder?.state === "recording") {
+        recorder.stop();
+        return;
       }
-      if (compositionCleanup.current) {
-        compositionCleanup.current();
-        compositionCleanup.current = null;
-      }
-      if (cameraStream.current) {
-        cameraStream.current.getTracks().forEach(track => track.stop());
-        cameraStream.current = null;
-      }
-      if (stream.current) {
-        stream.current.getTracks().forEach(track => track.stop());
-        stream.current = null;
-      }
+
+      cleanupActiveMedia();
     };
   }, []);
 
@@ -418,37 +423,27 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
         // Fallback to screen-only stream so recording can still start.
         if (recordingStream !== desktopStream) {
           console.warn("Failed to initialize recorder for camera composited stream, fallback to screen-only.", error);
-          if (compositionCleanup.current) {
-            compositionCleanup.current();
-            compositionCleanup.current = null;
-          }
-          if (cameraStream.current) {
-            cameraStream.current.getTracks().forEach(track => track.stop());
-            cameraStream.current = null;
-          }
+          cleanupActiveMedia();
           recorder = createMediaRecorderWithFallback(desktopStream, mimeType, videoBitsPerSecond);
         } else {
           throw error;
         }
       }
+
+      const recordedMimeType = recorder.mimeType || mimeType;
+      console.log(`MediaRecorder initialized with ${recordedMimeType}`);
+
       mediaRecorder.current = recorder;
       recorder.ondataavailable = e => {
         if (e.data && e.data.size > 0) chunks.current.push(e.data);
       };
       recorder.onstop = async () => {
-        if (compositionCleanup.current) {
-          compositionCleanup.current();
-          compositionCleanup.current = null;
-        }
-        if (cameraStream.current) {
-          cameraStream.current.getTracks().forEach(track => track.stop());
-          cameraStream.current = null;
-        }
-        stream.current = null;
+        cleanupActiveMedia();
+        mediaRecorder.current = null;
         if (chunks.current.length === 0) return;
         const duration = Date.now() - startTime.current;
         const recordedChunks = chunks.current;
-        const buggyBlob = new Blob(recordedChunks, { type: mimeType });
+        const buggyBlob = new Blob(recordedChunks, { type: recordedMimeType });
         // Clear chunks early to free memory immediately after blob creation
         chunks.current = [];
         const timestamp = Date.now();
@@ -472,7 +467,12 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
           console.error('Error saving recording:', error);
         }
       };
-      recorder.onerror = () => setRecording(false);
+      recorder.onerror = (event) => {
+        console.error("MediaRecorder error event:", event);
+        setRecording(false);
+        window.electronAPI?.setRecordingState(false);
+        cleanupActiveMedia();
+      };
       recorder.start(1000);
       startTime.current = Date.now();
       setRecording(true);
@@ -480,18 +480,7 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
     } catch (error) {
       console.error('Failed to start recording:', error);
       setRecording(false);
-      if (stream.current) {
-        stream.current.getTracks().forEach(track => track.stop());
-        stream.current = null;
-      }
-      if (cameraStream.current) {
-        cameraStream.current.getTracks().forEach(track => track.stop());
-        cameraStream.current = null;
-      }
-      if (compositionCleanup.current) {
-        compositionCleanup.current();
-        compositionCleanup.current = null;
-      }
+      cleanupActiveMedia();
     }
   };
 
