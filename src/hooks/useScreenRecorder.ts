@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { fixWebmDuration } from "@fix-webm-duration/fix";
-import { computeCameraOverlayRect } from "./cameraOverlay";
+import { computeCameraOverlayRect, type CameraOverlayShape } from "./cameraOverlay";
 
 type UseScreenRecorderReturn = {
   recording: boolean;
@@ -9,6 +9,8 @@ type UseScreenRecorderReturn = {
 
 type UseScreenRecorderOptions = {
   includeCamera?: boolean;
+  cameraShape?: CameraOverlayShape;
+  cameraSizePercent?: number;
 };
 
 type CompositionResources = {
@@ -18,6 +20,8 @@ type CompositionResources = {
 
 export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseScreenRecorderReturn {
   const includeCamera = options.includeCamera ?? false;
+  const cameraShape = options.cameraShape ?? "rounded";
+  const cameraSizePercent = options.cameraSizePercent ?? 22;
   const [recording, setRecording] = useState(false);
   const mediaRecorder = useRef<MediaRecorder | null>(null);
   const stream = useRef<MediaStream | null>(null);
@@ -113,7 +117,8 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
     desktopStream: MediaStream,
     sourceWidth: number,
     sourceHeight: number,
-    sourceFrameRate: number
+    sourceFrameRate: number,
+    overlayOptions: { shape: CameraOverlayShape; sizePercent: number }
   ): Promise<CompositionResources> => {
     const webcamStream = await navigator.mediaDevices.getUserMedia({
       audio: false,
@@ -145,7 +150,55 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
       throw new Error("Failed to create 2D context for camera composition.");
     }
 
-    const overlay = computeCameraOverlayRect(sourceWidth, sourceHeight);
+    const overlay = computeCameraOverlayRect(sourceWidth, sourceHeight, overlayOptions);
+    const drawVideoCover = (
+      ctx2d: CanvasRenderingContext2D,
+      video: HTMLVideoElement,
+      x: number,
+      y: number,
+      targetWidth: number,
+      targetHeight: number
+    ) => {
+      const sourceWidthPx = video.videoWidth || targetWidth;
+      const sourceHeightPx = video.videoHeight || targetHeight;
+      const sourceRatio = sourceWidthPx / sourceHeightPx;
+      const targetRatio = targetWidth / targetHeight;
+
+      let cropWidth = sourceWidthPx;
+      let cropHeight = sourceHeightPx;
+      let cropX = 0;
+      let cropY = 0;
+      if (sourceRatio > targetRatio) {
+        cropWidth = sourceHeightPx * targetRatio;
+        cropX = (sourceWidthPx - cropWidth) / 2;
+      } else if (sourceRatio < targetRatio) {
+        cropHeight = sourceWidthPx / targetRatio;
+        cropY = (sourceHeightPx - cropHeight) / 2;
+      }
+      ctx2d.drawImage(video, cropX, cropY, cropWidth, cropHeight, x, y, targetWidth, targetHeight);
+    };
+    const drawRoundedRectPath = (
+      ctx2d: CanvasRenderingContext2D,
+      x: number,
+      y: number,
+      width: number,
+      height: number,
+      radius: number
+    ) => {
+      const clamped = Math.max(0, Math.min(radius, Math.min(width, height) / 2));
+      ctx2d.beginPath();
+      ctx2d.moveTo(x + clamped, y);
+      ctx2d.lineTo(x + width - clamped, y);
+      ctx2d.quadraticCurveTo(x + width, y, x + width, y + clamped);
+      ctx2d.lineTo(x + width, y + height - clamped);
+      ctx2d.quadraticCurveTo(x + width, y + height, x + width - clamped, y + height);
+      ctx2d.lineTo(x + clamped, y + height);
+      ctx2d.quadraticCurveTo(x, y + height, x, y + height - clamped);
+      ctx2d.lineTo(x, y + clamped);
+      ctx2d.quadraticCurveTo(x, y, x + clamped, y);
+      ctx2d.closePath();
+    };
+
     let frameToken = 0;
     const drawFrame = () => {
       if (desktopVideo.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
@@ -153,30 +206,42 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
       }
 
       if (webcamVideo.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
-        ctx.save();
-        ctx.beginPath();
-        const r = overlay.cornerRadius;
         const x = overlay.x;
         const y = overlay.y;
         const w = overlay.width;
         const h = overlay.height;
-        ctx.moveTo(x + r, y);
-        ctx.lineTo(x + w - r, y);
-        ctx.quadraticCurveTo(x + w, y, x + w, y + r);
-        ctx.lineTo(x + w, y + h - r);
-        ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-        ctx.lineTo(x + r, y + h);
-        ctx.quadraticCurveTo(x, y + h, x, y + h - r);
-        ctx.lineTo(x, y + r);
-        ctx.quadraticCurveTo(x, y, x + r, y);
-        ctx.closePath();
+
+        ctx.save();
+        if (overlayOptions.shape === "circle") {
+          const radius = Math.min(w, h) / 2;
+          ctx.beginPath();
+          ctx.arc(x + w / 2, y + h / 2, radius, 0, Math.PI * 2);
+          ctx.closePath();
+        } else if (overlayOptions.shape === "square") {
+          ctx.beginPath();
+          ctx.rect(x, y, w, h);
+          ctx.closePath();
+        } else {
+          drawRoundedRectPath(ctx, x, y, w, h, overlay.cornerRadius);
+        }
         ctx.clip();
-        ctx.drawImage(webcamVideo, x, y, w, h);
+        drawVideoCover(ctx, webcamVideo, x, y, w, h);
         ctx.restore();
 
         ctx.lineWidth = 2;
         ctx.strokeStyle = "rgba(255,255,255,0.45)";
-        ctx.strokeRect(x, y, w, h);
+        if (overlayOptions.shape === "circle") {
+          const radius = Math.min(w, h) / 2;
+          ctx.beginPath();
+          ctx.arc(x + w / 2, y + h / 2, radius, 0, Math.PI * 2);
+          ctx.closePath();
+          ctx.stroke();
+        } else if (overlayOptions.shape === "square") {
+          ctx.strokeRect(x, y, w, h);
+        } else {
+          drawRoundedRectPath(ctx, x, y, w, h, overlay.cornerRadius);
+          ctx.stroke();
+        }
       }
 
       frameToken = requestAnimationFrame(drawFrame);
@@ -258,6 +323,7 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
             width,
             height,
             frameRate ?? TARGET_FRAME_RATE,
+            { shape: cameraShape, sizePercent: cameraSizePercent },
           );
           compositionCleanup.current = composition.cleanup;
           recordingStream = composition.compositeStream;

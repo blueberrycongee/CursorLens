@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import styles from "./LaunchWindow.module.css";
 import { useScreenRecorder } from "../../hooks/useScreenRecorder";
+import type { CameraOverlayShape } from "../../hooks/cameraOverlay";
 import { Button } from "../ui/button";
 import { BsRecordCircle } from "react-icons/bs";
 import { FaRegStopCircle } from "react-icons/fa";
@@ -10,6 +11,17 @@ import { FaFolderMinus } from "react-icons/fa6";
 import { FiCamera, FiMinus, FiX } from "react-icons/fi";
 import { ContentClamp } from "../ui/content-clamp";
 
+const CAMERA_SHAPE_CYCLE: CameraOverlayShape[] = ["rounded", "square", "circle"];
+const CAMERA_SHAPE_LABEL: Record<CameraOverlayShape, string> = {
+  rounded: "Rounded",
+  square: "Square",
+  circle: "Circle",
+};
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
 export function LaunchWindow() {
   const [includeCamera, setIncludeCamera] = useState(() => {
     try {
@@ -18,7 +30,33 @@ export function LaunchWindow() {
       return false;
     }
   });
-  const { recording, toggleRecording } = useScreenRecorder({ includeCamera });
+  const [cameraShape, setCameraShape] = useState<CameraOverlayShape>(() => {
+    try {
+      const value = window.localStorage.getItem("openscreen.cameraShape");
+      if (value === "rounded" || value === "square" || value === "circle") {
+        return value;
+      }
+    } catch {
+      // no-op
+    }
+    return "rounded";
+  });
+  const [cameraSizePercent, setCameraSizePercent] = useState<number>(() => {
+    try {
+      const value = Number(window.localStorage.getItem("openscreen.cameraSizePercent"));
+      if (Number.isFinite(value)) {
+        return clamp(Math.round(value), 14, 40);
+      }
+    } catch {
+      // no-op
+    }
+    return 22;
+  });
+  const { recording, toggleRecording } = useScreenRecorder({
+    includeCamera,
+    cameraShape,
+    cameraSizePercent,
+  });
   const [recordingStart, setRecordingStart] = useState<number | null>(null);
   const [elapsed, setElapsed] = useState(0);
 
@@ -56,6 +94,30 @@ export function LaunchWindow() {
       // no-op
     }
   }, [includeCamera]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("openscreen.cameraShape", cameraShape);
+    } catch {
+      // no-op
+    }
+  }, [cameraShape]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("openscreen.cameraSizePercent", String(cameraSizePercent));
+    } catch {
+      // no-op
+    }
+  }, [cameraSizePercent]);
+
+  const cycleCameraShape = () => {
+    setCameraShape((current) => {
+      const index = CAMERA_SHAPE_CYCLE.indexOf(current);
+      const nextIndex = index >= 0 ? (index + 1) % CAMERA_SHAPE_CYCLE.length : 0;
+      return CAMERA_SHAPE_CYCLE[nextIndex] ?? "rounded";
+    });
+  };
 
   useEffect(() => {
     const checkSelectedSource = async () => {
@@ -173,6 +235,46 @@ export function LaunchWindow() {
         </Button>
 
         <div className="w-px h-6 bg-white/30" />
+
+        {includeCamera ? (
+          <>
+            <Button
+              variant="link"
+              size="sm"
+              className={`gap-1 text-cyan-200 bg-transparent hover:bg-transparent px-0 text-xs ${styles.electronNoDrag}`}
+              onClick={cycleCameraShape}
+              disabled={recording}
+              title={`Camera shape: ${CAMERA_SHAPE_LABEL[cameraShape]}`}
+            >
+              <span>Shape</span>
+              <span className={styles.cameraConfigBadge}>{CAMERA_SHAPE_LABEL[cameraShape]}</span>
+            </Button>
+
+            <Button
+              variant="link"
+              size="sm"
+              className={`text-cyan-200 bg-transparent hover:bg-transparent px-1 text-xs ${styles.electronNoDrag}`}
+              onClick={() => setCameraSizePercent((value) => clamp(value - 2, 14, 40))}
+              disabled={recording}
+              title="Decrease camera size"
+            >
+              -
+            </Button>
+            <span className={styles.cameraSizeReadout}>{cameraSizePercent}%</span>
+            <Button
+              variant="link"
+              size="sm"
+              className={`text-cyan-200 bg-transparent hover:bg-transparent px-1 text-xs ${styles.electronNoDrag}`}
+              onClick={() => setCameraSizePercent((value) => clamp(value + 2, 14, 40))}
+              disabled={recording}
+              title="Increase camera size"
+            >
+              +
+            </Button>
+
+            <div className="w-px h-6 bg-white/30" />
+          </>
+        ) : null}
 
 
         <Button
