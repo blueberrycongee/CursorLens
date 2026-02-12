@@ -3,6 +3,7 @@ import type { Span } from "dnd-timeline";
 import { cn } from "@/lib/utils";
 import { ZoomIn, Scissors, MessageSquare } from "lucide-react";
 import glassStyles from "./ItemGlass.module.css";
+import { useI18n } from "@/i18n";
 
 interface ItemProps {
   id: string;
@@ -35,6 +36,7 @@ export default function Item({
   variant = 'zoom',
   children
 }: ItemProps) {
+  const { t } = useI18n();
   const { setNodeRef, attributes, listeners, itemStyle, itemContentStyle } = useItem({
     id,
     span,
@@ -81,12 +83,12 @@ export default function Item({
           <div
             className={cn(glassStyles.zoomEndCap, glassStyles.left)}
             style={{ cursor: 'col-resize', pointerEvents: 'auto', width: 8, opacity: 0.9, background: endCapColor }}
-            title="Resize left"
+            title={t("timeline.resizeLeft")}
           />
           <div
             className={cn(glassStyles.zoomEndCap, glassStyles.right)}
             style={{ cursor: 'col-resize', pointerEvents: 'auto', width: 8, opacity: 0.9, background: endCapColor }}
-            title="Resize right"
+            title={t("timeline.resizeRight")}
           />
           {/* Content */}
           <div className="relative z-10 flex items-center gap-1.5 text-white/90 opacity-80 group-hover:opacity-100 transition-opacity select-none">
@@ -101,7 +103,7 @@ export default function Item({
               <>
                 <Scissors className="w-3.5 h-3.5" />
                 <span className="text-[11px] font-semibold tracking-tight">
-                  Trim
+                  {t("timeline.trim")}
                 </span>
               </>
             ) : (

@@ -31,11 +31,13 @@ import {
 import { VideoExporter, GifExporter, type ExportProgress, type ExportQuality, type ExportSettings, type ExportFormat, type GifFrameRate, type GifSizePreset, GIF_SIZE_PRESETS, calculateOutputDimensions } from "@/lib/exporter";
 import { type AspectRatio, getAspectRatioValue } from "@/utils/aspectRatioUtils";
 import { getAssetPath } from "@/lib/assetPath";
+import { useI18n } from "@/i18n";
 
 const WALLPAPER_COUNT = 18;
 const WALLPAPER_PATHS = Array.from({ length: WALLPAPER_COUNT }, (_, i) => `/wallpapers/wallpaper${i + 1}.jpg`);
 
 export default function VideoEditor() {
+  const { t, locale } = useI18n();
   const [videoPath, setVideoPath] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -98,16 +100,16 @@ export default function VideoEditor() {
           const videoUrl = toFileUrl(result.path);
           setVideoPath(videoUrl);
         } else {
-          setError('No video to load. Please record or select a video.');
+          setError(t('editor.noVideo'));
         }
       } catch (err) {
-        setError('Error loading video: ' + String(err));
+        setError(t("editor.loadVideoError", { message: String(err) }));
       } finally {
         setLoading(false);
       }
     }
     loadVideo();
-  }, []);
+  }, [t]);
 
   // Initialize default wallpaper with resolved asset path
   useEffect(() => {
@@ -440,13 +442,13 @@ export default function VideoEditor() {
 
   const handleExport = useCallback(async (settings: ExportSettings) => {
     if (!videoPath) {
-      toast.error('No video loaded');
+      toast.error(t('editor.noVideoLoaded'));
       return;
     }
 
     const video = videoPlaybackRef.current?.video;
     if (!video) {
-      toast.error('Video not ready');
+      toast.error(t('editor.videoNotReady'));
       return;
     }
 
@@ -506,19 +508,19 @@ export default function VideoEditor() {
           const timestamp = Date.now();
           const fileName = `export-${timestamp}.gif`;
 
-          const saveResult = await window.electronAPI.saveExportedVideo(arrayBuffer, fileName);
+          const saveResult = await window.electronAPI.saveExportedVideo(arrayBuffer, fileName, locale);
 
           if (saveResult.cancelled) {
-            toast.info('Export cancelled');
+            toast.info(t('editor.exportCancelled'));
           } else if (saveResult.success) {
-            toast.success(`GIF exported successfully to ${saveResult.path}`);
+            toast.success(t('editor.gifExportSuccess', { path: saveResult.path ?? '' }));
           } else {
-            setExportError(saveResult.message || 'Failed to save GIF');
-            toast.error(saveResult.message || 'Failed to save GIF');
+            setExportError(saveResult.message || t('editor.saveGifFailed'));
+            toast.error(saveResult.message || t('editor.saveGifFailed'));
           }
         } else {
-          setExportError(result.error || 'GIF export failed');
-          toast.error(result.error || 'GIF export failed');
+          setExportError(result.error || t('editor.gifExportFailed'));
+          toast.error(result.error || t('editor.gifExportFailed'));
         }
       } else {
         // MP4 Export
@@ -631,19 +633,19 @@ export default function VideoEditor() {
           const timestamp = Date.now();
           const fileName = `export-${timestamp}.mp4`;
 
-          const saveResult = await window.electronAPI.saveExportedVideo(arrayBuffer, fileName);
+          const saveResult = await window.electronAPI.saveExportedVideo(arrayBuffer, fileName, locale);
 
           if (saveResult.cancelled) {
-            toast.info('Export cancelled');
+            toast.info(t('editor.exportCancelled'));
           } else if (saveResult.success) {
-            toast.success(`Video exported successfully to ${saveResult.path}`);
+            toast.success(t('editor.videoExportSuccess', { path: saveResult.path ?? '' }));
           } else {
-            setExportError(saveResult.message || 'Failed to save video');
-            toast.error(saveResult.message || 'Failed to save video');
+            setExportError(saveResult.message || t('editor.saveVideoFailed'));
+            toast.error(saveResult.message || t('editor.saveVideoFailed'));
           }
         } else {
-          setExportError(result.error || 'Export failed');
-          toast.error(result.error || 'Export failed');
+          setExportError(result.error || t('editor.exportFailed'));
+          toast.error(result.error || t('editor.exportFailed'));
         }
       }
 
@@ -654,7 +656,7 @@ export default function VideoEditor() {
       console.error('Export error:', error);
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       setExportError(errorMessage);
-      toast.error(`Export failed: ${errorMessage}`);
+      toast.error(t('editor.exportError', { message: errorMessage }));
     } finally {
       setIsExporting(false);
       exporterRef.current = null;
@@ -663,17 +665,17 @@ export default function VideoEditor() {
       setShowExportDialog(false);
       setExportProgress(null);
     }
-  }, [videoPath, wallpaper, zoomRegions, trimRegions, shadowIntensity, showBlur, motionBlurEnabled, borderRadius, padding, cropRegion, annotationRegions, isPlaying, aspectRatio, exportQuality]);
+  }, [videoPath, wallpaper, zoomRegions, trimRegions, shadowIntensity, showBlur, motionBlurEnabled, borderRadius, padding, cropRegion, annotationRegions, isPlaying, aspectRatio, exportQuality, locale, t]);
 
   const handleOpenExportDialog = useCallback(() => {
     if (!videoPath) {
-      toast.error('No video loaded');
+      toast.error(t('editor.noVideoLoaded'));
       return;
     }
 
     const video = videoPlaybackRef.current?.video;
     if (!video) {
-      toast.error('Video not ready');
+      toast.error(t('editor.videoNotReady'));
       return;
     }
 
@@ -699,23 +701,23 @@ export default function VideoEditor() {
 
     // Start export immediately
     handleExport(settings);
-  }, [videoPath, exportFormat, exportQuality, gifFrameRate, gifLoop, gifSizePreset, handleExport]);
+  }, [videoPath, exportFormat, exportQuality, gifFrameRate, gifLoop, gifSizePreset, handleExport, t]);
 
   const handleCancelExport = useCallback(() => {
     if (exporterRef.current) {
       exporterRef.current.cancel();
-      toast.info('Export cancelled');
+      toast.info(t('editor.exportCancelled'));
       setShowExportDialog(false);
       setIsExporting(false);
       setExportProgress(null);
       setExportError(null);
     }
-  }, []);
+  }, [t]);
 
   if (loading) {
     return (
       <div className="flex items-center justify-center h-screen bg-background">
-        <div className="text-foreground">Loading video...</div>
+        <div className="text-foreground">{t("editor.loadingVideo")}</div>
       </div>
     );
   }

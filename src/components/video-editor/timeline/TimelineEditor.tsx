@@ -20,6 +20,7 @@ import {
 import { type AspectRatio, getAspectRatioLabel, ASPECT_RATIOS } from "@/utils/aspectRatioUtils";
 import { formatShortcut } from "@/utils/platformUtils";
 import { TutorialHelp } from "../TutorialHelp";
+import { useI18n } from "@/i18n";
 
 const ZOOM_ROW_ID = "row-zoom";
 const TRIM_ROW_ID = "row-trim";
@@ -528,6 +529,7 @@ export default function TimelineEditor({
   aspectRatio,
   onAspectRatioChange,
 }: TimelineEditorProps) {
+  const { t } = useI18n();
   const totalMs = useMemo(() => Math.max(0, Math.round(videoDuration * 1000)), [videoDuration]);
   const currentTimeMs = useMemo(() => Math.round(currentTime * 1000), [currentTime]);
   const timelineScale = useMemo(() => calculateTimelineScale(videoDuration), [videoDuration]);
@@ -681,15 +683,15 @@ export default function TimelineEditor({
     // Check if playhead is inside any zoom region
     const isOverlapping = sorted.some(region => startPos >= region.startMs && startPos < region.endMs);
     if (isOverlapping || gapToNext <= 0) {
-      toast.error("Cannot place zoom here", {
-        description: "Zoom already exists at this location or not enough space available.",
+      toast.error(t("timeline.cannotPlaceZoom"), {
+        description: t("timeline.cannotPlaceZoomDesc"),
       });
       return;
     }
 
     const actualDuration = Math.min(1000, gapToNext);
     onZoomAdded({ start: startPos, end: startPos + actualDuration });
-  }, [videoDuration, totalMs, currentTimeMs, zoomRegions, onZoomAdded]);
+  }, [videoDuration, totalMs, currentTimeMs, zoomRegions, onZoomAdded, t]);
 
   const handleAddTrim = useCallback(() => {
     if (!videoDuration || videoDuration === 0 || totalMs === 0 || !onTrimAdded) {
@@ -711,15 +713,15 @@ export default function TimelineEditor({
     // Check if playhead is inside any trim region
     const isOverlapping = sorted.some(region => startPos >= region.startMs && startPos < region.endMs);
     if (isOverlapping || gapToNext <= 0) {
-      toast.error("Cannot place trim here", {
-        description: "Trim already exists at this location or not enough space available.",
+      toast.error(t("timeline.cannotPlaceTrim"), {
+        description: t("timeline.cannotPlaceTrimDesc"),
       });
       return;
     }
 
     const actualDuration = Math.min(1000, gapToNext);
     onTrimAdded({ start: startPos, end: startPos + actualDuration });
-  }, [videoDuration, totalMs, currentTimeMs, trimRegions, onTrimAdded]);
+  }, [videoDuration, totalMs, currentTimeMs, trimRegions, onTrimAdded, t]);
 
   const handleAddAnnotation = useCallback(() => {
     if (!videoDuration || videoDuration === 0 || totalMs === 0 || !onAnnotationAdded) {
@@ -812,7 +814,7 @@ export default function TimelineEditor({
       id: region.id,
       rowId: ZOOM_ROW_ID,
       span: { start: region.startMs, end: region.endMs },
-      label: `Zoom ${index + 1}`,
+      label: `${t("timeline.zoom")} ${index + 1}`,
       zoomDepth: region.depth,
       variant: 'zoom',
     }));
@@ -821,7 +823,7 @@ export default function TimelineEditor({
       id: region.id,
       rowId: TRIM_ROW_ID,
       span: { start: region.startMs, end: region.endMs },
-      label: `Trim ${index + 1}`,
+      label: `${t("timeline.trim")} ${index + 1}`,
       variant: 'trim',
     }));
 
@@ -830,12 +832,12 @@ export default function TimelineEditor({
 
       if (region.type === 'text') {
         // Show text preview
-        const preview = region.content.trim() || 'Empty text';
+        const preview = region.content.trim() || t("timeline.emptyText");
         label = preview.length > 20 ? `${preview.substring(0, 20)}...` : preview;
       } else if (region.type === 'image') {
-        label = 'Image';
+        label = t("timeline.image");
       } else {
-        label = 'Annotation';
+        label = t("timeline.annotation");
       }
 
       return {
@@ -848,7 +850,7 @@ export default function TimelineEditor({
     });
 
     return [...zooms, ...trims, ...annotations];
-  }, [zoomRegions, trimRegions, annotationRegions]);
+  }, [zoomRegions, trimRegions, annotationRegions, t]);
 
   const handleItemSpanChange = useCallback((id: string, span: Span) => {
     // Check if it's a zoom or trim item
@@ -868,8 +870,8 @@ export default function TimelineEditor({
           <Plus className="w-6 h-6 text-slate-600" />
         </div>
         <div className="text-center">
-          <p className="text-sm font-medium text-slate-300">No Video Loaded</p>
-          <p className="text-xs text-slate-500 mt-1">Drag and drop a video to start editing</p>
+          <p className="text-sm font-medium text-slate-300">{t("timeline.noVideoLoaded")}</p>
+          <p className="text-xs text-slate-500 mt-1">{t("timeline.dragDropToStart")}</p>
         </div>
       </div>
     );
@@ -884,7 +886,7 @@ export default function TimelineEditor({
             variant="ghost"
             size="icon"
             className="h-7 w-7 text-slate-400 hover:text-[#34B27B] hover:bg-[#34B27B]/10 transition-all"
-            title="Add Zoom (Z)"
+            title={t("timeline.addZoom")}
           >
             <ZoomIn className="w-4 h-4" />
           </Button>
@@ -893,7 +895,7 @@ export default function TimelineEditor({
             variant="ghost"
             size="icon"
             className="h-7 w-7 text-slate-400 hover:text-[#ef4444] hover:bg-[#ef4444]/10 transition-all"
-            title="Add Trim (T)"
+            title={t("timeline.addTrim")}
           >
             <Scissors className="w-4 h-4" />
           </Button>
@@ -902,7 +904,7 @@ export default function TimelineEditor({
             variant="ghost"
             size="icon"
             className="h-7 w-7 text-slate-400 hover:text-[#B4A046] hover:bg-[#B4A046]/10 transition-all"
-            title="Add Annotation (A)"
+            title={t("timeline.addAnnotation")}
           >
             <MessageSquare className="w-4 h-4" />
           </Button>
@@ -939,11 +941,11 @@ export default function TimelineEditor({
         <div className="flex items-center gap-4 text-[10px] text-slate-500 font-medium">
           <span className="flex items-center gap-1.5">
             <kbd className="px-1.5 py-0.5 bg-white/5 border border-white/10 rounded text-[#34B27B] font-sans">{shortcuts.pan}</kbd>
-            <span>Pan</span>
+            <span>{t("timeline.pan")}</span>
           </span>
           <span className="flex items-center gap-1.5">
             <kbd className="px-1.5 py-0.5 bg-white/5 border border-white/10 rounded text-[#34B27B] font-sans">{shortcuts.zoom}</kbd>
-            <span>Zoom</span>
+            <span>{t("timeline.zoomAction")}</span>
           </span>
         </div>
       </div>
