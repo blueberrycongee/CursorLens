@@ -15,6 +15,9 @@ type UseScreenRecorderOptions = {
 
 type CompositionResources = {
   compositeStream: MediaStream;
+  width: number;
+  height: number;
+  frameRate: number;
   cleanup: () => void;
 };
 
@@ -66,18 +69,20 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
   const startTime = useRef<number>(0);
   const compositionCleanup = useRef<(() => void) | null>(null);
 
-  // Target visually lossless 4K @ 60fps; fall back gracefully when hardware cannot keep up
-  const TARGET_FRAME_RATE = 60;
-  const TARGET_WIDTH = 3840;
-  const TARGET_HEIGHT = 2160;
-  const FOUR_K_PIXELS = TARGET_WIDTH * TARGET_HEIGHT;
+  const MAX_CAPTURE_FPS = 60;
+  const TARGET_CAPTURE_FPS = 30;
+
+  const ensureEvenDimension = (value: number, fallback: number) => {
+    const resolved = Number.isFinite(value) && value > 0 ? value : fallback;
+    return Math.max(2, Math.floor(resolved / 2) * 2);
+  };
 
   const selectMimeType = () => {
-    // Prefer widely decodable codecs in Electron preview to avoid "Failed to load video".
+    // Prefer encoders that are usually lighter on CPU and broadly decodable in Electron.
     const preferred = [
-      "video/webm;codecs=vp9",
       "video/webm;codecs=vp8",
       "video/webm;codecs=h264",
+      "video/webm;codecs=vp9",
       "video/webm;codecs=av1",
       "video/webm"
     ];
@@ -85,19 +90,14 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
     return preferred.find(type => MediaRecorder.isTypeSupported(type)) ?? "video/webm";
   };
 
-  const computeBitrate = (width: number, height: number) => {
+  const computeBitrate = (width: number, height: number, frameRate: number) => {
     const pixels = width * height;
-    const highFrameRateBoost = TARGET_FRAME_RATE >= 60 ? 1.7 : 1;
+    const frameRateBoost = frameRate >= 50 ? 1.25 : frameRate >= 30 ? 1 : 0.85;
 
-    if (pixels >= FOUR_K_PIXELS) {
-      return Math.round(45_000_000 * highFrameRateBoost);
-    }
-
-    if (pixels >= 2560 * 1440) {
-      return Math.round(28_000_000 * highFrameRateBoost);
-    }
-
-    return Math.round(18_000_000 * highFrameRateBoost);
+    if (pixels >= 3840 * 2160) return Math.round(26_000_000 * frameRateBoost);
+    if (pixels >= 2560 * 1440) return Math.round(18_000_000 * frameRateBoost);
+    if (pixels >= 1920 * 1080) return Math.round(12_000_000 * frameRateBoost);
+    return Math.round(8_000_000 * frameRateBoost);
   };
 
   const createMediaRecorderWithFallback = (
@@ -108,9 +108,9 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
     const mimeCandidates = dedupe(
       [
         preferredMimeType,
-        "video/webm;codecs=vp9",
         "video/webm;codecs=vp8",
         "video/webm;codecs=h264",
+        "video/webm;codecs=vp9",
         "video/webm",
       ].filter((mime) => MediaRecorder.isTypeSupported(mime)),
     );
@@ -192,9 +192,9 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
 
   const buildCompositedStream = async (
     desktopStream: MediaStream,
-    sourceWidth: number,
-    sourceHeight: number,
-    sourceFrameRate: number,
+    sourceWidthHint: number,
+    sourceHeightHint: number,
+    sourceFrameRateHint: number,
     overlayOptions: { shape: CameraOverlayShape; sizePercent: number }
   ): Promise<CompositionResources> => {
     const preferredCameraId = await pickPreferredCameraId();
@@ -224,6 +224,24 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
     webcamVideo.muted = true;
     webcamVideo.playsInline = true;
     await webcamVideo.play();
+
+    const sourceWidth = ensureEvenDimension(desktopVideo.videoWidth, sourceWidthHint);
+    const sourceHeight = ensureEvenDimension(desktopVideo.videoHeight, sourceHeightHint);
+    const sourceFrameRate = Math.max(
+      24,
+      Math.min(
+        MAX_CAPTURE_FPS,
+        Math.round(
+          sourceFrameRateHint ||
+            Number(desktopStream.getVideoTracks()[0]?.getSettings().frameRate) ||
+            TARGET_CAPTURE_FPS,
+        ),
+      ),
+    );
+    const compositeFrameRate = Math.min(sourceFrameRate, 30);
+    console.log(
+      `Compositing camera overlay on ${desktopVideo.videoWidth || sourceWidthHint}x${desktopVideo.videoHeight || sourceHeightHint} -> ${sourceWidth}x${sourceHeight} @ ${compositeFrameRate}fps`,
+    );
 
     const canvas = document.createElement("canvas");
     canvas.width = sourceWidth;
@@ -283,57 +301,66 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
     };
 
     let frameToken = 0;
-    const drawFrame = () => {
-      if (desktopVideo.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
-        ctx.drawImage(desktopVideo, 0, 0, sourceWidth, sourceHeight);
-      }
+    let lastDrawTime = 0;
+    const frameIntervalMs = 1000 / compositeFrameRate;
+    const drawFrame = (timestamp: number) => {
+      if (timestamp - lastDrawTime >= frameIntervalMs) {
+        lastDrawTime = timestamp;
 
-      if (webcamVideo.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
-        const x = overlay.x;
-        const y = overlay.y;
-        const w = overlay.width;
-        const h = overlay.height;
-
-        ctx.save();
-        if (overlayOptions.shape === "circle") {
-          const radius = Math.min(w, h) / 2;
-          ctx.beginPath();
-          ctx.arc(x + w / 2, y + h / 2, radius, 0, Math.PI * 2);
-          ctx.closePath();
-        } else if (overlayOptions.shape === "square") {
-          ctx.beginPath();
-          ctx.rect(x, y, w, h);
-          ctx.closePath();
-        } else {
-          drawRoundedRectPath(ctx, x, y, w, h, overlay.cornerRadius);
+        if (desktopVideo.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+          ctx.drawImage(desktopVideo, 0, 0, sourceWidth, sourceHeight);
         }
-        ctx.clip();
-        drawVideoCover(ctx, webcamVideo, x, y, w, h);
-        ctx.restore();
 
-        ctx.lineWidth = 2;
-        ctx.strokeStyle = "rgba(255,255,255,0.45)";
-        if (overlayOptions.shape === "circle") {
-          const radius = Math.min(w, h) / 2;
-          ctx.beginPath();
-          ctx.arc(x + w / 2, y + h / 2, radius, 0, Math.PI * 2);
-          ctx.closePath();
-          ctx.stroke();
-        } else if (overlayOptions.shape === "square") {
-          ctx.strokeRect(x, y, w, h);
-        } else {
-          drawRoundedRectPath(ctx, x, y, w, h, overlay.cornerRadius);
-          ctx.stroke();
+        if (webcamVideo.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+          const x = overlay.x;
+          const y = overlay.y;
+          const w = overlay.width;
+          const h = overlay.height;
+
+          ctx.save();
+          if (overlayOptions.shape === "circle") {
+            const radius = Math.min(w, h) / 2;
+            ctx.beginPath();
+            ctx.arc(x + w / 2, y + h / 2, radius, 0, Math.PI * 2);
+            ctx.closePath();
+          } else if (overlayOptions.shape === "square") {
+            ctx.beginPath();
+            ctx.rect(x, y, w, h);
+            ctx.closePath();
+          } else {
+            drawRoundedRectPath(ctx, x, y, w, h, overlay.cornerRadius);
+          }
+          ctx.clip();
+          drawVideoCover(ctx, webcamVideo, x, y, w, h);
+          ctx.restore();
+
+          ctx.lineWidth = 2;
+          ctx.strokeStyle = "rgba(255,255,255,0.45)";
+          if (overlayOptions.shape === "circle") {
+            const radius = Math.min(w, h) / 2;
+            ctx.beginPath();
+            ctx.arc(x + w / 2, y + h / 2, radius, 0, Math.PI * 2);
+            ctx.closePath();
+            ctx.stroke();
+          } else if (overlayOptions.shape === "square") {
+            ctx.strokeRect(x, y, w, h);
+          } else {
+            drawRoundedRectPath(ctx, x, y, w, h, overlay.cornerRadius);
+            ctx.stroke();
+          }
         }
       }
 
       frameToken = requestAnimationFrame(drawFrame);
     };
-    drawFrame();
+    frameToken = requestAnimationFrame(drawFrame);
 
-    const compositeStream = canvas.captureStream(Math.max(24, Math.round(sourceFrameRate || 30)));
+    const compositeStream = canvas.captureStream(compositeFrameRate);
     return {
       compositeStream,
+      width: sourceWidth,
+      height: sourceHeight,
+      frameRate: compositeFrameRate,
       cleanup: () => {
         cancelAnimationFrame(frameToken);
         desktopVideo.pause();
@@ -357,10 +384,7 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
           mandatory: {
             chromeMediaSource: "desktop",
             chromeMediaSourceId: selectedSource.id,
-            maxWidth: TARGET_WIDTH,
-            maxHeight: TARGET_HEIGHT,
-            maxFrameRate: TARGET_FRAME_RATE,
-            minFrameRate: 30,
+            maxFrameRate: TARGET_CAPTURE_FPS,
           },
         },
       });
@@ -374,28 +398,16 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
       }
       try {
         await videoTrack.applyConstraints({
-          frameRate: { ideal: TARGET_FRAME_RATE, max: TARGET_FRAME_RATE },
-          width: { ideal: TARGET_WIDTH, max: TARGET_WIDTH },
-          height: { ideal: TARGET_HEIGHT, max: TARGET_HEIGHT },
+          frameRate: { ideal: TARGET_CAPTURE_FPS, max: MAX_CAPTURE_FPS },
         });
       } catch (error) {
-        console.warn("Unable to lock 4K/60fps constraints, using best available track settings.", error);
+        console.warn("Unable to lock recording frame-rate constraints, using best available track settings.", error);
       }
 
-      let { width = 1920, height = 1080, frameRate = TARGET_FRAME_RATE } = videoTrack.getSettings();
-      
-      // Ensure dimensions are divisible by 2 for VP9/AV1 codec compatibility
-      width = Math.floor(width / 2) * 2;
-      height = Math.floor(height / 2) * 2;
-      
-      const videoBitsPerSecond = computeBitrate(width, height);
-      const mimeType = selectMimeType();
-
-      console.log(
-        `Recording at ${width}x${height} @ ${frameRate ?? TARGET_FRAME_RATE}fps using ${mimeType} / ${Math.round(
-          videoBitsPerSecond / 1_000_000
-        )} Mbps`
-      );
+      let { width = 1920, height = 1080, frameRate = TARGET_CAPTURE_FPS } = videoTrack.getSettings();
+      width = ensureEvenDimension(width, 1920);
+      height = ensureEvenDimension(height, 1080);
+      frameRate = Math.max(24, Math.min(MAX_CAPTURE_FPS, Math.round(frameRate || TARGET_CAPTURE_FPS)));
       
       chunks.current = [];
       let recordingStream: MediaStream = desktopStream;
@@ -405,15 +417,26 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
             desktopStream,
             width,
             height,
-            frameRate ?? TARGET_FRAME_RATE,
+            frameRate,
             { shape: cameraShape, sizePercent: cameraSizePercent },
           );
           compositionCleanup.current = composition.cleanup;
           recordingStream = composition.compositeStream;
+          width = composition.width;
+          height = composition.height;
+          frameRate = composition.frameRate;
         } catch (error) {
           console.warn("Camera capture failed, fallback to screen-only recording.", error);
         }
       }
+
+      const videoBitsPerSecond = computeBitrate(width, height, frameRate);
+      const mimeType = selectMimeType();
+      console.log(
+        `Recording at ${width}x${height} @ ${frameRate}fps using ${mimeType} / ${Math.round(
+          videoBitsPerSecond / 1_000_000
+        )} Mbps`
+      );
 
       let recorder: MediaRecorder;
       try {
