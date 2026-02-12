@@ -18,6 +18,42 @@ type CompositionResources = {
   cleanup: () => void;
 };
 
+const VIRTUAL_CAMERA_KEYWORDS = [
+  "virtual",
+  "obs",
+  "continuity",
+  "desk view",
+  "presenter",
+  "iphone",
+  "epoccam",
+  "ndi",
+  "snap camera",
+];
+
+function isLikelyVirtualCameraLabel(label: string): boolean {
+  const normalized = label.trim().toLowerCase();
+  return VIRTUAL_CAMERA_KEYWORDS.some((keyword) => normalized.includes(keyword));
+}
+
+function dedupe<T>(items: T[]): T[] {
+  return Array.from(new Set(items));
+}
+
+async function pickPreferredCameraId(): Promise<string | undefined> {
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const cameras = devices.filter((device) => device.kind === "videoinput");
+    if (cameras.length === 0) return undefined;
+
+    const nonVirtual = cameras.filter((camera) => !isLikelyVirtualCameraLabel(camera.label));
+    const preferred = nonVirtual[0] ?? cameras[0];
+    return preferred?.deviceId || undefined;
+  } catch (error) {
+    console.warn("Failed to enumerate camera devices, using system default camera.", error);
+    return undefined;
+  }
+}
+
 export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseScreenRecorderReturn {
   const includeCamera = options.includeCamera ?? false;
   const cameraShape = options.cameraShape ?? "rounded";
@@ -60,6 +96,42 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
     }
 
     return Math.round(18_000_000 * highFrameRateBoost);
+  };
+
+  const createMediaRecorderWithFallback = (
+    sourceStream: MediaStream,
+    preferredMimeType: string,
+    bitrate: number
+  ): MediaRecorder => {
+    const mimeCandidates = dedupe(
+      [preferredMimeType, "video/webm;codecs=vp8", "video/webm"].filter((mime) => MediaRecorder.isTypeSupported(mime)),
+    );
+
+    let lastError: unknown = null;
+    for (const mimeType of mimeCandidates) {
+      try {
+        return new MediaRecorder(sourceStream, {
+          mimeType,
+          videoBitsPerSecond: bitrate,
+        });
+      } catch (error) {
+        lastError = error;
+        // Retry same codec without explicit bitrate (some machines reject high-bitrate options)
+        try {
+          return new MediaRecorder(sourceStream, { mimeType });
+        } catch (retryError) {
+          lastError = retryError;
+        }
+      }
+    }
+
+    try {
+      return new MediaRecorder(sourceStream, { videoBitsPerSecond: bitrate });
+    } catch (error) {
+      lastError = error;
+    }
+
+    throw lastError instanceof Error ? lastError : new Error("Failed to create MediaRecorder with available codecs.");
   };
 
   const stopRecording = useRef(() => {
@@ -120,13 +192,19 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
     sourceFrameRate: number,
     overlayOptions: { shape: CameraOverlayShape; sizePercent: number }
   ): Promise<CompositionResources> => {
+    const preferredCameraId = await pickPreferredCameraId();
+    const videoConstraints: MediaTrackConstraints = {
+      width: { ideal: 1280 },
+      height: { ideal: 720 },
+      frameRate: { ideal: 30, max: 60 },
+    };
+    if (preferredCameraId) {
+      videoConstraints.deviceId = { exact: preferredCameraId };
+    }
+
     const webcamStream = await navigator.mediaDevices.getUserMedia({
       audio: false,
-      video: {
-        width: { ideal: 1280 },
-        height: { ideal: 720 },
-        frameRate: { ideal: 30, max: 60 },
-      },
+      video: videoConstraints,
     });
     cameraStream.current = webcamStream;
 
@@ -332,10 +410,27 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
         }
       }
 
-      const recorder = new MediaRecorder(recordingStream, {
-        mimeType,
-        videoBitsPerSecond,
-      });
+      let recorder: MediaRecorder;
+      try {
+        recorder = createMediaRecorderWithFallback(recordingStream, mimeType, videoBitsPerSecond);
+      } catch (error) {
+        // Some machines fail MediaRecorder init for canvas capture + certain codecs.
+        // Fallback to screen-only stream so recording can still start.
+        if (recordingStream !== desktopStream) {
+          console.warn("Failed to initialize recorder for camera composited stream, fallback to screen-only.", error);
+          if (compositionCleanup.current) {
+            compositionCleanup.current();
+            compositionCleanup.current = null;
+          }
+          if (cameraStream.current) {
+            cameraStream.current.getTracks().forEach(track => track.stop());
+            cameraStream.current = null;
+          }
+          recorder = createMediaRecorderWithFallback(desktopStream, mimeType, videoBitsPerSecond);
+        } else {
+          throw error;
+        }
+      }
       mediaRecorder.current = recorder;
       recorder.ondataavailable = e => {
         if (e.data && e.data.size > 0) chunks.current.push(e.data);
