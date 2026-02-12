@@ -446,6 +446,30 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
     selectedSource: { id?: string | null },
     cursorMode: "always" | "never",
   ): Promise<MediaStream> => {
+    const captureWithLegacyDesktopConstraints = async (): Promise<MediaStream> =>
+      await (navigator.mediaDevices as any).getUserMedia({
+        audio: false,
+        video: {
+          mandatory: {
+            chromeMediaSource: "desktop",
+            chromeMediaSourceId: selectedSource.id,
+            maxFrameRate: TARGET_CAPTURE_FPS,
+            cursor: cursorMode,
+          },
+          cursor: cursorMode,
+        },
+      });
+
+    // Hide-native-cursor path: prefer legacy constraints first because this path is
+    // currently more reliable on Electron/macOS for cursor suppression.
+    if (cursorMode === "never") {
+      try {
+        return await captureWithLegacyDesktopConstraints();
+      } catch (error) {
+        console.warn("Legacy desktop capture failed for cursor hidden mode, trying displayMedia.", error);
+      }
+    }
+
     const getDisplayMedia = navigator.mediaDevices.getDisplayMedia?.bind(navigator.mediaDevices);
     if (typeof getDisplayMedia === "function") {
       try {
@@ -461,18 +485,7 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
       }
     }
 
-    return await (navigator.mediaDevices as any).getUserMedia({
-      audio: false,
-      video: {
-        mandatory: {
-          chromeMediaSource: "desktop",
-          chromeMediaSourceId: selectedSource.id,
-          maxFrameRate: TARGET_CAPTURE_FPS,
-          cursor: cursorMode,
-        },
-        cursor: cursorMode,
-      },
-    });
+    return await captureWithLegacyDesktopConstraints();
   };
 
   const startRecording = async () => {
@@ -499,7 +512,9 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
       try {
         await videoTrack.applyConstraints({
           frameRate: { ideal: TARGET_CAPTURE_FPS, max: MAX_CAPTURE_FPS },
-        });
+          // Keep cursor visibility preference stable across subsequent constraint updates.
+          ...( { cursor: cursorMode } as MediaTrackConstraints ),
+        } as MediaTrackConstraints);
       } catch (error) {
         console.warn("Unable to lock recording frame-rate constraints, using best available track settings.", error);
       }
@@ -514,7 +529,8 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
           width: { ideal: width, max: width },
           height: { ideal: height, max: height },
           frameRate: { ideal: TARGET_CAPTURE_FPS, max: MAX_CAPTURE_FPS },
-        });
+          ...( { cursor: cursorMode } as MediaTrackConstraints ),
+        } as MediaTrackConstraints);
       } catch (error) {
         console.warn("Unable to apply normalized capture dimensions, keeping source track dimensions.", error);
       }
