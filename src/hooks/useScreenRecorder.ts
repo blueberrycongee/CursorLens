@@ -73,11 +73,11 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
   const startTime = useRef<number>(0);
   const compositionCleanup = useRef<(() => void) | null>(null);
 
-  const profileSettings: Record<CaptureProfile, { targetFps: number; maxFps: number; bitrateScale: number; cameraCompositeFpsCap: number }> = {
-    balanced: { targetFps: 30, maxFps: 60, bitrateScale: 0.9, cameraCompositeFpsCap: 30 },
-    quality: { targetFps: 60, maxFps: 60, bitrateScale: 1.1, cameraCompositeFpsCap: 60 },
+  const profileSettings: Record<CaptureProfile, { targetFps: number; maxFps: number; bitrateScale: number; cameraCompositeFpsCap: number; maxLongEdge: number }> = {
+    balanced: { targetFps: 30, maxFps: 60, bitrateScale: 0.9, cameraCompositeFpsCap: 30, maxLongEdge: 1920 },
+    quality: { targetFps: 60, maxFps: 60, bitrateScale: 1.1, cameraCompositeFpsCap: 60, maxLongEdge: 2560 },
     // Experimental profile: only beneficial on devices that can sustain high-refresh desktop capture.
-    ultra: { targetFps: 120, maxFps: 120, bitrateScale: 1.25, cameraCompositeFpsCap: 60 },
+    ultra: { targetFps: 120, maxFps: 120, bitrateScale: 1.25, cameraCompositeFpsCap: 60, maxLongEdge: 4096 },
   };
 
   const activeProfile = profileSettings[captureProfile];
@@ -89,11 +89,27 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
     return Math.max(2, Math.floor(resolved / 2) * 2);
   };
 
+  const normalizeCaptureDimensions = (rawWidth: number, rawHeight: number): { width: number; height: number } => {
+    let width = ensureEvenDimension(rawWidth, 1920);
+    let height = ensureEvenDimension(rawHeight, 1080);
+
+    const longEdge = Math.max(width, height);
+    if (longEdge <= activeProfile.maxLongEdge) {
+      return { width, height };
+    }
+
+    const scale = activeProfile.maxLongEdge / longEdge;
+    width = ensureEvenDimension(Math.round(width * scale), 1920);
+    height = ensureEvenDimension(Math.round(height * scale), 1080);
+    return { width, height };
+  };
+
   const selectMimeType = () => {
-    // Prefer encoders that are usually lighter on CPU and broadly decodable in Electron.
+    // Prefer H.264 first for decoding/export compatibility and smoother timeline playback.
     const preferred = [
-      "video/webm;codecs=vp8",
       "video/webm;codecs=h264",
+      "video/mp4;codecs=h264",
+      "video/webm;codecs=vp8",
       "video/webm;codecs=vp9",
       "video/webm;codecs=av1",
       "video/webm"
@@ -120,8 +136,9 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
     const mimeCandidates = dedupe(
       [
         preferredMimeType,
-        "video/webm;codecs=vp8",
         "video/webm;codecs=h264",
+        "video/mp4;codecs=h264",
+        "video/webm;codecs=vp8",
         "video/webm;codecs=vp9",
         "video/webm",
       ].filter((mime) => MediaRecorder.isTypeSupported(mime)),
@@ -417,9 +434,31 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
       }
 
       let { width = 1920, height = 1080, frameRate = TARGET_CAPTURE_FPS } = videoTrack.getSettings();
-      width = ensureEvenDimension(width, 1920);
-      height = ensureEvenDimension(height, 1080);
-      frameRate = Math.max(24, Math.min(MAX_CAPTURE_FPS, Math.round(frameRate || TARGET_CAPTURE_FPS)));
+      const normalizedCaptureSize = normalizeCaptureDimensions(width, height);
+      width = normalizedCaptureSize.width;
+      height = normalizedCaptureSize.height;
+
+      try {
+        await videoTrack.applyConstraints({
+          width: { ideal: width, max: width },
+          height: { ideal: height, max: height },
+          frameRate: { ideal: TARGET_CAPTURE_FPS, max: MAX_CAPTURE_FPS },
+        });
+      } catch (error) {
+        console.warn("Unable to apply normalized capture dimensions, keeping source track dimensions.", error);
+      }
+
+      const finalSettings = videoTrack.getSettings();
+      const finalNormalizedCaptureSize = normalizeCaptureDimensions(finalSettings.width ?? width, finalSettings.height ?? height);
+      width = finalNormalizedCaptureSize.width;
+      height = finalNormalizedCaptureSize.height;
+      frameRate = Math.max(
+        24,
+        Math.min(
+          MAX_CAPTURE_FPS,
+          Math.round(finalSettings.frameRate || frameRate || TARGET_CAPTURE_FPS),
+        ),
+      );
       
       chunks.current = [];
       let recordingStream: MediaStream = desktopStream;

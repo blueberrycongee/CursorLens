@@ -41,6 +41,7 @@ interface VideoPlaybackProps {
   onSelectAnnotation?: (id: string | null) => void;
   onAnnotationPositionChange?: (id: string, position: { x: number; y: number }) => void;
   onAnnotationSizeChange?: (id: string, size: { width: number; height: number }) => void;
+  preferredFps?: number;
 }
 
 export interface VideoPlaybackRef {
@@ -80,6 +81,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
   onSelectAnnotation,
   onAnnotationPositionChange,
   onAnnotationSizeChange,
+  preferredFps = 60,
 }, ref) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -113,6 +115,12 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
   const trimRegionsRef = useRef<TrimRegion[]>([]);
   const motionBlurEnabledRef = useRef(motionBlurEnabled);
   const videoReadyRafRef = useRef<number | null>(null);
+  const preferredFpsRef = useRef(preferredFps);
+
+  const normalizeTickerFps = useCallback((fps: number) => {
+    if (!Number.isFinite(fps)) return 60;
+    return Math.max(30, Math.min(120, Math.round(fps)));
+  }, []);
 
   const clampFocusToStage = useCallback((focus: ZoomFocus, depth: ZoomDepth) => {
     return clampFocusToStageUtil(focus, depth, stageSizeRef.current);
@@ -324,6 +332,14 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
   }, [motionBlurEnabled]);
 
   useEffect(() => {
+    preferredFpsRef.current = preferredFps;
+    const app = appRef.current;
+    if (app?.ticker) {
+      app.ticker.maxFPS = normalizeTickerFps(preferredFps);
+    }
+  }, [preferredFps, normalizeTickerFps]);
+
+  useEffect(() => {
     if (!pixiReady || !videoReady) return;
 
     const app = appRef.current;
@@ -447,11 +463,12 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
         height: container.clientHeight,
         backgroundAlpha: 0,
         antialias: true,
-        resolution: window.devicePixelRatio || 1,
+        // Limit preview pixel density to keep timeline playback smooth on HiDPI displays.
+        resolution: preferredFpsRef.current > 60 ? 1 : Math.min(window.devicePixelRatio || 1, 1.25),
         autoDensity: true,
       });
 
-      app.ticker.maxFPS = 60;
+      app.ticker.maxFPS = normalizeTickerFps(preferredFpsRef.current);
 
       if (!mounted) {
         app.destroy(true, { children: true, texture: true, textureSource: true });

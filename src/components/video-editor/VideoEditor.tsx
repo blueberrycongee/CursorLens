@@ -36,12 +36,20 @@ import { useI18n } from "@/i18n";
 const WALLPAPER_COUNT = 18;
 const WALLPAPER_PATHS = Array.from({ length: WALLPAPER_COUNT }, (_, i) => `/wallpapers/wallpaper${i + 1}.jpg`);
 
-function resolveExportFrameRate(sourceFrameRate?: number): number {
+function resolvePreviewFrameRate(sourceFrameRate?: number): number {
   if (!Number.isFinite(sourceFrameRate)) return 60;
   const normalized = Math.round(sourceFrameRate || 60);
-  if (normalized < 24) return 24;
+  if (normalized < 30) return 30;
   if (normalized > 120) return 120;
   return normalized;
+}
+
+function resolveExportFrameRate(sourceFrameRate: number | undefined, quality: ExportQuality): number {
+  const previewRate = resolvePreviewFrameRate(sourceFrameRate);
+  if (quality === 'source') {
+    return previewRate;
+  }
+  return Math.min(previewRate, 60);
 }
 
 export default function VideoEditor() {
@@ -620,7 +628,7 @@ export default function VideoEditor() {
           }
         }
 
-        const exportFrameRate = resolveExportFrameRate(sourceFrameRate);
+        const exportFrameRate = resolveExportFrameRate(sourceFrameRate, quality);
         const exporter = new VideoExporter({
           videoUrl: videoPath,
           width: exportWidth,
@@ -772,6 +780,7 @@ export default function VideoEditor() {
                   <div className="relative" style={{ width: 'auto', height: '100%', aspectRatio: getAspectRatioValue(aspectRatio), maxWidth: '100%', margin: '0 auto', boxSizing: 'border-box' }}>
                     <VideoPlayback
                       aspectRatio={aspectRatio}
+                      preferredFps={resolvePreviewFrameRate(sourceFrameRate)}
                       ref={videoPlaybackRef}
                       videoPath={videoPath || ''}
                       onDurationChange={setDuration}
