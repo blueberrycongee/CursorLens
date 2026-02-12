@@ -23,6 +23,15 @@ interface VideoExporterConfig extends ExportConfig {
   onProgress?: (progress: ExportProgress) => void;
 }
 
+export function getSeekToleranceSeconds(frameRate: number): number {
+  const safeFrameRate = Number.isFinite(frameRate) && frameRate > 0 ? frameRate : 60;
+  return Math.max(1 / (safeFrameRate * 2), 1 / 240);
+}
+
+export function shouldSeekToTime(currentTime: number, targetTime: number, frameRate: number): boolean {
+  return Math.abs(currentTime - targetTime) > getSeekToleranceSeconds(frameRate);
+}
+
 export class VideoExporter {
   private config: VideoExporterConfig;
   private decoder: VideoFileDecoder | null = null;
@@ -37,6 +46,7 @@ export class VideoExporter {
   private videoColorSpace: VideoColorSpaceInit | undefined;
   // Track muxing promises for parallel processing
   private muxingPromises: Promise<void>[] = [];
+  private muxingError: Error | null = null;
   private chunkCount = 0;
 
   constructor(config: VideoExporterConfig) {
@@ -77,6 +87,7 @@ export class VideoExporter {
     try {
       this.cleanup();
       this.cancelled = false;
+      this.muxingError = null;
 
       // Initialize decoder and load video
       this.decoder = new VideoFileDecoder();
@@ -139,7 +150,7 @@ export class VideoExporter {
         const videoTime = sourceTimeMs / 1000;
           
         // Seek if needed or wait for first frame to be ready
-        const needsSeek = Math.abs(videoElement.currentTime - videoTime) > 0.001;
+        const needsSeek = shouldSeekToTime(videoElement.currentTime, videoTime, this.config.frameRate);
 
         if (needsSeek) {
           // Attach listener BEFORE setting currentTime to avoid race condition
@@ -149,11 +160,9 @@ export class VideoExporter {
           
           videoElement.currentTime = videoTime;
           await seekedPromise;
+          await this.waitForVideoFrame(videoElement);
         } else if (i === 0) {
-          // Only for the very first frame, wait for it to be ready
-          await new Promise<void>(resolve => {
-            videoElement.requestVideoFrameCallback(() => resolve());
-          });
+          await this.waitForVideoFrame(videoElement);
         }
 
         // Create a VideoFrame from the video element (on GPU!)
@@ -210,6 +219,9 @@ export class VideoExporter {
       }
 
       if (this.cancelled) {
+        if (this.muxingError) {
+          throw this.muxingError;
+        }
         return { success: false, error: 'Export cancelled' };
       }
 
@@ -219,7 +231,15 @@ export class VideoExporter {
       }
 
       // Wait for all muxing operations to complete
-      await Promise.all(this.muxingPromises);
+      const muxResults = await Promise.allSettled(this.muxingPromises);
+      if (this.muxingError) {
+        throw this.muxingError;
+      }
+      const firstRejected = muxResults.find((result) => result.status === 'rejected') as PromiseRejectedResult | undefined;
+      if (firstRejected) {
+        const reason = firstRejected.reason;
+        throw reason instanceof Error ? reason : new Error(String(reason));
+      }
 
       // Finalize muxer and get output blob
       const blob = await this.muxer!.finalize();
@@ -239,6 +259,7 @@ export class VideoExporter {
   private async initializeEncoder(): Promise<void> {
     this.encodeQueue = 0;
     this.muxingPromises = [];
+    this.muxingError = null;
     this.chunkCount = 0;
     let videoDescription: Uint8Array | undefined;
 
@@ -260,41 +281,48 @@ export class VideoExporter {
         this.chunkCount++;
 
         const muxingPromise = (async () => {
-          try {
-            if (isFirstChunk && this.videoDescription) {
-              // Add decoder config for the first chunk
-              const colorSpace = this.videoColorSpace || {
-                primaries: 'bt709',
-                transfer: 'iec61966-2-1',
-                matrix: 'rgb',
-                fullRange: true,
-              };
+          if (isFirstChunk && this.videoDescription) {
+            // Add decoder config for the first chunk
+            const colorSpace = this.videoColorSpace || {
+              primaries: 'bt709',
+              transfer: 'iec61966-2-1',
+              matrix: 'rgb',
+              fullRange: true,
+            };
 
-              const metadata: EncodedVideoChunkMetadata = {
-                decoderConfig: {
-                  codec: this.config.codec || 'avc1.640033',
-                  codedWidth: this.config.width,
-                  codedHeight: this.config.height,
-                  description: this.videoDescription,
-                  colorSpace,
-                },
-              };
+            const metadata: EncodedVideoChunkMetadata = {
+              decoderConfig: {
+                codec: this.config.codec || 'avc1.640033',
+                codedWidth: this.config.width,
+                codedHeight: this.config.height,
+                description: this.videoDescription,
+                colorSpace,
+              },
+            };
 
-              await this.muxer!.addVideoChunk(chunk, metadata);
-            } else {
-              await this.muxer!.addVideoChunk(chunk, meta);
-            }
-          } catch (error) {
-            console.error('Muxing error:', error);
+            await this.muxer!.addVideoChunk(chunk, metadata);
+          } else {
+            await this.muxer!.addVideoChunk(chunk, meta);
           }
         })();
 
         this.muxingPromises.push(muxingPromise);
+        void muxingPromise.catch((error) => {
+          const normalized = error instanceof Error ? error : new Error(String(error));
+          if (!this.muxingError) {
+            this.muxingError = normalized;
+          }
+          this.cancelled = true;
+        });
         this.encodeQueue--;
       },
       error: (error) => {
         console.error('[VideoExporter] Encoder error:', error);
-        // Stop export encoding failed
+        const normalized = error instanceof Error ? error : new Error(String(error));
+        if (!this.muxingError) {
+          this.muxingError = normalized;
+        }
+        // Stop export when encoding fails
         this.cancelled = true;
       },
     });
@@ -338,6 +366,31 @@ export class VideoExporter {
     this.cleanup();
   }
 
+  private async waitForVideoFrame(videoElement: HTMLVideoElement, timeoutMs = 250): Promise<void> {
+    if (typeof videoElement.requestVideoFrameCallback === 'function') {
+      await new Promise<void>((resolve) => {
+        let settled = false;
+        const timeout = window.setTimeout(() => {
+          if (!settled) {
+            settled = true;
+            resolve();
+          }
+        }, timeoutMs);
+
+        videoElement.requestVideoFrameCallback(() => {
+          if (!settled) {
+            settled = true;
+            window.clearTimeout(timeout);
+            resolve();
+          }
+        });
+      });
+      return;
+    }
+
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+  }
+
   private cleanup(): void {
     if (this.encoder) {
       try {
@@ -371,6 +424,7 @@ export class VideoExporter {
     this.muxer = null;
     this.encodeQueue = 0;
     this.muxingPromises = [];
+    this.muxingError = null;
     this.chunkCount = 0;
     this.videoDescription = undefined;
     this.videoColorSpace = undefined;
