@@ -9,8 +9,9 @@ import { MdMonitor } from "react-icons/md";
 import { RxDragHandleDots2 } from "react-icons/rx";
 import { FaFolderMinus } from "react-icons/fa6";
 import { FiCamera, FiMinus, FiX } from "react-icons/fi";
-import { ContentClamp } from "../ui/content-clamp";
+import { SlidersHorizontal } from "lucide-react";
 import { useI18n } from "@/i18n";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
 const CAMERA_SHAPE_CYCLE: CameraOverlayShape[] = ["rounded", "square", "circle"];
 
@@ -176,7 +177,7 @@ export function LaunchWindow() {
   return (
     <div className="w-full h-full flex items-center bg-transparent">
       <div
-        className={`w-full max-w-[500px] mx-auto flex items-center justify-between px-4 py-2 ${styles.electronDrag}`}
+        className={`w-full max-w-[860px] mx-auto flex items-center gap-2 px-3 py-2 ${styles.electronDrag}`}
         style={{
           borderRadius: 16,
           background: 'linear-gradient(135deg, rgba(30,30,40,0.92) 0%, rgba(20,20,30,0.85) 100%)',
@@ -187,36 +188,27 @@ export function LaunchWindow() {
           minHeight: 44,
         }}
       >
-        <div className={`flex items-center gap-1 ${styles.electronDrag}`}> <RxDragHandleDots2 size={18} className="text-white/40" /> </div>
-        <select
-          value={locale}
-          onChange={(event) => setLocale(event.target.value as typeof locale)}
-          className={`h-6 rounded bg-white/10 text-[10px] text-white border border-white/20 px-1.5 ${styles.electronNoDrag}`}
-          title={t("common.language")}
-        >
-          <option value="en">{t("common.english")}</option>
-          <option value="zh-CN">{t("common.chinese")}</option>
-        </select>
+        <div className={`flex items-center gap-1 shrink-0 ${styles.electronDrag}`}>
+          <RxDragHandleDots2 size={18} className="text-white/40" />
+        </div>
 
         <Button
           variant="link"
           size="sm"
-          className={`gap-1 text-white bg-transparent hover:bg-transparent px-0 flex-1 text-left text-xs ${styles.electronNoDrag}`}
+          className={`gap-1 min-w-0 flex-1 overflow-hidden text-white bg-transparent hover:bg-transparent px-1 justify-start text-xs ${styles.electronNoDrag}`}
           onClick={openSourceSelector}
           disabled={recording}
+          title={selectedSource}
         >
           <MdMonitor size={14} className="text-white" />
-          <ContentClamp truncateLength={6}>{selectedSource}</ContentClamp>
+          <span className="truncate max-w-full block pointer-events-none">{selectedSource}</span>
         </Button>
-
-        <div className="w-px h-6 bg-white/30" />
 
         <Button
           variant="link"
           size="sm"
           onClick={hasSelectedSource ? toggleRecording : openSourceSelector}
-          disabled={!hasSelectedSource && !recording}
-          className={`gap-1 text-white bg-transparent hover:bg-transparent px-0 flex-1 text-center text-xs ${styles.electronNoDrag}`}
+          className={`relative z-20 gap-1 shrink-0 min-w-[96px] text-white bg-white/5 hover:bg-white/10 border border-white/10 rounded-md px-2 text-center text-xs ${styles.electronNoDrag}`}
         >
           {recording ? (
             <>
@@ -230,14 +222,11 @@ export function LaunchWindow() {
             </>
           )}
         </Button>
-        
-
-        <div className="w-px h-6 bg-white/30" />
 
         <Button
           variant="link"
           size="sm"
-          className={`gap-1 text-white bg-transparent hover:bg-transparent px-0 flex-1 text-center text-xs ${styles.electronNoDrag}`}
+          className={`gap-1 shrink-0 min-w-[92px] text-white bg-transparent hover:bg-transparent px-1 text-center text-xs ${styles.electronNoDrag}`}
           onClick={() => setIncludeCamera((value) => !value)}
           disabled={recording}
           title={includeCamera ? t("launch.cameraEnabled") : t("launch.cameraEnable")}
@@ -246,46 +235,64 @@ export function LaunchWindow() {
           <span className={includeCamera ? "text-cyan-300" : "text-white/50"}>{t("launch.camera")}</span>
         </Button>
 
-        <div className="w-px h-6 bg-white/30" />
-
         {includeCamera ? (
-          <>
-            <Button
-              variant="link"
-              size="sm"
-              className={`gap-1 text-cyan-200 bg-transparent hover:bg-transparent px-0 text-xs ${styles.electronNoDrag}`}
-              onClick={cycleCameraShape}
-              disabled={recording}
-              title={t("launch.cameraShapeLabel", { shape: cameraShapeLabelMap[cameraShape] })}
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                variant="link"
+                size="sm"
+                className={`gap-1 shrink-0 min-w-[70px] text-cyan-200 bg-cyan-400/10 hover:bg-cyan-400/20 border border-cyan-300/20 px-1 text-xs ${styles.electronNoDrag}`}
+                title={t("launch.cameraShapeLabel", { shape: cameraShapeLabelMap[cameraShape] })}
+              >
+                <SlidersHorizontal size={13} />
+                <span>{t("launch.shape")}</span>
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent
+              sideOffset={8}
+              align="center"
+              className={`w-[210px] bg-[#11131a] border border-cyan-300/20 text-cyan-100 p-2 ${styles.electronNoDrag}`}
             >
-              <span>{t("launch.shape")}</span>
-              <span className={styles.cameraConfigBadge}>{cameraShapeLabelMap[cameraShape]}</span>
-            </Button>
-
-            <Button
-              variant="link"
-              size="sm"
-              className={`text-cyan-200 bg-transparent hover:bg-transparent px-1 text-xs ${styles.electronNoDrag}`}
-              onClick={() => setCameraSizePercent((value) => clamp(value - 2, 14, 40))}
-              disabled={recording}
-              title={t("launch.sizeDecrease")}
-            >
-              -
-            </Button>
-            <span className={styles.cameraSizeReadout}>{cameraSizePercent}%</span>
-            <Button
-              variant="link"
-              size="sm"
-              className={`text-cyan-200 bg-transparent hover:bg-transparent px-1 text-xs ${styles.electronNoDrag}`}
-              onClick={() => setCameraSizePercent((value) => clamp(value + 2, 14, 40))}
-              disabled={recording}
-              title={t("launch.sizeIncrease")}
-            >
-              +
-            </Button>
-
-            <div className="w-px h-6 bg-white/30" />
-          </>
+              <div className="flex items-center justify-between text-[11px] mb-2">
+                <span>{t("launch.shape")}</span>
+                <span className={styles.cameraConfigBadge}>{cameraShapeLabelMap[cameraShape]}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="link"
+                  size="sm"
+                  className={`text-cyan-200 bg-transparent hover:bg-cyan-200/10 px-2 h-7 text-sm ${styles.electronNoDrag}`}
+                  onClick={cycleCameraShape}
+                  disabled={recording}
+                >
+                  {cameraShapeLabelMap[cameraShape]}
+                </Button>
+                <div className="ml-auto flex items-center gap-1">
+                  <Button
+                    variant="link"
+                    size="sm"
+                    className={`text-cyan-200 bg-transparent hover:bg-cyan-200/10 px-1 h-7 text-xs ${styles.electronNoDrag}`}
+                    onClick={() => setCameraSizePercent((value) => clamp(value - 2, 14, 40))}
+                    disabled={recording}
+                    title={t("launch.sizeDecrease")}
+                  >
+                    -
+                  </Button>
+                  <span className={styles.cameraSizeReadout}>{cameraSizePercent}%</span>
+                  <Button
+                    variant="link"
+                    size="sm"
+                    className={`text-cyan-200 bg-transparent hover:bg-cyan-200/10 px-1 h-7 text-xs ${styles.electronNoDrag}`}
+                    onClick={() => setCameraSizePercent((value) => clamp(value + 2, 14, 40))}
+                    disabled={recording}
+                    title={t("launch.sizeIncrease")}
+                  >
+                    +
+                  </Button>
+                </div>
+              </div>
+            </PopoverContent>
+          </Popover>
         ) : null}
 
 
@@ -293,35 +300,44 @@ export function LaunchWindow() {
           variant="link"
           size="sm"
           onClick={openVideoFile}
-          className={`gap-1 text-white bg-transparent hover:bg-transparent px-0 flex-1 text-right text-xs ${styles.electronNoDrag} ${styles.folderButton}`}
+          className={`gap-1 shrink-0 min-w-[72px] text-white bg-transparent hover:bg-transparent px-0 text-right text-xs ${styles.electronNoDrag} ${styles.folderButton}`}
           disabled={recording}
         >
           <FaFolderMinus size={14} className="text-white" />
           <span className={styles.folderText}>{t("launch.open")}</span>
         </Button>
 
-         {/* Separator before hide/close buttons */}
-        <div className="w-px h-6 bg-white/30 mx-2" />
-        <Button
-          variant="link"
-          size="icon"
-          className={`ml-2 ${styles.electronNoDrag} hudOverlayButton`}
-          title={t("launch.hideHud")}
-          onClick={sendHudOverlayHide}
+        <select
+          value={locale}
+          onChange={(event) => setLocale(event.target.value as typeof locale)}
+          className={`h-6 w-[92px] shrink-0 rounded bg-white/10 text-[10px] text-white border border-white/20 px-1.5 ${styles.electronNoDrag}`}
+          title={t("common.language")}
         >
-          <FiMinus size={18} style={{ color: '#fff', opacity: 0.7 }} />
-          
-        </Button>
+          <option value="en">{t("common.english")}</option>
+          <option value="zh-CN">{t("common.chinese")}</option>
+        </select>
 
-        <Button
-          variant="link"
-          size="icon"
-          className={`ml-1 ${styles.electronNoDrag} hudOverlayButton`}
-          title={t("launch.closeApp")}
-          onClick={sendHudOverlayClose}
-        >
-          <FiX size={18} style={{ color: '#fff', opacity: 0.7 }} />
-        </Button>
+        <div className={`flex items-center gap-1 shrink-0 ${styles.electronNoDrag}`}>
+          <Button
+            variant="link"
+            size="icon"
+            className={`h-7 w-7 ${styles.electronNoDrag} hudOverlayButton`}
+            title={t("launch.hideHud")}
+            onClick={sendHudOverlayHide}
+          >
+            <FiMinus size={18} style={{ color: '#fff', opacity: 0.7 }} />
+          </Button>
+
+          <Button
+            variant="link"
+            size="icon"
+            className={`h-7 w-7 ${styles.electronNoDrag} hudOverlayButton`}
+            title={t("launch.closeApp")}
+            onClick={sendHudOverlayClose}
+          >
+            <FiX size={18} style={{ color: '#fff', opacity: 0.7 }} />
+          </Button>
+        </div>
       </div>
     </div>
   );
