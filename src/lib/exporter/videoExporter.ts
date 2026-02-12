@@ -335,7 +335,8 @@ export class VideoExporter {
       height: this.config.height,
       bitrate: this.config.bitrate,
       framerate: this.config.frameRate,
-      latencyMode: 'realtime',
+      // Offline export prefers visual quality/temporal stability over low latency.
+      latencyMode: 'quality',
       bitrateMode: 'variable',
       hardwareAcceleration: 'prefer-hardware',
     };

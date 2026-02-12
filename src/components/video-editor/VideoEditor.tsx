@@ -44,12 +44,20 @@ function resolvePreviewFrameRate(sourceFrameRate?: number): number {
   return normalized;
 }
 
+function normalizeExportSourceFrameRate(sourceFrameRate?: number): number {
+  if (!Number.isFinite(sourceFrameRate)) return 60;
+  const normalized = Math.round(sourceFrameRate || 60);
+  if (normalized < 24) return 24;
+  if (normalized > 120) return 120;
+  return normalized;
+}
+
 function resolveExportFrameRate(sourceFrameRate: number | undefined, quality: ExportQuality): number {
-  const previewRate = resolvePreviewFrameRate(sourceFrameRate);
+  const sourceRate = normalizeExportSourceFrameRate(sourceFrameRate);
   if (quality === 'source') {
-    return previewRate;
+    return sourceRate;
   }
-  return Math.min(previewRate, 60);
+  return Math.min(sourceRate, 60);
 }
 
 export default function VideoEditor() {
