@@ -313,7 +313,8 @@ export function registerIpcHandlers(
   createSourceSelectorWindow: () => BrowserWindow,
   getMainWindow: () => BrowserWindow | null,
   getSourceSelectorWindow: () => BrowserWindow | null,
-  onRecordingStateChange?: (recording: boolean, sourceName: string) => void
+  onRecordingStateChange?: (recording: boolean, sourceName: string) => void,
+  onSourceSelectionChange?: (source: SelectedSource | null) => void,
 ) {
   let currentVideoPath: string | null = null
   let currentVideoMetadata: CurrentVideoMetadata | null = null
@@ -520,6 +521,7 @@ export function registerIpcHandlers(
 
   ipcMain.handle('select-source', (_, source) => {
     selectedSource = source
+    onSourceSelectionChange?.(selectedSource)
     const sourceSelectorWin = getSourceSelectorWindow()
     if (sourceSelectorWin) {
       sourceSelectorWin.close()

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Tray, Menu, nativeImage } from 'electron'
+import { app, BrowserWindow, Tray, Menu, nativeImage, session, desktopCapturer } from 'electron'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import fs from 'node:fs/promises'
@@ -44,6 +44,7 @@ let mainWindow: BrowserWindow | null = null
 let sourceSelectorWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let selectedSourceName = ''
+let selectedDesktopSourceId: string | null = null
 
 // Tray Icons
 const defaultTrayIcon = getTrayIcon('openscreen.png');
@@ -162,6 +163,34 @@ app.on('activate', () => {
 
 // Register all IPC handlers when app is ready
 app.whenReady().then(async () => {
+  session.defaultSession.setDisplayMediaRequestHandler(async (_request, callback) => {
+    try {
+      if (!selectedDesktopSourceId) {
+        callback({ video: undefined, audio: undefined })
+        return
+      }
+
+      const sources = await desktopCapturer.getSources({
+        types: ['screen', 'window'],
+        thumbnailSize: { width: 1, height: 1 },
+        fetchWindowIcons: false,
+      })
+      const selectedSource = sources.find((source) => source.id === selectedDesktopSourceId)
+      if (!selectedSource) {
+        callback({ video: undefined, audio: undefined })
+        return
+      }
+
+      callback({
+        video: selectedSource,
+        audio: undefined,
+      })
+    } catch (error) {
+      console.error('display-media handler failed:', error)
+      callback({ video: undefined, audio: undefined })
+    }
+  })
+
     // Listen for HUD overlay quit event (macOS only)
     const { ipcMain } = await import('electron');
     ipcMain.on('hud-overlay-close', () => {
@@ -184,6 +213,9 @@ app.whenReady().then(async () => {
       if (!recording) {
         if (mainWindow) mainWindow.restore();
       }
+    },
+    (source) => {
+      selectedDesktopSourceId = source?.id ?? null
     }
   )
   createWindow()

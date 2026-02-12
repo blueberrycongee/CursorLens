@@ -442,6 +442,39 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
     };
   };
 
+  const captureDesktopStream = async (
+    selectedSource: { id?: string | null },
+    cursorMode: "always" | "never",
+  ): Promise<MediaStream> => {
+    const getDisplayMedia = navigator.mediaDevices.getDisplayMedia?.bind(navigator.mediaDevices);
+    if (typeof getDisplayMedia === "function") {
+      try {
+        return await getDisplayMedia({
+          audio: false,
+          video: {
+            frameRate: { ideal: TARGET_CAPTURE_FPS, max: MAX_CAPTURE_FPS },
+            cursor: cursorMode,
+          } as MediaTrackConstraints,
+        });
+      } catch (error) {
+        console.warn("getDisplayMedia capture failed, falling back to legacy desktop capture constraints.", error);
+      }
+    }
+
+    return await (navigator.mediaDevices as any).getUserMedia({
+      audio: false,
+      video: {
+        mandatory: {
+          chromeMediaSource: "desktop",
+          chromeMediaSourceId: selectedSource.id,
+          maxFrameRate: TARGET_CAPTURE_FPS,
+          cursor: cursorMode,
+        },
+        cursor: cursorMode,
+      },
+    });
+  };
+
   const startRecording = async () => {
     try {
       const selectedSource = await window.electronAPI.getSelectedSource();
@@ -451,18 +484,7 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
       }
 
       const cursorMode = recordSystemCursor ? "always" : "never";
-      const desktopStream = await (navigator.mediaDevices as any).getUserMedia({
-        audio: false,
-        video: {
-          mandatory: {
-            chromeMediaSource: "desktop",
-            chromeMediaSourceId: selectedSource.id,
-            maxFrameRate: TARGET_CAPTURE_FPS,
-            cursor: cursorMode,
-          },
-          cursor: cursorMode,
-        },
-      });
+      const desktopStream = await captureDesktopStream(selectedSource, cursorMode);
       stream.current = desktopStream;
       if (!desktopStream) {
         throw new Error("Media stream is not available.");
@@ -470,6 +492,9 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
       const videoTrack = desktopStream.getVideoTracks()[0];
       if (!videoTrack) {
         throw new Error("No video track available from desktop stream.");
+      }
+      if ("contentHint" in videoTrack) {
+        videoTrack.contentHint = "detail";
       }
       try {
         await videoTrack.applyConstraints({
