@@ -65,15 +65,39 @@ function getTrayIcon(filename: string) {
   });
 }
 
+function currentLocale(): 'en' | 'zh-CN' {
+  return app.getLocale().toLowerCase().startsWith('zh') ? 'zh-CN' : 'en'
+}
+
+function trayText(locale: 'en' | 'zh-CN', key: 'app' | 'recording' | 'stop' | 'open' | 'quit', source?: string): string {
+  const dict = locale === 'zh-CN'
+    ? {
+        app: 'CursorLens',
+        recording: `录制中：${source ?? ''}`,
+        stop: '停止录制',
+        open: '打开',
+        quit: '退出',
+      }
+    : {
+        app: 'CursorLens',
+        recording: `Recording: ${source ?? ''}`,
+        stop: 'Stop Recording',
+        open: 'Open',
+        quit: 'Quit',
+      }
+  return dict[key]
+}
+
 
 function updateTrayMenu(recording: boolean = false) {
   if (!tray) return;
+  const locale = currentLocale();
   const trayIcon = recording ? recordingTrayIcon : defaultTrayIcon;
-  const trayToolTip = recording ? `Recording: ${selectedSourceName}` : "OpenScreen";
+  const trayToolTip = recording ? trayText(locale, 'recording', selectedSourceName) : trayText(locale, 'app');
   const menuTemplate = recording
     ? [
         {
-          label: "Stop Recording",
+          label: trayText(locale, 'stop'),
           click: () => {
             if (mainWindow && !mainWindow.isDestroyed()) {
               mainWindow.webContents.send("stop-recording-from-tray");
@@ -83,7 +107,7 @@ function updateTrayMenu(recording: boolean = false) {
       ]
     : [
         {
-          label: "Open",
+          label: trayText(locale, 'open'),
           click: () => {
             if (mainWindow && !mainWindow.isDestroyed()) {
               mainWindow.isMinimized() && mainWindow.restore();
@@ -93,7 +117,7 @@ function updateTrayMenu(recording: boolean = false) {
           },
         },
         {
-          label: "Quit",
+          label: trayText(locale, 'quit'),
           click: () => {
             app.quit();
           },

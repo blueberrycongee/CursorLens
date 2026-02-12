@@ -45,11 +45,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openExternalUrl: (url: string) => {
     return ipcRenderer.invoke('open-external-url', url)
   },
-  saveExportedVideo: (videoData: ArrayBuffer, fileName: string) => {
-    return ipcRenderer.invoke('save-exported-video', videoData, fileName)
+  saveExportedVideo: (videoData: ArrayBuffer, fileName: string, locale?: string) => {
+    return ipcRenderer.invoke('save-exported-video', videoData, fileName, locale)
   },
-  openVideoFilePicker: () => {
-    return ipcRenderer.invoke('open-video-file-picker')
+  openVideoFilePicker: (locale?: string) => {
+    return ipcRenderer.invoke('open-video-file-picker', locale)
   },
   setCurrentVideoPath: (path: string) => {
     return ipcRenderer.invoke('set-current-video-path', path)

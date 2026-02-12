@@ -6,6 +6,38 @@ import { RECORDINGS_DIR } from '../main'
 
 let selectedSource: any = null
 
+type Locale = 'en' | 'zh-CN'
+
+function normalizeLocale(input?: string): Locale {
+  return (input ?? '').toLowerCase().startsWith('zh') ? 'zh-CN' : 'en'
+}
+
+function tt(locale: Locale, key: string): string {
+  const zh: Record<string, string> = {
+    saveGif: '保存导出 GIF',
+    saveVideo: '保存导出视频',
+    exportCancelled: '导出已取消',
+    exportSaved: '视频导出成功',
+    exportSaveFailed: '保存导出视频失败',
+    selectVideoFile: '选择视频文件',
+    videoFiles: '视频文件',
+    allFiles: '所有文件',
+    filePickerFailed: '打开文件选择器失败',
+  }
+  const en: Record<string, string> = {
+    saveGif: 'Save Exported GIF',
+    saveVideo: 'Save Exported Video',
+    exportCancelled: 'Export cancelled',
+    exportSaved: 'Video exported successfully',
+    exportSaveFailed: 'Failed to save exported video',
+    selectVideoFile: 'Select Video File',
+    videoFiles: 'Video Files',
+    allFiles: 'All Files',
+    filePickerFailed: 'Failed to open file picker',
+  }
+  return (locale === 'zh-CN' ? zh : en)[key] ?? key
+}
+
 export function registerIpcHandlers(
   createEditorWindow: () => void,
   createSourceSelectorWindow: () => BrowserWindow,
@@ -128,16 +160,17 @@ export function registerIpcHandlers(
     }
   })
 
-  ipcMain.handle('save-exported-video', async (_, videoData: ArrayBuffer, fileName: string) => {
+  ipcMain.handle('save-exported-video', async (_, videoData: ArrayBuffer, fileName: string, localeInput?: string) => {
     try {
+      const locale = normalizeLocale(localeInput)
       // Determine file type from extension
       const isGif = fileName.toLowerCase().endsWith('.gif');
       const filters = isGif 
-        ? [{ name: 'GIF Image', extensions: ['gif'] }]
-        : [{ name: 'MP4 Video', extensions: ['mp4'] }];
+        ? [{ name: 'GIF', extensions: ['gif'] }]
+        : [{ name: 'MP4', extensions: ['mp4'] }];
 
       const result = await dialog.showSaveDialog({
-        title: isGif ? 'Save Exported GIF' : 'Save Exported Video',
+        title: isGif ? tt(locale, 'saveGif') : tt(locale, 'saveVideo'),
         defaultPath: path.join(app.getPath('downloads'), fileName),
         filters,
         properties: ['createDirectory', 'showOverwriteConfirmation']
@@ -147,7 +180,7 @@ export function registerIpcHandlers(
         return {
           success: false,
           cancelled: true,
-          message: 'Export cancelled'
+          message: tt(locale, 'exportCancelled')
         };
       }
 
@@ -156,26 +189,27 @@ export function registerIpcHandlers(
       return {
         success: true,
         path: result.filePath,
-        message: 'Video exported successfully'
+        message: tt(locale, 'exportSaved')
       };
     } catch (error) {
       console.error('Failed to save exported video:', error)
       return {
         success: false,
-        message: 'Failed to save exported video',
+        message: tt(normalizeLocale(), 'exportSaveFailed'),
         error: String(error)
       }
     }
   })
 
-  ipcMain.handle('open-video-file-picker', async () => {
+  ipcMain.handle('open-video-file-picker', async (_, localeInput?: string) => {
     try {
+      const locale = normalizeLocale(localeInput)
       const result = await dialog.showOpenDialog({
-        title: 'Select Video File',
+        title: tt(locale, 'selectVideoFile'),
         defaultPath: RECORDINGS_DIR,
         filters: [
-          { name: 'Video Files', extensions: ['webm', 'mp4', 'mov', 'avi', 'mkv'] },
-          { name: 'All Files', extensions: ['*'] }
+          { name: tt(locale, 'videoFiles'), extensions: ['webm', 'mp4', 'mov', 'avi', 'mkv'] },
+          { name: tt(locale, 'allFiles'), extensions: ['*'] }
         ],
         properties: ['openFile']
       });
@@ -192,7 +226,7 @@ export function registerIpcHandlers(
       console.error('Failed to open file picker:', error);
       return {
         success: false,
-        message: 'Failed to open file picker',
+        message: tt(normalizeLocale(), 'filePickerFailed'),
         error: String(error)
       };
     }

@@ -32,15 +32,18 @@ interface Window {
     setRecordingState: (recording: boolean) => Promise<void>
     onStopRecordingFromTray: (callback: () => void) => () => void
     openExternalUrl: (url: string) => Promise<{ success: boolean; error?: string }>
-    saveExportedVideo: (videoData: ArrayBuffer, fileName: string) => Promise<{
+    saveExportedVideo: (videoData: ArrayBuffer, fileName: string, locale?: string) => Promise<{
       success: boolean
       path?: string
       message?: string
       cancelled?: boolean
     }>
-    openVideoFilePicker: () => Promise<{ success: boolean; path?: string; cancelled?: boolean }>
+    openVideoFilePicker: (locale?: string) => Promise<{ success: boolean; path?: string; cancelled?: boolean }>
     setCurrentVideoPath: (path: string) => Promise<{ success: boolean }>
     getCurrentVideoPath: () => Promise<{ success: boolean; path?: string }>
     clearCurrentVideoPath: () => Promise<{ success: boolean }>
+    getPlatform: () => Promise<string>
+    hudOverlayHide: () => void
+    hudOverlayClose: () => void
   }
 }
