@@ -879,7 +879,27 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
         onDurationChange={e => {
           onDurationChange(e.currentTarget.duration);
         }}
-        onError={() => onError('Failed to load video')}
+        onError={() => {
+          const video = videoRef.current;
+          const mediaError = video?.error;
+          const mediaErrorMap: Record<number, string> = {
+            1: "aborted",
+            2: "network",
+            3: "decode",
+            4: "src_not_supported",
+          };
+          const errorCode = mediaError?.code ?? 0;
+          const errorReason = mediaErrorMap[errorCode] ?? "unknown";
+          const src = video?.currentSrc || videoPath;
+          console.error("Video failed to load.", {
+            errorCode,
+            errorReason,
+            src,
+            readyState: video?.readyState,
+            networkState: video?.networkState,
+          });
+          onError(`Failed to load video (code=${errorCode}, reason=${errorReason})`);
+        }}
       />
     </div>
   );

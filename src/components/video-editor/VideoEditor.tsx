@@ -77,18 +77,26 @@ export default function VideoEditor() {
 
   // Helper to convert file path to proper file:// URL
   const toFileUrl = (filePath: string): string => {
+    if (!filePath) return filePath;
+    if (filePath.startsWith("file://")) return filePath;
+
     // Normalize path separators to forward slashes
     const normalized = filePath.replace(/\\/g, '/');
+    const encoded = encodeURI(normalized);
     
     // Check if it's a Windows absolute path (e.g., C:/Users/...)
-    if (normalized.match(/^[a-zA-Z]:/)) {
-      const fileUrl = `file:///${normalized}`;
+    if (encoded.match(/^[a-zA-Z]:/)) {
+      const fileUrl = `file:///${encoded}`;
       return fileUrl;
     }
-    
-    // Unix-style absolute path
-    const fileUrl = `file://${normalized}`;
-    return fileUrl;
+
+    if (encoded.startsWith('/')) {
+      // Unix-style absolute path
+      return `file://${encoded}`;
+    }
+
+    // Relative paths or other URLs are returned as-is after encoding.
+    return encoded;
   };
 
   useEffect(() => {
