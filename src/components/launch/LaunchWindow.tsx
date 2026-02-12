@@ -307,7 +307,9 @@ export function LaunchWindow() {
           title={recordSystemCursor ? t("launch.systemCursorShown") : t("launch.systemCursorHidden")}
         >
           <FiMousePointer size={13} className={recordSystemCursor ? "text-white/85" : "text-[#34B27B]"} />
-          <span className={recordSystemCursor ? "text-white/85" : "text-[#34B27B]"}>{t("launch.systemCursor")}</span>
+          <span className={recordSystemCursor ? "text-white/85" : "text-[#34B27B]"}>
+            {recordSystemCursor ? t("launch.systemCursorOn") : t("launch.systemCursorOff")}
+          </span>
         </Button>
 
         {includeCamera ? (
