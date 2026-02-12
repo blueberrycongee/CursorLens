@@ -25,6 +25,7 @@ export function ExportDialog({
 }: ExportDialogProps) {
   const { t } = useI18n();
   const [showSuccess, setShowSuccess] = useState(false);
+  const [nowMs, setNowMs] = useState(() => Date.now());
 
   // Reset showSuccess when a new export starts or dialog reopens
   useEffect(() => {
@@ -51,6 +52,12 @@ export function ExportDialog({
     }
   }, [isExporting, progress, error, onClose]);
 
+  useEffect(() => {
+    if (!isOpen || !isExporting) return;
+    const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [isOpen, isExporting]);
+
   if (!isOpen) return null;
 
   const formatLabel = exportFormat === 'gif' ? 'GIF' : 'Video';
@@ -59,15 +66,55 @@ export function ExportDialog({
   const isCompiling = isExporting && progress && progress.percentage >= 100 && exportFormat === 'gif';
   const isFinalizing = progress?.phase === 'finalizing';
   const renderProgress = progress?.renderProgress;
+  const updatedAtMs = progress?.updatedAtMs ?? nowMs;
+  const staleMs = Math.max(0, nowMs - updatedAtMs);
+  const elapsedMs = progress?.elapsedMs ?? 0;
+  const etaSeconds = progress?.estimatedTimeRemaining ?? 0;
+
+  const formatElapsed = (valueMs: number) => {
+    const totalSeconds = Math.max(0, Math.floor(valueMs / 1000));
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes}:${String(seconds).padStart(2, '0')}`;
+  };
+
+  const formatEta = (seconds: number) => {
+    const safe = Math.max(0, Math.floor(seconds));
+    const minutes = Math.floor(safe / 60);
+    const remaining = safe % 60;
+    return `${minutes}:${String(remaining).padStart(2, '0')}`;
+  };
+
+  const resolveActivityState = () => {
+    if (staleMs < 3_000) return 'active';
+    if (staleMs < 12_000) return 'waiting';
+    return 'stalled';
+  };
+
+  const activityState = resolveActivityState();
+
+  const resolvePhaseDetail = () => {
+    const key = progress?.phaseDetailKey;
+    if (!key) return '';
+    return t(key);
+  };
+
+  const phaseDetailText = resolvePhaseDetail();
   
   // Get status message based on phase
   const getStatusMessage = () => {
     if (error) return t('export.statusTryAgain');
-    if (isCompiling || isFinalizing) {
+    if (isCompiling) {
       if (renderProgress !== undefined && renderProgress > 0) {
         return t('export.statusCompilingPct', { progress: renderProgress });
       }
       return t('export.statusCompiling');
+    }
+    if (isFinalizing) {
+      if (phaseDetailText) {
+        return t('export.statusFinalizingVideoStep', { step: phaseDetailText });
+      }
+      return exportFormat === 'gif' ? t('export.statusCompiling') : t('export.statusFinalizingVideo');
     }
     return t('export.statusMoment');
   };
@@ -75,7 +122,10 @@ export function ExportDialog({
   // Get title based on phase
   const getTitle = () => {
     if (error) return t('export.titleFailed');
-    if (isCompiling || isFinalizing) return t('export.titleCompilingGif');
+    if (isCompiling) return t('export.titleCompilingGif');
+    if (isFinalizing) {
+      return exportFormat === 'gif' ? t('export.titleCompilingGif') : t('export.titleFinalizingVideo');
+    }
     return t('export.title', { format: formatLabel });
   };
 
@@ -147,9 +197,15 @@ export function ExportDialog({
           <div className="space-y-6">
             <div className="space-y-2">
               <div className="flex justify-between text-xs font-medium text-slate-400 uppercase tracking-wider">
-                <span>{isCompiling || isFinalizing ? t('export.phaseCompiling') : t('export.phaseRendering')}</span>
+                  <span>
+                    {isCompiling
+                      ? t('export.phaseCompiling')
+                      : isFinalizing
+                        ? t('export.phaseFinalizing')
+                        : t('export.phaseRendering')}
+                  </span>
                 <span className="font-mono text-slate-200">
-                  {isCompiling || isFinalizing ? (
+                  {isCompiling || (isFinalizing && exportFormat === 'gif') ? (
                     renderProgress !== undefined && renderProgress > 0 ? (
                       `${renderProgress}%`
                     ) : (
@@ -164,7 +220,7 @@ export function ExportDialog({
                 </span>
               </div>
               <div className="h-2 bg-white/5 rounded-full overflow-hidden border border-white/5">
-                {isCompiling || isFinalizing ? (
+                {isCompiling || (isFinalizing && exportFormat === 'gif') ? (
                   // Show render progress if available, otherwise animated indeterminate bar
                   renderProgress !== undefined && renderProgress > 0 ? (
                     <div
@@ -198,11 +254,17 @@ export function ExportDialog({
 
             <div className="grid grid-cols-2 gap-4">
               <div className="bg-white/5 rounded-xl p-3 border border-white/5">
-                <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-1">
+                  <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-1">
                   {isCompiling || isFinalizing ? t('common.status') : t('common.format')}
                 </div>
                 <div className="text-slate-200 font-medium text-sm">
-                  {isCompiling || isFinalizing ? t('export.titleCompilingGif') : formatLabel}
+                  {isCompiling
+                    ? t('export.titleCompilingGif')
+                    : isFinalizing
+                      ? exportFormat === 'gif'
+                        ? t('export.titleCompilingGif')
+                        : t('export.titleFinalizingVideo')
+                      : formatLabel}
                 </div>
               </div>
               <div className="bg-white/5 rounded-xl p-3 border border-white/5">
@@ -211,7 +273,33 @@ export function ExportDialog({
                   {progress.currentFrame} / {progress.totalFrames}
                 </div>
               </div>
+              <div className="bg-white/5 rounded-xl p-3 border border-white/5">
+                <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-1">{t('export.elapsed')}</div>
+                <div className="text-slate-200 font-medium text-sm">{formatElapsed(elapsedMs)}</div>
+              </div>
+              <div className="bg-white/5 rounded-xl p-3 border border-white/5">
+                <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-1">{t('export.eta')}</div>
+                <div className="text-slate-200 font-medium text-sm">
+                  {isFinalizing ? t('common.processing') : formatEta(etaSeconds)}
+                </div>
+              </div>
+              <div className="bg-white/5 rounded-xl p-3 border border-white/5">
+                <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-1">{t('export.activity')}</div>
+                <div className="text-slate-200 font-medium text-sm">
+                  {activityState === 'active'
+                    ? t('export.activityActive')
+                    : activityState === 'waiting'
+                      ? t('export.activityWaiting')
+                      : t('export.activityStalled')}
+                </div>
+              </div>
             </div>
+
+            {activityState === 'stalled' && (
+              <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-3 text-amber-300 text-xs">
+                {t('export.activityStalledHint', { seconds: Math.floor(staleMs / 1000) })}
+              </div>
+            )}
 
             {onCancel && (
               <div className="pt-2">

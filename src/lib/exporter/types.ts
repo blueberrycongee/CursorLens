@@ -11,8 +11,13 @@ export interface ExportProgress {
   totalFrames: number;
   percentage: number;
   estimatedTimeRemaining: number; // in seconds
-  phase?: 'extracting' | 'finalizing'; // Phase of export
+  phase?: 'extracting' | 'rendering' | 'finalizing'; // Phase of export
+  phaseDetailKey?: string; // i18n key for current sub-step
   renderProgress?: number; // 0-100, progress of GIF rendering phase
+  updatedAtMs?: number; // wall-clock timestamp for last progress event
+  elapsedMs?: number; // elapsed time since export start
+  activityTick?: number; // monotonic progress heartbeat counter
+  isHeartbeat?: boolean; // true when progress is heartbeat without frame increment
 }
 
 export interface ExportResult {
