@@ -9,6 +9,11 @@ interface ProcessedDesktopSource {
   appIcon: string | null;
 }
 
+type CursorTrackMetadata = {
+  source?: 'recorded' | 'synthetic';
+  samples: Array<{ timeMs: number; x: number; y: number; click?: boolean; visible?: boolean }>;
+};
+
 interface Window {
   electronAPI: {
     getSources: (opts: Electron.SourcesOptions) => Promise<ProcessedDesktopSource[]>
@@ -19,13 +24,13 @@ interface Window {
     storeRecordedVideo: (
       videoData: ArrayBuffer,
       fileName: string,
-      metadata?: { frameRate?: number; width?: number; height?: number; mimeType?: string; capturedAt?: number }
+      metadata?: { frameRate?: number; width?: number; height?: number; mimeType?: string; capturedAt?: number; cursorTrack?: CursorTrackMetadata }
     ) => Promise<{
       success: boolean
       path?: string
       message: string
       error?: string
-      metadata?: { frameRate?: number; width?: number; height?: number; mimeType?: string; capturedAt?: number }
+      metadata?: { frameRate?: number; width?: number; height?: number; mimeType?: string; capturedAt?: number; cursorTrack?: CursorTrackMetadata }
     }>
     getRecordedVideoPath: () => Promise<{
       success: boolean
@@ -46,12 +51,12 @@ interface Window {
     openVideoFilePicker: (locale?: string) => Promise<{ success: boolean; path?: string; cancelled?: boolean }>
     setCurrentVideoPath: (
       path: string,
-      metadata?: { frameRate?: number; width?: number; height?: number; mimeType?: string; capturedAt?: number }
+      metadata?: { frameRate?: number; width?: number; height?: number; mimeType?: string; capturedAt?: number; cursorTrack?: CursorTrackMetadata }
     ) => Promise<{ success: boolean }>
     getCurrentVideoPath: () => Promise<{
       success: boolean
       path?: string
-      metadata?: { frameRate?: number; width?: number; height?: number; mimeType?: string; capturedAt?: number }
+      metadata?: { frameRate?: number; width?: number; height?: number; mimeType?: string; capturedAt?: number; cursorTrack?: CursorTrackMetadata }
     }>
     clearCurrentVideoPath: () => Promise<{ success: boolean }>
     getPlatform: () => Promise<string>

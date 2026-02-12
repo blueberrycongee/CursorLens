@@ -30,7 +30,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   storeRecordedVideo: (
     videoData: ArrayBuffer,
     fileName: string,
-    metadata?: { frameRate?: number; width?: number; height?: number; mimeType?: string; capturedAt?: number },
+    metadata?: {
+      frameRate?: number;
+      width?: number;
+      height?: number;
+      mimeType?: string;
+      capturedAt?: number;
+      cursorTrack?: {
+        source?: 'recorded' | 'synthetic';
+        samples: Array<{ timeMs: number; x: number; y: number; click?: boolean; visible?: boolean }>;
+      };
+    },
   ) => {
     return ipcRenderer.invoke('store-recorded-video', videoData, fileName, metadata)
   },
@@ -55,7 +65,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openVideoFilePicker: (locale?: string) => {
     return ipcRenderer.invoke('open-video-file-picker', locale)
   },
-  setCurrentVideoPath: (path: string, metadata?: { frameRate?: number; width?: number; height?: number; mimeType?: string; capturedAt?: number }) => {
+  setCurrentVideoPath: (path: string, metadata?: {
+    frameRate?: number;
+    width?: number;
+    height?: number;
+    mimeType?: string;
+    capturedAt?: number;
+    cursorTrack?: {
+      source?: 'recorded' | 'synthetic';
+      samples: Array<{ timeMs: number; x: number; y: number; click?: boolean; visible?: boolean }>;
+    };
+  }) => {
     return ipcRenderer.invoke('set-current-video-path', path, metadata)
   },
   getCurrentVideoPath: () => {

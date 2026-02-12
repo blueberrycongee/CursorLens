@@ -21,6 +21,11 @@ declare namespace NodeJS {
   }
 }
 
+type CursorTrackMetadata = {
+  source?: 'recorded' | 'synthetic'
+  samples: Array<{ timeMs: number; x: number; y: number; click?: boolean; visible?: boolean }>
+}
+
 // Used in Renderer process, expose in `preload.ts`
 interface Window {
   electronAPI: {
@@ -32,12 +37,12 @@ interface Window {
     storeRecordedVideo: (
       videoData: ArrayBuffer,
       fileName: string,
-      metadata?: { frameRate?: number; width?: number; height?: number; mimeType?: string; capturedAt?: number }
+      metadata?: { frameRate?: number; width?: number; height?: number; mimeType?: string; capturedAt?: number; cursorTrack?: CursorTrackMetadata }
     ) => Promise<{
       success: boolean
       path?: string
       message?: string
-      metadata?: { frameRate?: number; width?: number; height?: number; mimeType?: string; capturedAt?: number }
+      metadata?: { frameRate?: number; width?: number; height?: number; mimeType?: string; capturedAt?: number; cursorTrack?: CursorTrackMetadata }
     }>
     getRecordedVideoPath: () => Promise<{ success: boolean; path?: string; message?: string }>
     setRecordingState: (recording: boolean) => Promise<void>
@@ -47,12 +52,12 @@ interface Window {
     openVideoFilePicker: (locale?: string) => Promise<{ success: boolean; path?: string; cancelled?: boolean }>
     setCurrentVideoPath: (
       path: string,
-      metadata?: { frameRate?: number; width?: number; height?: number; mimeType?: string; capturedAt?: number }
+      metadata?: { frameRate?: number; width?: number; height?: number; mimeType?: string; capturedAt?: number; cursorTrack?: CursorTrackMetadata }
     ) => Promise<{ success: boolean }>
     getCurrentVideoPath: () => Promise<{
       success: boolean
       path?: string
-      metadata?: { frameRate?: number; width?: number; height?: number; mimeType?: string; capturedAt?: number }
+      metadata?: { frameRate?: number; width?: number; height?: number; mimeType?: string; capturedAt?: number; cursorTrack?: CursorTrackMetadata }
     }>
     clearCurrentVideoPath: () => Promise<{ success: boolean }>
     getPlatform: () => Promise<string>

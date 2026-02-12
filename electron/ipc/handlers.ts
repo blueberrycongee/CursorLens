@@ -13,6 +13,44 @@ type CurrentVideoMetadata = {
   height?: number
   mimeType?: string
   capturedAt?: number
+  cursorTrack?: {
+    source?: 'recorded' | 'synthetic'
+    samples: Array<{
+      timeMs: number
+      x: number
+      y: number
+      click?: boolean
+      visible?: boolean
+    }>
+  }
+}
+
+function sanitizeCursorTrack(input?: CurrentVideoMetadata['cursorTrack'] | null): CurrentVideoMetadata['cursorTrack'] | undefined {
+  if (!input || !Array.isArray(input.samples) || input.samples.length === 0) return undefined
+
+  const samples = input.samples
+    .slice(0, 20_000)
+    .map((sample) => {
+      const timeMs = Number(sample.timeMs)
+      const x = Number(sample.x)
+      const y = Number(sample.y)
+      if (!Number.isFinite(timeMs) || !Number.isFinite(x) || !Number.isFinite(y)) return null
+      return {
+        timeMs: Math.max(0, Math.round(timeMs)),
+        x: Math.min(1, Math.max(0, x)),
+        y: Math.min(1, Math.max(0, y)),
+        click: Boolean(sample.click),
+        visible: sample.visible === false ? false : true,
+      }
+    })
+    .filter((sample): sample is NonNullable<typeof sample> => Boolean(sample))
+    .sort((a, b) => a.timeMs - b.timeMs)
+
+  if (samples.length === 0) return undefined
+  return {
+    source: input.source === 'synthetic' ? 'synthetic' : 'recorded',
+    samples,
+  }
 }
 
 function normalizeLocale(input?: string): Locale {
@@ -68,6 +106,11 @@ function sanitizeVideoMetadata(metadata?: CurrentVideoMetadata | null): CurrentV
   }
   if (Number.isFinite(capturedAt) && capturedAt > 0) {
     normalized.capturedAt = Math.floor(capturedAt)
+  }
+
+  const cursorTrack = sanitizeCursorTrack(metadata.cursorTrack)
+  if (cursorTrack) {
+    normalized.cursorTrack = cursorTrack
   }
 
   return Object.keys(normalized).length > 0 ? normalized : null

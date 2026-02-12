@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { fixWebmDuration } from "@fix-webm-duration/fix";
 import { computeCameraOverlayRect, type CameraOverlayShape } from "./cameraOverlay";
+import { normalizePointerSample, type CursorSample } from "@/lib/cursor";
 
 type UseScreenRecorderReturn = {
   recording: boolean;
@@ -72,6 +73,8 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
   const chunks = useRef<Blob[]>([]);
   const startTime = useRef<number>(0);
   const compositionCleanup = useRef<(() => void) | null>(null);
+  const cursorCaptureCleanup = useRef<(() => void) | null>(null);
+  const cursorSamples = useRef<CursorSample[]>([]);
 
   const profileSettings: Record<CaptureProfile, { targetFps: number; maxFps: number; bitrateScale: number; cameraCompositeFpsCap: number; maxLongEdge: number }> = {
     balanced: { targetFps: 30, maxFps: 60, bitrateScale: 0.9, cameraCompositeFpsCap: 30, maxLongEdge: 1920 },
@@ -172,6 +175,10 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
   };
 
   const cleanupActiveMedia = () => {
+    if (cursorCaptureCleanup.current) {
+      cursorCaptureCleanup.current();
+      cursorCaptureCleanup.current = null;
+    }
     if (compositionCleanup.current) {
       compositionCleanup.current();
       compositionCleanup.current = null;
@@ -184,6 +191,52 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
       stream.current.getTracks().forEach(track => track.stop());
       stream.current = null;
     }
+  };
+
+  const startCursorSampling = (recordingStartedAtMs: number) => {
+    if (cursorCaptureCleanup.current) {
+      cursorCaptureCleanup.current();
+      cursorCaptureCleanup.current = null;
+    }
+
+    cursorSamples.current = [];
+    const screenWidth = Math.max(1, Number(window.screen?.width) || 1);
+    const screenHeight = Math.max(1, Number(window.screen?.height) || 1);
+    let lastMoveTick = 0;
+
+    const pushSample = (screenX: number, screenY: number, click = false) => {
+      const elapsedMs = Math.max(0, Date.now() - recordingStartedAtMs);
+      cursorSamples.current.push(
+        normalizePointerSample(elapsedMs, screenX, screenY, screenWidth, screenHeight, click),
+      );
+      if (cursorSamples.current.length > 30_000) {
+        cursorSamples.current.splice(0, 10_000);
+      }
+    };
+
+    // Prime with center so downstream interpolation always has at least one point.
+    pushSample(screenWidth / 2, screenHeight / 2, false);
+
+    const onPointerMove = (event: PointerEvent) => {
+      const now = performance.now();
+      if (now - lastMoveTick < 12) {
+        return;
+      }
+      lastMoveTick = now;
+      pushSample(event.screenX, event.screenY, false);
+    };
+
+    const onPointerDown = (event: PointerEvent) => {
+      pushSample(event.screenX, event.screenY, true);
+    };
+
+    window.addEventListener("pointermove", onPointerMove, { passive: true });
+    window.addEventListener("pointerdown", onPointerDown, true);
+
+    cursorCaptureCleanup.current = () => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerdown", onPointerDown, true);
+    };
   };
 
   const stopRecording = useRef(() => {
@@ -441,16 +494,32 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
         return;
       }
 
-      const desktopStream = await (navigator.mediaDevices as any).getUserMedia({
-        audio: false,
-        video: {
-          mandatory: {
-            chromeMediaSource: "desktop",
-            chromeMediaSourceId: selectedSource.id,
-            maxFrameRate: TARGET_CAPTURE_FPS,
+      let desktopStream: MediaStream;
+      try {
+        desktopStream = await (navigator.mediaDevices as any).getUserMedia({
+          audio: false,
+          video: {
+            mandatory: {
+              chromeMediaSource: "desktop",
+              chromeMediaSourceId: selectedSource.id,
+              maxFrameRate: TARGET_CAPTURE_FPS,
+              cursor: "never",
+            },
           },
-        },
-      });
+        });
+      } catch (error) {
+        console.warn("Desktop capture with cursor=never failed, retrying with source defaults.", error);
+        desktopStream = await (navigator.mediaDevices as any).getUserMedia({
+          audio: false,
+          video: {
+            mandatory: {
+              chromeMediaSource: "desktop",
+              chromeMediaSourceId: selectedSource.id,
+              maxFrameRate: TARGET_CAPTURE_FPS,
+            },
+          },
+        });
+      }
       stream.current = desktopStream;
       if (!desktopStream) {
         throw new Error("Media stream is not available.");
@@ -546,6 +615,10 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
         if (e.data && e.data.size > 0) chunks.current.push(e.data);
       };
       recorder.onstop = async () => {
+        if (cursorCaptureCleanup.current) {
+          cursorCaptureCleanup.current();
+          cursorCaptureCleanup.current = null;
+        }
         cleanupActiveMedia();
         mediaRecorder.current = null;
         if (chunks.current.length === 0) return;
@@ -566,7 +639,11 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
             height,
             mimeType: recordedMimeType,
             capturedAt: timestamp,
+            cursorTrack: cursorSamples.current.length > 0
+              ? { source: "recorded" as const, samples: cursorSamples.current }
+              : undefined,
           };
+          cursorSamples.current = [];
           const videoResult = await window.electronAPI.storeRecordedVideo(arrayBuffer, videoFileName, captureMetadata);
           if (!videoResult.success) {
             console.error('Failed to store video:', videoResult.message);
@@ -586,10 +663,12 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
         console.error("MediaRecorder error event:", event);
         setRecording(false);
         window.electronAPI?.setRecordingState(false);
+        cursorSamples.current = [];
         cleanupActiveMedia();
       };
-      recorder.start(1000);
       startTime.current = Date.now();
+      startCursorSampling(startTime.current);
+      recorder.start(1000);
       setRecording(true);
       window.electronAPI?.setRecordingState(true);
     } catch (error) {
