@@ -12,6 +12,7 @@ type UseScreenRecorderOptions = {
   cameraShape?: CameraOverlayShape;
   cameraSizePercent?: number;
   captureProfile?: CaptureProfile;
+  recordSystemCursor?: boolean;
 };
 
 export type CaptureProfile = "balanced" | "quality" | "ultra";
@@ -65,6 +66,7 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
   const cameraShape = options.cameraShape ?? "rounded";
   const cameraSizePercent = options.cameraSizePercent ?? 22;
   const captureProfile = options.captureProfile ?? "quality";
+  const recordSystemCursor = options.recordSystemCursor ?? true;
   const [recording, setRecording] = useState(false);
   const mediaRecorder = useRef<MediaRecorder | null>(null);
   const stream = useRef<MediaStream | null>(null);
@@ -448,6 +450,7 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
         return;
       }
 
+      const cursorMode = recordSystemCursor ? "always" : "never";
       const desktopStream = await (navigator.mediaDevices as any).getUserMedia({
         audio: false,
         video: {
@@ -455,7 +458,9 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
             chromeMediaSource: "desktop",
             chromeMediaSourceId: selectedSource.id,
             maxFrameRate: TARGET_CAPTURE_FPS,
+            cursor: cursorMode,
           },
+          cursor: cursorMode,
         },
       });
       stream.current = desktopStream;

@@ -46,6 +46,9 @@ const messages: Record<Locale, Record<string, string>> = {
     "launch.captureProfile.quality": "Quality",
     "launch.captureProfile.ultra": "Ultra 120",
     "launch.captureProfileLabel": "Capture profile: {{profile}}",
+    "launch.systemCursor": "System Cursor",
+    "launch.systemCursorShown": "System cursor will be recorded",
+    "launch.systemCursorHidden": "System cursor hidden in recording",
     "launch.hideHud": "Hide HUD",
     "launch.closeApp": "Close App",
 
@@ -289,6 +292,9 @@ const messages: Record<Locale, Record<string, string>> = {
     "launch.captureProfile.quality": "高质 60",
     "launch.captureProfile.ultra": "极限 120",
     "launch.captureProfileLabel": "录制档位：{{profile}}",
+    "launch.systemCursor": "系统鼠标",
+    "launch.systemCursorShown": "将录制系统鼠标",
+    "launch.systemCursorHidden": "录制时隐藏系统鼠标",
     "launch.hideHud": "隐藏悬浮窗",
     "launch.closeApp": "关闭应用",
 

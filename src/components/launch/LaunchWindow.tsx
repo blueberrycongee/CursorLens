@@ -8,7 +8,7 @@ import { FaRegStopCircle } from "react-icons/fa";
 import { MdMonitor } from "react-icons/md";
 import { RxDragHandleDots2 } from "react-icons/rx";
 import { FaFolderMinus } from "react-icons/fa6";
-import { FiCamera, FiMinus, FiX } from "react-icons/fi";
+import { FiCamera, FiMinus, FiMousePointer, FiX } from "react-icons/fi";
 import { SlidersHorizontal } from "lucide-react";
 import { useI18n } from "@/i18n";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -62,11 +62,20 @@ export function LaunchWindow() {
     }
     return "quality";
   });
+  const [recordSystemCursor, setRecordSystemCursor] = useState(() => {
+    try {
+      const value = window.localStorage.getItem("openscreen.recordSystemCursor");
+      return value === null ? true : value === "1";
+    } catch {
+      return true;
+    }
+  });
   const { recording, toggleRecording } = useScreenRecorder({
     includeCamera,
     cameraShape,
     cameraSizePercent,
     captureProfile,
+    recordSystemCursor,
   });
   const [recordingStart, setRecordingStart] = useState<number | null>(null);
   const [elapsed, setElapsed] = useState(0);
@@ -129,6 +138,14 @@ export function LaunchWindow() {
       // no-op
     }
   }, [captureProfile]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("openscreen.recordSystemCursor", recordSystemCursor ? "1" : "0");
+    } catch {
+      // no-op
+    }
+  }, [recordSystemCursor]);
 
   const cycleCameraShape = () => {
     setCameraShape((current) => {
@@ -279,6 +296,18 @@ export function LaunchWindow() {
         >
           <SlidersHorizontal size={13} className="text-white/80" />
           <span className="text-white/90">{captureProfileLabelMap[captureProfile]}</span>
+        </Button>
+
+        <Button
+          variant="link"
+          size="sm"
+          className={`gap-1 shrink-0 min-w-[110px] text-white bg-transparent hover:bg-transparent px-1 text-center text-xs ${styles.electronNoDrag}`}
+          onClick={() => setRecordSystemCursor((value) => !value)}
+          disabled={recording}
+          title={recordSystemCursor ? t("launch.systemCursorShown") : t("launch.systemCursorHidden")}
+        >
+          <FiMousePointer size={13} className={recordSystemCursor ? "text-white/85" : "text-[#34B27B]"} />
+          <span className={recordSystemCursor ? "text-white/85" : "text-[#34B27B]"}>{t("launch.systemCursor")}</span>
         </Button>
 
         {includeCamera ? (
