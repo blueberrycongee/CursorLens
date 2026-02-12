@@ -75,9 +75,9 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
 
   const profileSettings: Record<CaptureProfile, { targetFps: number; maxFps: number; bitrateScale: number; cameraCompositeFpsCap: number; maxLongEdge: number }> = {
     balanced: { targetFps: 30, maxFps: 60, bitrateScale: 0.9, cameraCompositeFpsCap: 30, maxLongEdge: 1920 },
-    quality: { targetFps: 60, maxFps: 60, bitrateScale: 1.1, cameraCompositeFpsCap: 60, maxLongEdge: 2560 },
+    quality: { targetFps: 60, maxFps: 60, bitrateScale: 1.1, cameraCompositeFpsCap: 60, maxLongEdge: 3840 },
     // Experimental profile: only beneficial on devices that can sustain high-refresh desktop capture.
-    ultra: { targetFps: 120, maxFps: 120, bitrateScale: 1.25, cameraCompositeFpsCap: 60, maxLongEdge: 4096 },
+    ultra: { targetFps: 120, maxFps: 120, bitrateScale: 1.25, cameraCompositeFpsCap: 60, maxLongEdge: 5120 },
   };
 
   const activeProfile = profileSettings[captureProfile];
@@ -122,10 +122,10 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
     const pixels = width * height;
     const frameRateBoost = frameRate >= 50 ? 1.25 : frameRate >= 30 ? 1 : 0.85;
 
-    if (pixels >= 3840 * 2160) return Math.round(26_000_000 * frameRateBoost * activeProfile.bitrateScale);
-    if (pixels >= 2560 * 1440) return Math.round(18_000_000 * frameRateBoost * activeProfile.bitrateScale);
-    if (pixels >= 1920 * 1080) return Math.round(12_000_000 * frameRateBoost * activeProfile.bitrateScale);
-    return Math.round(8_000_000 * frameRateBoost * activeProfile.bitrateScale);
+    if (pixels >= 3840 * 2160) return Math.round(50_000_000 * frameRateBoost * activeProfile.bitrateScale);
+    if (pixels >= 2560 * 1440) return Math.round(32_000_000 * frameRateBoost * activeProfile.bitrateScale);
+    if (pixels >= 1920 * 1080) return Math.round(20_000_000 * frameRateBoost * activeProfile.bitrateScale);
+    return Math.round(12_000_000 * frameRateBoost * activeProfile.bitrateScale);
   };
 
   const createMediaRecorderWithFallback = (

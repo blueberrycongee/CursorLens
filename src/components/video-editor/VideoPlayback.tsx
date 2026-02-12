@@ -463,8 +463,8 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
         height: container.clientHeight,
         backgroundAlpha: 0,
         antialias: true,
-        // Limit preview pixel density to keep timeline playback smooth on HiDPI displays.
-        resolution: preferredFpsRef.current > 60 ? 1 : Math.min(window.devicePixelRatio || 1, 1.25),
+        // Keep high-DPI sharpness in preview while still guarding extreme render cost.
+        resolution: preferredFpsRef.current > 60 ? 1 : Math.min(window.devicePixelRatio || 1, 2),
         autoDensity: true,
       });
 

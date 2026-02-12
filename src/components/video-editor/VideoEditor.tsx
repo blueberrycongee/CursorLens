@@ -87,7 +87,7 @@ export default function VideoEditor() {
   const [exportError, setExportError] = useState<string | null>(null);
   const [showExportDialog, setShowExportDialog] = useState(false);
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('16:9');
-  const [exportQuality, setExportQuality] = useState<ExportQuality>('good');
+  const [exportQuality, setExportQuality] = useState<ExportQuality>('source');
   const [exportFormat, setExportFormat] = useState<ExportFormat>('mp4');
   const [gifFrameRate, setGifFrameRate] = useState<GifFrameRate>(15);
   const [gifLoop, setGifLoop] = useState(true);
