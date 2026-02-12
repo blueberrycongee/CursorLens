@@ -822,7 +822,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
       );
 
       applyTransform(motionIntensity);
-      renderCursorOverlay(currentTimeRef.current * 1000);
+      renderCursorOverlay(currentTimeRef.current);
     };
 
     app.ticker.add(ticker);
