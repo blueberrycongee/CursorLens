@@ -417,7 +417,7 @@ export function registerIpcHandlers(
           cursorTracker.stillFrames = 0
         }
 
-        const shouldStore = click || distance >= 0.35 || now - cursorTracker.lastSampleAt >= 100
+        const shouldStore = click || distance >= 0.2 || now - cursorTracker.lastSampleAt >= 33
         if (shouldStore) {
           pushCursorSample(cursorTracker, now, point, click)
         }

@@ -437,6 +437,20 @@ export function SettingsPanel({
                   </div>
                   <div>
                     <div className="flex items-center justify-between mb-1">
+                      <div className="text-[10px] text-slate-400">{t("settings.cursorTimeOffset")}</div>
+                      <span className="text-[10px] text-slate-500 font-mono">{formatSignedPx(cursorStyle.timeOffsetMs).replace("px", "ms")}</span>
+                    </div>
+                    <Slider
+                      value={[cursorStyle.timeOffsetMs]}
+                      onValueChange={(values) => updateCursorStyle({ timeOffsetMs: values[0] })}
+                      min={-200}
+                      max={200}
+                      step={1}
+                      className="w-full [&_[role=slider]]:bg-[#34B27B] [&_[role=slider]]:border-[#34B27B] [&_[role=slider]]:h-3 [&_[role=slider]]:w-3"
+                    />
+                  </div>
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
                       <div className="text-[10px] text-slate-400">{t("settings.cursorOffsetX")}</div>
                       <span className="text-[10px] text-slate-500 font-mono">{formatSignedPx(cursorStyle.offsetX)}</span>
                     </div>
@@ -469,7 +483,7 @@ export function SettingsPanel({
                       variant="outline"
                       size="sm"
                       className="h-6 px-2 text-[10px] bg-white/5 border-white/10 text-slate-300 hover:bg-white/10 hover:text-white"
-                      onClick={() => updateCursorStyle({ offsetX: 0, offsetY: 0 })}
+                      onClick={() => updateCursorStyle({ offsetX: 0, offsetY: 0, timeOffsetMs: 0 })}
                     >
                       {t("settings.cursorOffsetReset")}
                     </Button>

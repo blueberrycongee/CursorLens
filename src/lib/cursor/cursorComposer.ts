@@ -43,6 +43,7 @@ function normalizeCursorStyle(input?: Partial<CursorStyleConfig>): CursorStyleCo
     smoothingMs: Math.max(0, Math.min(220, Math.round(merged.smoothingMs))),
     offsetX: Math.max(-240, Math.min(240, Number.isFinite(merged.offsetX) ? merged.offsetX : 0)),
     offsetY: Math.max(-240, Math.min(240, Number.isFinite(merged.offsetY) ? merged.offsetY : 0)),
+    timeOffsetMs: Math.max(-300, Math.min(300, Number.isFinite(merged.timeOffsetMs) ? merged.timeOffsetMs : 0)),
   };
 }
 
@@ -214,13 +215,14 @@ export function resolveCursorState(params: CursorResolveParams): CursorResolvedS
     };
   }
 
+  const sampleTimeMs = params.timeMs + style.timeOffsetMs;
   const sortedSamples = (params.track?.samples || [])
     .filter((sample) => Number.isFinite(sample.timeMs))
     .slice()
     .sort((a, b) => a.timeMs - b.timeMs);
 
   const fromTrack = sortedSamples.length
-    ? smoothFromTrack(sortedSamples, params.timeMs, style.smoothingMs)
+    ? smoothFromTrack(sortedSamples, sampleTimeMs, style.smoothingMs)
     : null;
 
   const fallback = getFallbackFocus(params.timeMs, params.zoomRegions, params.fallbackFocus);
@@ -231,7 +233,7 @@ export function resolveCursorState(params: CursorResolveParams): CursorResolvedS
   const fallbackVisible = Boolean(params.zoomRegions?.length);
   const visible = fromTrack?.visible ?? fallbackVisible;
 
-  const clickPulse = resolveClickPulse(params.timeMs, collectClickTimes(params.track, params.zoomRegions));
+  const clickPulse = resolveClickPulse(sampleTimeMs, collectClickTimes(params.track, params.zoomRegions));
   const clickAccent = easeOutCubic(clickPulse);
 
   return {

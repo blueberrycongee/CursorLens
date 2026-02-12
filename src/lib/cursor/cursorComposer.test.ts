@@ -61,6 +61,30 @@ describe('cursorComposer', () => {
     expect(sample.click).toBe(true);
   });
 
+  it('supports time offset alignment for cursor track', () => {
+    const track: CursorTrack = {
+      source: 'recorded',
+      samples: [
+        { timeMs: 0, x: 0.1, y: 0.1, visible: true },
+        { timeMs: 100, x: 0.5, y: 0.5, visible: true },
+      ],
+    };
+
+    const withoutOffset = resolveCursorState({
+      timeMs: 0,
+      track,
+      style: { ...DEFAULT_CURSOR_STYLE, smoothingMs: 0, timeOffsetMs: 0 },
+    });
+    const withOffset = resolveCursorState({
+      timeMs: 0,
+      track,
+      style: { ...DEFAULT_CURSOR_STYLE, smoothingMs: 0, timeOffsetMs: 100 },
+    });
+
+    expect(withoutOffset.x).toBeCloseTo(0.1, 3);
+    expect(withOffset.x).toBeCloseTo(0.5, 3);
+  });
+
   it('applies cursor offset before drawing glyph', () => {
     const translateCalls: Array<{ x: number; y: number }> = [];
     const context = {
