@@ -5,3 +5,16 @@ export const TRANSITION_WINDOW_MS = 320;
 export const SMOOTHING_FACTOR = 0.12;
 export const MIN_DELTA = 0.0001;
 export const VIEWPORT_SCALE = 0.8;
+
+export function resolveAdaptiveSmoothingAlpha(deltaMs: number): number {
+  const baseFps = 60;
+  const baseStepMs = 1000 / baseFps;
+  const safeDeltaMs = Number.isFinite(deltaMs) ? Math.max(0, deltaMs) : 0;
+  if (safeDeltaMs <= 0.0001) {
+    return SMOOTHING_FACTOR;
+  }
+
+  const baseRetention = Math.max(0.0001, 1 - SMOOTHING_FACTOR);
+  const alpha = 1 - Math.pow(baseRetention, safeDeltaMs / baseStepMs);
+  return Math.max(0.01, Math.min(1, alpha));
+}

@@ -27,6 +27,13 @@ interface VideoExporterConfig extends ExportConfig {
   onProgress?: (progress: ExportProgress) => void;
 }
 
+export function hasRecordedCursorSamples(track?: CursorTrack | null): boolean {
+  if (!track?.samples?.length) return false;
+  return track.samples.some((sample) =>
+    Number.isFinite(sample.timeMs) && Number.isFinite(sample.x) && Number.isFinite(sample.y),
+  );
+}
+
 export function getSeekToleranceSeconds(frameRate: number): number {
   const safeFrameRate = Number.isFinite(frameRate) && frameRate > 0 ? frameRate : 60;
   return Math.max(1 / (safeFrameRate * 2), 1 / 240);
@@ -100,6 +107,7 @@ export class VideoExporter {
   private lastThroughputLogAtMs = 0;
   private seekCount = 0;
   private samplingMode: 'playback' | 'seek-only' = 'seek-only';
+  private maxObservedTimingDriftMs = 0;
 
   constructor(config: VideoExporterConfig) {
     this.config = {
@@ -144,6 +152,7 @@ export class VideoExporter {
       this.lastRenderingFrameCount = 0;
       this.lastThroughputLogAtMs = this.exportStartedAtMs;
       this.seekCount = 0;
+      this.maxObservedTimingDriftMs = 0;
       this.samplingMode = 'seek-only';
 
       this.decoder = new VideoFileDecoder();
@@ -189,7 +198,9 @@ export class VideoExporter {
       console.log('[VideoExporter] Total frames to export:', totalFrames);
 
       let frameIndex = 0;
-      if (typeof videoElement.requestVideoFrameCallback === 'function') {
+      const shouldUsePlaybackSampling = typeof videoElement.requestVideoFrameCallback === 'function'
+        && !hasRecordedCursorSamples(this.config.cursorTrack);
+      if (shouldUsePlaybackSampling) {
         this.samplingMode = 'playback';
         frameIndex = await this.exportFramesWithPlaybackSampling(videoElement, totalFrames);
         if (frameIndex < totalFrames && !this.cancelled) {
@@ -242,6 +253,7 @@ export class VideoExporter {
         avgRenderFps: totalElapsedMs > 0 ? Number(((totalFrames * 1000) / totalElapsedMs).toFixed(2)) : 0,
         samplingMode: this.samplingMode,
         seekCount: this.seekCount,
+        maxObservedTimingDriftMs: Number(this.maxObservedTimingDriftMs.toFixed(2)),
       });
 
       return { success: true, blob };
@@ -331,12 +343,12 @@ export class VideoExporter {
     videoElement: HTMLVideoElement,
     frameIndex: number,
     totalFrames: number,
-    sourceTimeMs: number,
+    frameTimeMs: number,
   ): Promise<void> {
     const timestamp = frameIndexToTimestampUs(frameIndex, this.config.frameRate);
     const duration = frameDurationUs(frameIndex, this.config.frameRate);
 
-    await this.renderer!.renderFrame(videoElement, Math.round(sourceTimeMs * 1000));
+    await this.renderer!.renderFrame(videoElement, Math.round(frameTimeMs * 1000));
 
     const canvas = this.renderer!.getCanvas();
 
@@ -409,9 +421,14 @@ export class VideoExporter {
     let frameIndex = startFrameIndex;
 
     while (frameIndex < totalFrames && !this.cancelled) {
-      const sourceTimeMs = this.getSourceTimeMsForFrame(frameIndex);
-      await this.seekVideoTo(videoElement, sourceTimeMs / 1000);
-      await this.renderAndEncodeFrame(videoElement, frameIndex, totalFrames, sourceTimeMs);
+      const targetSourceTimeMs = this.getSourceTimeMsForFrame(frameIndex);
+      await this.seekVideoTo(videoElement, targetSourceTimeMs / 1000);
+      const sampledFrameTimeMs = Math.max(0, videoElement.currentTime * 1000);
+      this.maxObservedTimingDriftMs = Math.max(
+        this.maxObservedTimingDriftMs,
+        Math.abs(sampledFrameTimeMs - targetSourceTimeMs),
+      );
+      await this.renderAndEncodeFrame(videoElement, frameIndex, totalFrames, sampledFrameTimeMs);
       frameIndex++;
     }
 
@@ -450,8 +467,12 @@ export class VideoExporter {
         if (sourceTimeSeconds > mediaTime + tolerance) {
           break;
         }
-
-        await this.renderAndEncodeFrame(videoElement, frameIndex, totalFrames, sourceTimeMs);
+        const sampledFrameTimeMs = Math.max(0, mediaTime * 1000);
+        this.maxObservedTimingDriftMs = Math.max(
+          this.maxObservedTimingDriftMs,
+          Math.abs(sampledFrameTimeMs - sourceTimeMs),
+        );
+        await this.renderAndEncodeFrame(videoElement, frameIndex, totalFrames, sampledFrameTimeMs);
         frameIndex++;
         renderedInTick++;
       }

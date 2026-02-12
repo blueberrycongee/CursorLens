@@ -3,7 +3,7 @@ import type { ZoomRegion, CropRegion, AnnotationRegion } from '@/components/vide
 import { ZOOM_DEPTH_SCALES } from '@/components/video-editor/types';
 import { findDominantRegion } from '@/components/video-editor/videoPlayback/zoomRegionUtils';
 import { applyZoomTransform } from '@/components/video-editor/videoPlayback/zoomTransform';
-import { DEFAULT_FOCUS, SMOOTHING_FACTOR, MIN_DELTA } from '@/components/video-editor/videoPlayback/constants';
+import { DEFAULT_FOCUS, MIN_DELTA, resolveAdaptiveSmoothingAlpha } from '@/components/video-editor/videoPlayback/constants';
 import { clampFocusToStage as clampFocusToStageUtil } from '@/components/video-editor/videoPlayback/focusUtils';
 import { renderAnnotations } from './annotationRenderer';
 import {
@@ -39,6 +39,7 @@ interface AnimationState {
   scale: number;
   focusX: number;
   focusY: number;
+  lastTimeMs: number | null;
 }
 
 // Renders video frames with all effects (background, zoom, crop, blur, shadow) to an offscreen canvas for export.
@@ -67,6 +68,7 @@ export class FrameRenderer {
       scale: 1,
       focusX: DEFAULT_FOCUS.cx,
       focusY: DEFAULT_FOCUS.cy,
+      lastTimeMs: null,
     };
   }
 
@@ -488,6 +490,10 @@ export class FrameRenderer {
     }
 
     const state = this.animationState;
+    const previousTimeMs = state.lastTimeMs;
+    const deltaMs = previousTimeMs === null ? 0 : timeMs - previousTimeMs;
+    const smoothingAlpha = resolveAdaptiveSmoothingAlpha(deltaMs);
+    state.lastTimeMs = timeMs;
 
     const prevScale = state.scale;
     const prevFocusX = state.focusX;
@@ -502,19 +508,19 @@ export class FrameRenderer {
     let nextFocusY = prevFocusY;
 
     if (Math.abs(scaleDelta) > MIN_DELTA) {
-      nextScale = prevScale + scaleDelta * SMOOTHING_FACTOR;
+      nextScale = prevScale + scaleDelta * smoothingAlpha;
     } else {
       nextScale = targetScaleFactor;
     }
 
     if (Math.abs(focusXDelta) > MIN_DELTA) {
-      nextFocusX = prevFocusX + focusXDelta * SMOOTHING_FACTOR;
+      nextFocusX = prevFocusX + focusXDelta * smoothingAlpha;
     } else {
       nextFocusX = targetFocus.cx;
     }
 
     if (Math.abs(focusYDelta) > MIN_DELTA) {
-      nextFocusY = prevFocusY + focusYDelta * SMOOTHING_FACTOR;
+      nextFocusY = prevFocusY + focusYDelta * smoothingAlpha;
     } else {
       nextFocusY = targetFocus.cy;
     }

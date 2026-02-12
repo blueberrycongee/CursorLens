@@ -3,7 +3,7 @@ import { useEffect, useRef, useImperativeHandle, forwardRef, useState, useMemo, 
 import { getAssetPath } from "@/lib/assetPath";
 import { Application, Container, Sprite, Graphics, BlurFilter, Texture, VideoSource } from 'pixi.js';
 import { ZOOM_DEPTH_SCALES, type ZoomRegion, type ZoomFocus, type ZoomDepth, type TrimRegion, type AnnotationRegion } from "./types";
-import { DEFAULT_FOCUS, SMOOTHING_FACTOR, MIN_DELTA } from "./videoPlayback/constants";
+import { DEFAULT_FOCUS, MIN_DELTA, resolveAdaptiveSmoothingAlpha } from "./videoPlayback/constants";
 import { clamp01 } from "./videoPlayback/mathUtils";
 import { findDominantRegion } from "./videoPlayback/zoomRegionUtils";
 import { clampFocusToStage as clampFocusToStageUtil } from "./videoPlayback/focusUtils";
@@ -109,7 +109,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
   const currentTimeRef = useRef(0);
   const zoomRegionsRef = useRef<ZoomRegion[]>([]);
   const selectedZoomIdRef = useRef<string | null>(null);
-  const animationStateRef = useRef({ scale: 1, focusX: DEFAULT_FOCUS.cx, focusY: DEFAULT_FOCUS.cy });
+  const animationStateRef = useRef({ scale: 1, focusX: DEFAULT_FOCUS.cx, focusY: DEFAULT_FOCUS.cy, lastTimeMs: null as number | null });
   const blurFilterRef = useRef<BlurFilter | null>(null);
   const isDraggingFocusRef = useRef(false);
   const stageSizeRef = useRef({ width: 0, height: 0 });
@@ -391,6 +391,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
       scale: 1,
       focusX: DEFAULT_FOCUS.cx,
       focusY: DEFAULT_FOCUS.cy,
+      lastTimeMs: null,
     };
 
     if (blurFilterRef.current) {
@@ -665,6 +666,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
       scale: 1,
       focusX: DEFAULT_FOCUS.cx,
       focusY: DEFAULT_FOCUS.cy,
+      lastTimeMs: null,
     };
 
     const blurFilter = new BlurFilter();
@@ -781,6 +783,10 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
       }
 
       const state = animationStateRef.current;
+      const previousTimeMs = state.lastTimeMs;
+      const deltaMs = previousTimeMs === null ? 0 : currentTimeRef.current - previousTimeMs;
+      const smoothingAlpha = resolveAdaptiveSmoothingAlpha(deltaMs);
+      state.lastTimeMs = currentTimeRef.current;
 
       const prevScale = state.scale;
       const prevFocusX = state.focusX;
@@ -795,19 +801,19 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
       let nextFocusY = prevFocusY;
 
       if (Math.abs(scaleDelta) > MIN_DELTA) {
-        nextScale = prevScale + scaleDelta * SMOOTHING_FACTOR;
+        nextScale = prevScale + scaleDelta * smoothingAlpha;
       } else {
         nextScale = targetScaleFactor;
       }
 
       if (Math.abs(focusXDelta) > MIN_DELTA) {
-        nextFocusX = prevFocusX + focusXDelta * SMOOTHING_FACTOR;
+        nextFocusX = prevFocusX + focusXDelta * smoothingAlpha;
       } else {
         nextFocusX = targetFocus.cx;
       }
 
       if (Math.abs(focusYDelta) > MIN_DELTA) {
-        nextFocusY = prevFocusY + focusYDelta * SMOOTHING_FACTOR;
+        nextFocusY = prevFocusY + focusYDelta * smoothingAlpha;
       } else {
         nextFocusY = targetFocus.cy;
       }

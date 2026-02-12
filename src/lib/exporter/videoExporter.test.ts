@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { VideoExporter, estimateRemainingSeconds, getSeekToleranceSeconds, shouldSeekToTime, withTimeout } from "./videoExporter";
+import {
+  VideoExporter,
+  estimateRemainingSeconds,
+  getSeekToleranceSeconds,
+  hasRecordedCursorSamples,
+  shouldSeekToTime,
+  withTimeout,
+} from "./videoExporter";
 
 describe("videoExporter seek helpers", () => {
   it("uses half-frame tolerance at common frame rates", () => {
@@ -45,6 +52,17 @@ describe("videoExporter seek helpers", () => {
     expect(estimateRemainingSeconds(120, 120, 3000)).toBe(0);
     expect(estimateRemainingSeconds(80, 60, 3000)).toBe(0);
     expect(estimateRemainingSeconds(50, 120, Number.NaN)).toBe(0);
+  });
+
+  it("detects recorded cursor tracks for export sampling strategy", () => {
+    expect(hasRecordedCursorSamples(null)).toBe(false);
+    expect(hasRecordedCursorSamples({ source: "recorded", samples: [] })).toBe(false);
+    expect(
+      hasRecordedCursorSamples({
+        source: "recorded",
+        samples: [{ timeMs: 0, x: 0.1, y: 0.2 }],
+      }),
+    ).toBe(true);
   });
 
   it("uses continuous playback sampling without per-frame play/pause churn", async () => {
