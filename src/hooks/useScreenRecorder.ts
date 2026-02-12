@@ -1,17 +1,30 @@
 import { useState, useRef, useEffect } from "react";
 import { fixWebmDuration } from "@fix-webm-duration/fix";
+import { computeCameraOverlayRect } from "./cameraOverlay";
 
 type UseScreenRecorderReturn = {
   recording: boolean;
   toggleRecording: () => void;
 };
 
-export function useScreenRecorder(): UseScreenRecorderReturn {
+type UseScreenRecorderOptions = {
+  includeCamera?: boolean;
+};
+
+type CompositionResources = {
+  compositeStream: MediaStream;
+  cleanup: () => void;
+};
+
+export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseScreenRecorderReturn {
+  const includeCamera = options.includeCamera ?? false;
   const [recording, setRecording] = useState(false);
   const mediaRecorder = useRef<MediaRecorder | null>(null);
   const stream = useRef<MediaStream | null>(null);
+  const cameraStream = useRef<MediaStream | null>(null);
   const chunks = useRef<Blob[]>([]);
   const startTime = useRef<number>(0);
+  const compositionCleanup = useRef<(() => void) | null>(null);
 
   // Target visually lossless 4K @ 60fps; fall back gracefully when hardware cannot keep up
   const TARGET_FRAME_RATE = 60;
@@ -47,8 +60,17 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 
   const stopRecording = useRef(() => {
     if (mediaRecorder.current?.state === "recording") {
+      if (compositionCleanup.current) {
+        compositionCleanup.current();
+        compositionCleanup.current = null;
+      }
+      if (cameraStream.current) {
+        cameraStream.current.getTracks().forEach(track => track.stop());
+        cameraStream.current = null;
+      }
       if (stream.current) {
         stream.current.getTracks().forEach(track => track.stop());
+        stream.current = null;
       }
       mediaRecorder.current.stop();
       setRecording(false);
@@ -72,12 +94,106 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
       if (mediaRecorder.current?.state === "recording") {
         mediaRecorder.current.stop();
       }
+      if (compositionCleanup.current) {
+        compositionCleanup.current();
+        compositionCleanup.current = null;
+      }
+      if (cameraStream.current) {
+        cameraStream.current.getTracks().forEach(track => track.stop());
+        cameraStream.current = null;
+      }
       if (stream.current) {
         stream.current.getTracks().forEach(track => track.stop());
         stream.current = null;
       }
     };
   }, []);
+
+  const buildCompositedStream = async (
+    desktopStream: MediaStream,
+    sourceWidth: number,
+    sourceHeight: number,
+    sourceFrameRate: number
+  ): Promise<CompositionResources> => {
+    const webcamStream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: {
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+        frameRate: { ideal: 30, max: 60 },
+      },
+    });
+    cameraStream.current = webcamStream;
+
+    const desktopVideo = document.createElement("video");
+    desktopVideo.srcObject = desktopStream;
+    desktopVideo.muted = true;
+    desktopVideo.playsInline = true;
+    await desktopVideo.play();
+
+    const webcamVideo = document.createElement("video");
+    webcamVideo.srcObject = webcamStream;
+    webcamVideo.muted = true;
+    webcamVideo.playsInline = true;
+    await webcamVideo.play();
+
+    const canvas = document.createElement("canvas");
+    canvas.width = sourceWidth;
+    canvas.height = sourceHeight;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      throw new Error("Failed to create 2D context for camera composition.");
+    }
+
+    const overlay = computeCameraOverlayRect(sourceWidth, sourceHeight);
+    let frameToken = 0;
+    const drawFrame = () => {
+      if (desktopVideo.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+        ctx.drawImage(desktopVideo, 0, 0, sourceWidth, sourceHeight);
+      }
+
+      if (webcamVideo.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+        ctx.save();
+        ctx.beginPath();
+        const r = overlay.cornerRadius;
+        const x = overlay.x;
+        const y = overlay.y;
+        const w = overlay.width;
+        const h = overlay.height;
+        ctx.moveTo(x + r, y);
+        ctx.lineTo(x + w - r, y);
+        ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+        ctx.lineTo(x + w, y + h - r);
+        ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+        ctx.lineTo(x + r, y + h);
+        ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+        ctx.lineTo(x, y + r);
+        ctx.quadraticCurveTo(x, y, x + r, y);
+        ctx.closePath();
+        ctx.clip();
+        ctx.drawImage(webcamVideo, x, y, w, h);
+        ctx.restore();
+
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = "rgba(255,255,255,0.45)";
+        ctx.strokeRect(x, y, w, h);
+      }
+
+      frameToken = requestAnimationFrame(drawFrame);
+    };
+    drawFrame();
+
+    const compositeStream = canvas.captureStream(Math.max(24, Math.round(sourceFrameRate || 30)));
+    return {
+      compositeStream,
+      cleanup: () => {
+        cancelAnimationFrame(frameToken);
+        desktopVideo.pause();
+        webcamVideo.pause();
+        webcamStream.getTracks().forEach(track => track.stop());
+      },
+    };
+  };
 
   const startRecording = async () => {
     try {
@@ -87,7 +203,7 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
         return;
       }
 
-      const mediaStream = await (navigator.mediaDevices as any).getUserMedia({
+      const desktopStream = await (navigator.mediaDevices as any).getUserMedia({
         audio: false,
         video: {
           mandatory: {
@@ -100,11 +216,14 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
           },
         },
       });
-      stream.current = mediaStream;
-      if (!stream.current) {
+      stream.current = desktopStream;
+      if (!desktopStream) {
         throw new Error("Media stream is not available.");
       }
-      const videoTrack = stream.current.getVideoTracks()[0];
+      const videoTrack = desktopStream.getVideoTracks()[0];
+      if (!videoTrack) {
+        throw new Error("No video track available from desktop stream.");
+      }
       try {
         await videoTrack.applyConstraints({
           frameRate: { ideal: TARGET_FRAME_RATE, max: TARGET_FRAME_RATE },
@@ -131,7 +250,23 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
       );
       
       chunks.current = [];
-      const recorder = new MediaRecorder(stream.current, {
+      let recordingStream: MediaStream = desktopStream;
+      if (includeCamera) {
+        try {
+          const composition = await buildCompositedStream(
+            desktopStream,
+            width,
+            height,
+            frameRate ?? TARGET_FRAME_RATE,
+          );
+          compositionCleanup.current = composition.cleanup;
+          recordingStream = composition.compositeStream;
+        } catch (error) {
+          console.warn("Camera capture failed, fallback to screen-only recording.", error);
+        }
+      }
+
+      const recorder = new MediaRecorder(recordingStream, {
         mimeType,
         videoBitsPerSecond,
       });
@@ -140,6 +275,14 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
         if (e.data && e.data.size > 0) chunks.current.push(e.data);
       };
       recorder.onstop = async () => {
+        if (compositionCleanup.current) {
+          compositionCleanup.current();
+          compositionCleanup.current = null;
+        }
+        if (cameraStream.current) {
+          cameraStream.current.getTracks().forEach(track => track.stop());
+          cameraStream.current = null;
+        }
         stream.current = null;
         if (chunks.current.length === 0) return;
         const duration = Date.now() - startTime.current;
@@ -179,6 +322,14 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
       if (stream.current) {
         stream.current.getTracks().forEach(track => track.stop());
         stream.current = null;
+      }
+      if (cameraStream.current) {
+        cameraStream.current.getTracks().forEach(track => track.stop());
+        cameraStream.current = null;
+      }
+      if (compositionCleanup.current) {
+        compositionCleanup.current();
+        compositionCleanup.current = null;
       }
     }
   };

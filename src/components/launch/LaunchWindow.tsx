@@ -7,11 +7,18 @@ import { FaRegStopCircle } from "react-icons/fa";
 import { MdMonitor } from "react-icons/md";
 import { RxDragHandleDots2 } from "react-icons/rx";
 import { FaFolderMinus } from "react-icons/fa6";
-import { FiMinus, FiX } from "react-icons/fi";
+import { FiCamera, FiMinus, FiX } from "react-icons/fi";
 import { ContentClamp } from "../ui/content-clamp";
 
 export function LaunchWindow() {
-  const { recording, toggleRecording } = useScreenRecorder();
+  const [includeCamera, setIncludeCamera] = useState(() => {
+    try {
+      return window.localStorage.getItem("openscreen.includeCamera") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const { recording, toggleRecording } = useScreenRecorder({ includeCamera });
   const [recordingStart, setRecordingStart] = useState<number | null>(null);
   const [elapsed, setElapsed] = useState(0);
 
@@ -41,6 +48,14 @@ export function LaunchWindow() {
   };
   const [selectedSource, setSelectedSource] = useState("Screen");
   const [hasSelectedSource, setHasSelectedSource] = useState(false);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("openscreen.includeCamera", includeCamera ? "1" : "0");
+    } catch {
+      // no-op
+    }
+  }, [includeCamera]);
 
   useEffect(() => {
     const checkSelectedSource = async () => {
@@ -142,6 +157,20 @@ export function LaunchWindow() {
           )}
         </Button>
         
+
+        <div className="w-px h-6 bg-white/30" />
+
+        <Button
+          variant="link"
+          size="sm"
+          className={`gap-1 text-white bg-transparent hover:bg-transparent px-0 flex-1 text-center text-xs ${styles.electronNoDrag}`}
+          onClick={() => setIncludeCamera((value) => !value)}
+          disabled={recording}
+          title={includeCamera ? "Camera overlay enabled" : "Enable camera overlay"}
+        >
+          <FiCamera size={14} className={includeCamera ? "text-cyan-300" : "text-white/50"} />
+          <span className={includeCamera ? "text-cyan-300" : "text-white/50"}>Camera</span>
+        </Button>
 
         <div className="w-px h-6 bg-white/30" />
 
