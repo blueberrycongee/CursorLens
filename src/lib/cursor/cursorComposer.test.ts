@@ -128,4 +128,49 @@ describe('cursorComposer', () => {
 
     expect(translateCalls[0]).toEqual({ x: 112, y: 54 });
   });
+
+  it('scales cursor glyph with zoom content scale', () => {
+    const scaleCalls: Array<{ x: number; y: number }> = [];
+    const context = {
+      save: () => {},
+      restore: () => {},
+      translate: () => {},
+      scale: (x: number, y: number) => {
+        scaleCalls.push({ x, y });
+      },
+      beginPath: () => {},
+      moveTo: () => {},
+      lineTo: () => {},
+      closePath: () => {},
+      fill: () => {},
+      stroke: () => {},
+      arc: () => {},
+      set globalAlpha(_: number) {},
+      set fillStyle(_: string | CanvasGradient | CanvasPattern) {},
+      set strokeStyle(_: string | CanvasGradient | CanvasPattern) {},
+      set lineWidth(_: number) {},
+      set shadowColor(_: string) {},
+      set shadowBlur(_: number) {},
+      set shadowOffsetX(_: number) {},
+      set shadowOffsetY(_: number) {},
+    } as unknown as CanvasRenderingContext2D;
+
+    drawCompositedCursor(
+      context,
+      { x: 100, y: 60 },
+      {
+        visible: true,
+        x: 0.5,
+        y: 0.5,
+        scale: 1,
+        highlightAlpha: 0,
+        rippleScale: 1,
+        rippleAlpha: 0,
+      },
+      { ...DEFAULT_CURSOR_STYLE, shadow: 0 },
+      2,
+    );
+
+    expect(scaleCalls[0]).toEqual({ x: 2, y: 2 });
+  });
 });

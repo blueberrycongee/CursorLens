@@ -296,11 +296,13 @@ export function drawCompositedCursor(
   point: { x: number; y: number },
   state: CursorResolvedState,
   style?: Partial<CursorStyleConfig>,
+  contentScale = 1,
 ): void {
   if (!state.visible) return;
 
   const normalized = normalizeCursorStyle(style);
-  const scale = state.scale;
+  const safeContentScale = Math.max(0.1, Math.min(8, Number.isFinite(contentScale) ? contentScale : 1));
+  const scale = state.scale * safeContentScale;
   const translatedX = point.x + normalized.offsetX;
   const translatedY = point.y + normalized.offsetY;
 

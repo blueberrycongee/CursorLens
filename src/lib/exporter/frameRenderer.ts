@@ -397,6 +397,7 @@ export class FrameRenderer {
       { x: projected.x, y: projected.y },
       cursorState,
       this.config.cursorStyle,
+      Math.max(0.1, (Math.abs(this.cameraContainer.scale.x) + Math.abs(this.cameraContainer.scale.y)) / 2),
     );
   }
 

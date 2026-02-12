@@ -540,6 +540,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
       { x: projected.x, y: projected.y },
       cursorState,
       cursorStyleRef.current,
+      Math.max(0.1, (Math.abs(cameraContainer.scale.x) + Math.abs(cameraContainer.scale.y)) / 2),
     );
   }, [ensureCursorCanvas]);
 
