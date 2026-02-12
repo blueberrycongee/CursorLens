@@ -3,8 +3,10 @@ import { LaunchWindow } from "./components/launch/LaunchWindow";
 import { SourceSelector } from "./components/launch/SourceSelector";
 import VideoEditor from "./components/video-editor/VideoEditor";
 import { loadAllCustomFonts } from "./lib/customFonts";
+import { useI18n } from "./i18n";
 
 export default function App() {
+  const { t } = useI18n();
   const [windowType, setWindowType] = useState('');
 
   useEffect(() => {
@@ -33,7 +35,7 @@ export default function App() {
       default:
       return (
         <div className="w-full h-full bg-background text-foreground">
-          <h1>Openscreen</h1>
+          <h1>{t("app.name")}</h1>
         </div>
       );
   }

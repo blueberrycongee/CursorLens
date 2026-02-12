@@ -1,6 +1,7 @@
 import { Film, Image } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { ExportFormat } from '@/lib/exporter/types';
+import { useI18n } from '@/i18n';
 
 interface FormatSelectorProps {
   selectedFormat: ExportFormat;
@@ -10,22 +11,22 @@ interface FormatSelectorProps {
 
 interface FormatOption {
   value: ExportFormat;
-  label: string;
-  description: string;
+  labelKey: string;
+  descriptionKey: string;
   icon: React.ReactNode;
 }
 
 const formatOptions: FormatOption[] = [
   {
     value: 'mp4',
-    label: 'MP4 Video',
-    description: 'High quality video file',
+    labelKey: 'format.mp4.label',
+    descriptionKey: 'format.mp4.desc',
     icon: <Film className="w-5 h-5" />,
   },
   {
     value: 'gif',
-    label: 'GIF Animation',
-    description: 'Animated image for sharing',
+    labelKey: 'format.gif.label',
+    descriptionKey: 'format.gif.desc',
     icon: <Image className="w-5 h-5" />,
   },
 ];
@@ -35,6 +36,7 @@ export function FormatSelector({
   onFormatChange,
   disabled = false,
 }: FormatSelectorProps) {
+  const { t } = useI18n();
   return (
     <div className="grid grid-cols-2 gap-3">
       {formatOptions.map((option) => {
@@ -63,8 +65,8 @@ export function FormatSelector({
               {option.icon}
             </div>
             <div className="text-center">
-              <div className="font-medium text-sm">{option.label}</div>
-              <div className="text-xs text-slate-500 mt-0.5">{option.description}</div>
+              <div className="font-medium text-sm">{t(option.labelKey)}</div>
+              <div className="text-xs text-slate-500 mt-0.5">{t(option.descriptionKey)}</div>
             </div>
             {isSelected && (
               <div className="absolute top-2 right-2 w-2 h-2 rounded-full bg-[#34B27B]" />

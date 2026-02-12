@@ -10,19 +10,16 @@ import { RxDragHandleDots2 } from "react-icons/rx";
 import { FaFolderMinus } from "react-icons/fa6";
 import { FiCamera, FiMinus, FiX } from "react-icons/fi";
 import { ContentClamp } from "../ui/content-clamp";
+import { useI18n } from "@/i18n";
 
 const CAMERA_SHAPE_CYCLE: CameraOverlayShape[] = ["rounded", "square", "circle"];
-const CAMERA_SHAPE_LABEL: Record<CameraOverlayShape, string> = {
-  rounded: "Rounded",
-  square: "Square",
-  circle: "Circle",
-};
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
 
 export function LaunchWindow() {
+  const { t, locale, setLocale } = useI18n();
   const [includeCamera, setIncludeCamera] = useState(() => {
     try {
       return window.localStorage.getItem("openscreen.includeCamera") === "1";
@@ -84,7 +81,7 @@ export function LaunchWindow() {
     const s = (seconds % 60).toString().padStart(2, '0');
     return `${m}:${s}`;
   };
-  const [selectedSource, setSelectedSource] = useState("Screen");
+  const [selectedSource, setSelectedSource] = useState(t("launch.sourceFallback"));
   const [hasSelectedSource, setHasSelectedSource] = useState(false);
 
   useEffect(() => {
@@ -127,7 +124,7 @@ export function LaunchWindow() {
           setSelectedSource(source.name);
           setHasSelectedSource(true);
         } else {
-          setSelectedSource("Screen");
+          setSelectedSource(t("launch.sourceFallback"));
           setHasSelectedSource(false);
         }
       }
@@ -137,7 +134,13 @@ export function LaunchWindow() {
     
     const interval = setInterval(checkSelectedSource, 500);
     return () => clearInterval(interval);
-  }, []);
+  }, [t]);
+
+  const cameraShapeLabelMap: Record<CameraOverlayShape, string> = {
+    rounded: t("launch.shape.rounded"),
+    square: t("launch.shape.square"),
+    circle: t("launch.shape.circle"),
+  };
 
   const openSourceSelector = () => {
     if (window.electronAPI) {
@@ -146,7 +149,7 @@ export function LaunchWindow() {
   };
 
   const openVideoFile = async () => {
-    const result = await window.electronAPI.openVideoFilePicker();
+    const result = await window.electronAPI.openVideoFilePicker(locale);
     
     if (result.cancelled) {
       return;
@@ -185,6 +188,15 @@ export function LaunchWindow() {
         }}
       >
         <div className={`flex items-center gap-1 ${styles.electronDrag}`}> <RxDragHandleDots2 size={18} className="text-white/40" /> </div>
+        <select
+          value={locale}
+          onChange={(event) => setLocale(event.target.value as typeof locale)}
+          className={`h-6 rounded bg-white/10 text-[10px] text-white border border-white/20 px-1.5 ${styles.electronNoDrag}`}
+          title={t("common.language")}
+        >
+          <option value="en">{t("common.english")}</option>
+          <option value="zh-CN">{t("common.chinese")}</option>
+        </select>
 
         <Button
           variant="link"
@@ -214,7 +226,7 @@ export function LaunchWindow() {
           ) : (
             <>
               <BsRecordCircle size={14} className={hasSelectedSource ? "text-white" : "text-white/50"} />
-              <span className={hasSelectedSource ? "text-white" : "text-white/50"}>Record</span>
+              <span className={hasSelectedSource ? "text-white" : "text-white/50"}>{t("launch.record")}</span>
             </>
           )}
         </Button>
@@ -228,10 +240,10 @@ export function LaunchWindow() {
           className={`gap-1 text-white bg-transparent hover:bg-transparent px-0 flex-1 text-center text-xs ${styles.electronNoDrag}`}
           onClick={() => setIncludeCamera((value) => !value)}
           disabled={recording}
-          title={includeCamera ? "Camera overlay enabled" : "Enable camera overlay"}
+          title={includeCamera ? t("launch.cameraEnabled") : t("launch.cameraEnable")}
         >
           <FiCamera size={14} className={includeCamera ? "text-cyan-300" : "text-white/50"} />
-          <span className={includeCamera ? "text-cyan-300" : "text-white/50"}>Camera</span>
+          <span className={includeCamera ? "text-cyan-300" : "text-white/50"}>{t("launch.camera")}</span>
         </Button>
 
         <div className="w-px h-6 bg-white/30" />
@@ -244,10 +256,10 @@ export function LaunchWindow() {
               className={`gap-1 text-cyan-200 bg-transparent hover:bg-transparent px-0 text-xs ${styles.electronNoDrag}`}
               onClick={cycleCameraShape}
               disabled={recording}
-              title={`Camera shape: ${CAMERA_SHAPE_LABEL[cameraShape]}`}
+              title={t("launch.cameraShapeLabel", { shape: cameraShapeLabelMap[cameraShape] })}
             >
-              <span>Shape</span>
-              <span className={styles.cameraConfigBadge}>{CAMERA_SHAPE_LABEL[cameraShape]}</span>
+              <span>{t("launch.shape")}</span>
+              <span className={styles.cameraConfigBadge}>{cameraShapeLabelMap[cameraShape]}</span>
             </Button>
 
             <Button
@@ -256,7 +268,7 @@ export function LaunchWindow() {
               className={`text-cyan-200 bg-transparent hover:bg-transparent px-1 text-xs ${styles.electronNoDrag}`}
               onClick={() => setCameraSizePercent((value) => clamp(value - 2, 14, 40))}
               disabled={recording}
-              title="Decrease camera size"
+              title={t("launch.sizeDecrease")}
             >
               -
             </Button>
@@ -267,7 +279,7 @@ export function LaunchWindow() {
               className={`text-cyan-200 bg-transparent hover:bg-transparent px-1 text-xs ${styles.electronNoDrag}`}
               onClick={() => setCameraSizePercent((value) => clamp(value + 2, 14, 40))}
               disabled={recording}
-              title="Increase camera size"
+              title={t("launch.sizeIncrease")}
             >
               +
             </Button>
@@ -285,7 +297,7 @@ export function LaunchWindow() {
           disabled={recording}
         >
           <FaFolderMinus size={14} className="text-white" />
-          <span className={styles.folderText}>Open</span>
+          <span className={styles.folderText}>{t("launch.open")}</span>
         </Button>
 
          {/* Separator before hide/close buttons */}
@@ -294,7 +306,7 @@ export function LaunchWindow() {
           variant="link"
           size="icon"
           className={`ml-2 ${styles.electronNoDrag} hudOverlayButton`}
-          title="Hide HUD"
+          title={t("launch.hideHud")}
           onClick={sendHudOverlayHide}
         >
           <FiMinus size={18} style={{ color: '#fff', opacity: 0.7 }} />
@@ -305,7 +317,7 @@ export function LaunchWindow() {
           variant="link"
           size="icon"
           className={`ml-1 ${styles.electronNoDrag} hudOverlayButton`}
-          title="Close App"
+          title={t("launch.closeApp")}
           onClick={sendHudOverlayClose}
         >
           <FiX size={18} style={{ color: '#fff', opacity: 0.7 }} />

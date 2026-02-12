@@ -7,6 +7,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { GIF_FRAME_RATES, GIF_SIZE_PRESETS, type GifFrameRate, type GifSizePreset } from '@/lib/exporter/types';
+import { useI18n } from '@/i18n';
 
 interface GifOptionsPanelProps {
   frameRate: GifFrameRate;
@@ -29,6 +30,7 @@ export function GifOptionsPanel({
   outputDimensions,
   disabled = false,
 }: GifOptionsPanelProps) {
+  const { t } = useI18n();
   const sizePresetOptions = Object.entries(GIF_SIZE_PRESETS).map(([key, value]) => ({
     value: key as GifSizePreset,
     label: value.label,
@@ -39,7 +41,7 @@ export function GifOptionsPanel({
       {/* Frame Rate */}
       <div className="space-y-2">
         <label className="text-xs font-medium text-slate-400 uppercase tracking-wider">
-          Frame Rate
+          {t("gif.frameRate")}
         </label>
         <Select
           value={String(frameRate)}
@@ -66,7 +68,7 @@ export function GifOptionsPanel({
       {/* Size Preset */}
       <div className="space-y-2">
         <label className="text-xs font-medium text-slate-400 uppercase tracking-wider">
-          Output Size
+          {t("gif.outputSize")}
         </label>
         <Select
           value={sizePreset}
@@ -96,8 +98,8 @@ export function GifOptionsPanel({
       {/* Loop Toggle */}
       <div className="flex items-center justify-between py-2">
         <div>
-          <label className="text-sm font-medium text-slate-200">Loop Animation</label>
-          <p className="text-xs text-slate-500">GIF will play continuously</p>
+          <label className="text-sm font-medium text-slate-200">{t("gif.loopAnimation")}</label>
+          <p className="text-xs text-slate-500">{t("gif.loopDesc")}</p>
         </div>
         <Switch
           checked={loop}
