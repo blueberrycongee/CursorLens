@@ -553,21 +553,25 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
       const recordedMimeType = recorder.mimeType || mimeType;
       console.log(`MediaRecorder initialized with ${recordedMimeType}`);
 
-      try {
-        const trackingResult = await window.electronAPI.startCursorTracking({
-          source: {
-            id: typeof selectedSource.id === "string" ? selectedSource.id : undefined,
-            display_id: selectedSource.display_id ?? undefined,
-          },
-          captureSize: { width, height },
-        });
-        cursorTrackingActive.current = Boolean(trackingResult?.success);
-      } catch (error) {
-        cursorTrackingActive.current = false;
-        console.warn("Failed to start cursor tracking, falling back to synthetic cursor behavior.", error);
-      }
-
       mediaRecorder.current = recorder;
+      recorder.onstart = () => {
+        void (async () => {
+          try {
+            if (mediaRecorder.current !== recorder || recorder.state !== "recording") return;
+            const trackingResult = await window.electronAPI.startCursorTracking({
+              source: {
+                id: typeof selectedSource.id === "string" ? selectedSource.id : undefined,
+                display_id: selectedSource.display_id ?? undefined,
+              },
+              captureSize: { width, height },
+            });
+            cursorTrackingActive.current = Boolean(trackingResult?.success);
+          } catch (error) {
+            cursorTrackingActive.current = false;
+            console.warn("Failed to start cursor tracking, falling back to synthetic cursor behavior.", error);
+          }
+        })();
+      };
       recorder.ondataavailable = e => {
         if (e.data && e.data.size > 0) chunks.current.push(e.data);
       };
