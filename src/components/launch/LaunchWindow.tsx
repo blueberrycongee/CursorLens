@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import styles from "./LaunchWindow.module.css";
-import { useScreenRecorder } from "../../hooks/useScreenRecorder";
+import { useScreenRecorder, type CaptureProfile } from "../../hooks/useScreenRecorder";
 import type { CameraOverlayShape } from "../../hooks/cameraOverlay";
 import { Button } from "../ui/button";
 import { BsRecordCircle } from "react-icons/bs";
@@ -14,6 +14,7 @@ import { useI18n } from "@/i18n";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
 const CAMERA_SHAPE_CYCLE: CameraOverlayShape[] = ["rounded", "square", "circle"];
+const CAPTURE_PROFILE_CYCLE: CaptureProfile[] = ["balanced", "quality", "ultra"];
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
@@ -50,10 +51,22 @@ export function LaunchWindow() {
     }
     return 22;
   });
+  const [captureProfile, setCaptureProfile] = useState<CaptureProfile>(() => {
+    try {
+      const value = window.localStorage.getItem("openscreen.captureProfile");
+      if (value === "balanced" || value === "quality" || value === "ultra") {
+        return value;
+      }
+    } catch {
+      // no-op
+    }
+    return "quality";
+  });
   const { recording, toggleRecording } = useScreenRecorder({
     includeCamera,
     cameraShape,
     cameraSizePercent,
+    captureProfile,
   });
   const [recordingStart, setRecordingStart] = useState<number | null>(null);
   const [elapsed, setElapsed] = useState(0);
@@ -109,11 +122,27 @@ export function LaunchWindow() {
     }
   }, [cameraSizePercent]);
 
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("openscreen.captureProfile", captureProfile);
+    } catch {
+      // no-op
+    }
+  }, [captureProfile]);
+
   const cycleCameraShape = () => {
     setCameraShape((current) => {
       const index = CAMERA_SHAPE_CYCLE.indexOf(current);
       const nextIndex = index >= 0 ? (index + 1) % CAMERA_SHAPE_CYCLE.length : 0;
       return CAMERA_SHAPE_CYCLE[nextIndex] ?? "rounded";
+    });
+  };
+
+  const cycleCaptureProfile = () => {
+    setCaptureProfile((current) => {
+      const index = CAPTURE_PROFILE_CYCLE.indexOf(current);
+      const nextIndex = index >= 0 ? (index + 1) % CAPTURE_PROFILE_CYCLE.length : 0;
+      return CAPTURE_PROFILE_CYCLE[nextIndex] ?? "quality";
     });
   };
 
@@ -141,6 +170,11 @@ export function LaunchWindow() {
     rounded: t("launch.shape.rounded"),
     square: t("launch.shape.square"),
     circle: t("launch.shape.circle"),
+  };
+  const captureProfileLabelMap: Record<CaptureProfile, string> = {
+    balanced: t("launch.captureProfile.balanced"),
+    quality: t("launch.captureProfile.quality"),
+    ultra: t("launch.captureProfile.ultra"),
   };
 
   const openSourceSelector = () => {
@@ -233,6 +267,18 @@ export function LaunchWindow() {
         >
           <FiCamera size={14} className={includeCamera ? "text-cyan-300" : "text-white/50"} />
           <span className={includeCamera ? "text-cyan-300" : "text-white/50"}>{t("launch.camera")}</span>
+        </Button>
+
+        <Button
+          variant="link"
+          size="sm"
+          className={`gap-1 shrink-0 min-w-[92px] text-white bg-transparent hover:bg-transparent px-1 text-center text-xs ${styles.electronNoDrag}`}
+          onClick={cycleCaptureProfile}
+          disabled={recording}
+          title={t("launch.captureProfileLabel", { profile: captureProfileLabelMap[captureProfile] })}
+        >
+          <SlidersHorizontal size={13} className="text-white/80" />
+          <span className="text-white/90">{captureProfileLabelMap[captureProfile]}</span>
         </Button>
 
         {includeCamera ? (

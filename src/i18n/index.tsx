@@ -42,6 +42,10 @@ const messages: Record<Locale, Record<string, string>> = {
     "launch.cameraShapeLabel": "Camera shape: {{shape}}",
     "launch.sizeDecrease": "Decrease camera size",
     "launch.sizeIncrease": "Increase camera size",
+    "launch.captureProfile.balanced": "Balanced",
+    "launch.captureProfile.quality": "Quality",
+    "launch.captureProfile.ultra": "Ultra 120",
+    "launch.captureProfileLabel": "Capture profile: {{profile}}",
     "launch.hideHud": "Hide HUD",
     "launch.closeApp": "Close App",
 
@@ -262,6 +266,10 @@ const messages: Record<Locale, Record<string, string>> = {
     "launch.cameraShapeLabel": "摄像头形状：{{shape}}",
     "launch.sizeDecrease": "减小摄像头尺寸",
     "launch.sizeIncrease": "增大摄像头尺寸",
+    "launch.captureProfile.balanced": "流畅 30",
+    "launch.captureProfile.quality": "高质 60",
+    "launch.captureProfile.ultra": "极限 120",
+    "launch.captureProfileLabel": "录制档位：{{profile}}",
     "launch.hideHud": "隐藏悬浮窗",
     "launch.closeApp": "关闭应用",
 

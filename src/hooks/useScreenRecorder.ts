@@ -11,7 +11,10 @@ type UseScreenRecorderOptions = {
   includeCamera?: boolean;
   cameraShape?: CameraOverlayShape;
   cameraSizePercent?: number;
+  captureProfile?: CaptureProfile;
 };
+
+export type CaptureProfile = "balanced" | "quality" | "ultra";
 
 type CompositionResources = {
   compositeStream: MediaStream;
@@ -61,6 +64,7 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
   const includeCamera = options.includeCamera ?? false;
   const cameraShape = options.cameraShape ?? "rounded";
   const cameraSizePercent = options.cameraSizePercent ?? 22;
+  const captureProfile = options.captureProfile ?? "quality";
   const [recording, setRecording] = useState(false);
   const mediaRecorder = useRef<MediaRecorder | null>(null);
   const stream = useRef<MediaStream | null>(null);
@@ -69,8 +73,16 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
   const startTime = useRef<number>(0);
   const compositionCleanup = useRef<(() => void) | null>(null);
 
-  const MAX_CAPTURE_FPS = 60;
-  const TARGET_CAPTURE_FPS = 30;
+  const profileSettings: Record<CaptureProfile, { targetFps: number; maxFps: number; bitrateScale: number; cameraCompositeFpsCap: number }> = {
+    balanced: { targetFps: 30, maxFps: 60, bitrateScale: 0.9, cameraCompositeFpsCap: 30 },
+    quality: { targetFps: 60, maxFps: 60, bitrateScale: 1.1, cameraCompositeFpsCap: 60 },
+    // Experimental profile: only beneficial on devices that can sustain high-refresh desktop capture.
+    ultra: { targetFps: 120, maxFps: 120, bitrateScale: 1.25, cameraCompositeFpsCap: 60 },
+  };
+
+  const activeProfile = profileSettings[captureProfile];
+  const MAX_CAPTURE_FPS = activeProfile.maxFps;
+  const TARGET_CAPTURE_FPS = activeProfile.targetFps;
 
   const ensureEvenDimension = (value: number, fallback: number) => {
     const resolved = Number.isFinite(value) && value > 0 ? value : fallback;
@@ -94,10 +106,10 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
     const pixels = width * height;
     const frameRateBoost = frameRate >= 50 ? 1.25 : frameRate >= 30 ? 1 : 0.85;
 
-    if (pixels >= 3840 * 2160) return Math.round(26_000_000 * frameRateBoost);
-    if (pixels >= 2560 * 1440) return Math.round(18_000_000 * frameRateBoost);
-    if (pixels >= 1920 * 1080) return Math.round(12_000_000 * frameRateBoost);
-    return Math.round(8_000_000 * frameRateBoost);
+    if (pixels >= 3840 * 2160) return Math.round(26_000_000 * frameRateBoost * activeProfile.bitrateScale);
+    if (pixels >= 2560 * 1440) return Math.round(18_000_000 * frameRateBoost * activeProfile.bitrateScale);
+    if (pixels >= 1920 * 1080) return Math.round(12_000_000 * frameRateBoost * activeProfile.bitrateScale);
+    return Math.round(8_000_000 * frameRateBoost * activeProfile.bitrateScale);
   };
 
   const createMediaRecorderWithFallback = (
@@ -238,7 +250,7 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
         ),
       ),
     );
-    const compositeFrameRate = Math.min(sourceFrameRate, 30);
+    const compositeFrameRate = Math.min(sourceFrameRate, activeProfile.cameraCompositeFpsCap);
     console.log(
       `Compositing camera overlay on ${desktopVideo.videoWidth || sourceWidthHint}x${desktopVideo.videoHeight || sourceHeightHint} -> ${sourceWidth}x${sourceHeight} @ ${compositeFrameRate}fps`,
     );
@@ -433,7 +445,7 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
       const videoBitsPerSecond = computeBitrate(width, height, frameRate);
       const mimeType = selectMimeType();
       console.log(
-        `Recording at ${width}x${height} @ ${frameRate}fps using ${mimeType} / ${Math.round(
+      `Recording [${captureProfile}] at ${width}x${height} @ ${frameRate}fps using ${mimeType} / ${Math.round(
           videoBitsPerSecond / 1_000_000
         )} Mbps`
       );
