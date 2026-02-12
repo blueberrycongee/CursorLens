@@ -3,6 +3,7 @@ import type { ExportProgress, ExportResult, GifFrameRate, GifSizePreset, GIF_SIZ
 import { VideoFileDecoder } from './videoDecoder';
 import { FrameRenderer } from './frameRenderer';
 import type { ZoomRegion, CropRegion, TrimRegion, AnnotationRegion } from '@/components/video-editor/types';
+import type { CursorStyleConfig, CursorTrack } from '@/lib/cursor';
 
 const GIF_WORKER_URL = new URL('gif.js/dist/gif.worker.js', import.meta.url).toString();
 
@@ -27,6 +28,8 @@ interface GifExporterConfig {
   annotationRegions?: AnnotationRegion[];
   previewWidth?: number;
   previewHeight?: number;
+  cursorTrack?: CursorTrack | null;
+  cursorStyle?: Partial<CursorStyleConfig>;
   onProgress?: (progress: ExportProgress) => void;
 }
 
@@ -137,6 +140,8 @@ export class GifExporter {
         annotationRegions: this.config.annotationRegions,
         previewWidth: this.config.previewWidth,
         previewHeight: this.config.previewHeight,
+        cursorTrack: this.config.cursorTrack,
+        cursorStyle: this.config.cursorStyle,
       });
       await this.renderer.initialize();
 

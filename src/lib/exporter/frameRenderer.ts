@@ -6,6 +6,13 @@ import { applyZoomTransform } from '@/components/video-editor/videoPlayback/zoom
 import { DEFAULT_FOCUS, SMOOTHING_FACTOR, MIN_DELTA } from '@/components/video-editor/videoPlayback/constants';
 import { clampFocusToStage as clampFocusToStageUtil } from '@/components/video-editor/videoPlayback/focusUtils';
 import { renderAnnotations } from './annotationRenderer';
+import {
+  drawCompositedCursor,
+  projectCursorToViewport,
+  resolveCursorState,
+  type CursorStyleConfig,
+  type CursorTrack,
+} from '@/lib/cursor';
 
 interface FrameRenderConfig {
   width: number;
@@ -24,6 +31,8 @@ interface FrameRenderConfig {
   annotationRegions?: AnnotationRegion[];
   previewWidth?: number;
   previewHeight?: number;
+  cursorTrack?: CursorTrack | null;
+  cursorStyle?: Partial<CursorStyleConfig>;
 }
 
 interface AnimationState {
@@ -326,6 +335,9 @@ export class FrameRenderer {
     // Composite with shadows to final output canvas
     this.compositeWithShadows();
 
+    // Render cursor after video compositing so visual hierarchy is consistent with preview.
+    this.renderCursorLayer(timeMs);
+
     // Render annotations on top if present
     if (this.config.annotationRegions && this.config.annotationRegions.length > 0 && this.compositeCtx) {
       // Calculate scale factor based on export vs preview dimensions
@@ -344,6 +356,48 @@ export class FrameRenderer {
         scaleFactor
       );
     }
+  }
+
+  private renderCursorLayer(timeMs: number): void {
+    if (!this.compositeCtx || !this.layoutCache || !this.cameraContainer) {
+      return;
+    }
+
+    const cursorState = resolveCursorState({
+      timeMs,
+      track: this.config.cursorTrack,
+      zoomRegions: this.config.zoomRegions,
+      fallbackFocus: { cx: this.animationState.focusX, cy: this.animationState.focusY },
+      style: this.config.cursorStyle,
+    });
+
+    if (!cursorState.visible) return;
+
+    const projected = projectCursorToViewport({
+      normalizedX: cursorState.x,
+      normalizedY: cursorState.y,
+      cropRegion: this.config.cropRegion,
+      baseOffset: this.layoutCache.baseOffset,
+      maskRect: this.layoutCache.maskRect,
+      cameraScale: {
+        x: this.cameraContainer.scale.x,
+        y: this.cameraContainer.scale.y,
+      },
+      cameraPosition: {
+        x: this.cameraContainer.position.x,
+        y: this.cameraContainer.position.y,
+      },
+      stageSize: this.layoutCache.stageSize,
+    });
+
+    if (!projected.inViewport) return;
+
+    drawCompositedCursor(
+      this.compositeCtx,
+      { x: projected.x, y: projected.y },
+      cursorState,
+      this.config.cursorStyle,
+    );
   }
 
   private updateLayout(): void {

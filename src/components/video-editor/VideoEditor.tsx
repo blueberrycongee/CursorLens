@@ -32,6 +32,7 @@ import { VideoExporter, GifExporter, type ExportProgress, type ExportQuality, ty
 import { type AspectRatio, getAspectRatioValue } from "@/utils/aspectRatioUtils";
 import { getAssetPath } from "@/lib/assetPath";
 import { useI18n } from "@/i18n";
+import { DEFAULT_CURSOR_STYLE, type CursorStyleConfig, type CursorTrack } from "@/lib/cursor";
 
 const WALLPAPER_COUNT = 18;
 const WALLPAPER_PATHS = Array.from({ length: WALLPAPER_COUNT }, (_, i) => `/wallpapers/wallpaper${i + 1}.jpg`);
@@ -59,6 +60,37 @@ function resolveExportFrameRate(sourceFrameRate: number | undefined, quality: Ex
     return sourceRate;
   }
   return Math.min(sourceRate, 60);
+}
+
+function normalizeCursorTrack(input: unknown): CursorTrack | null {
+  if (!input || typeof input !== "object") return null;
+  const raw = input as { samples?: unknown[]; source?: unknown };
+  if (!Array.isArray(raw.samples) || raw.samples.length === 0) return null;
+
+  const samples = raw.samples
+    .map((sample) => {
+      if (!sample || typeof sample !== "object") return null;
+      const row = sample as { timeMs?: unknown; x?: unknown; y?: unknown; click?: unknown; visible?: unknown };
+      const timeMs = Number(row.timeMs);
+      const x = Number(row.x);
+      const y = Number(row.y);
+      if (!Number.isFinite(timeMs) || !Number.isFinite(x) || !Number.isFinite(y)) return null;
+      return {
+        timeMs: Math.max(0, Math.round(timeMs)),
+        x: Math.min(1, Math.max(0, x)),
+        y: Math.min(1, Math.max(0, y)),
+        click: Boolean(row.click),
+        visible: row.visible === false ? false : true,
+      };
+    })
+    .filter((sample): sample is NonNullable<typeof sample> => Boolean(sample))
+    .sort((a, b) => a.timeMs - b.timeMs);
+
+  if (samples.length === 0) return null;
+  return {
+    samples,
+    source: raw.source === "synthetic" ? "synthetic" : "recorded",
+  };
 }
 
 export default function VideoEditor() {
@@ -93,6 +125,8 @@ export default function VideoEditor() {
   const [gifLoop, setGifLoop] = useState(true);
   const [gifSizePreset, setGifSizePreset] = useState<GifSizePreset>('medium');
   const [sourceFrameRate, setSourceFrameRate] = useState<number | undefined>(undefined);
+  const [cursorTrack, setCursorTrack] = useState<CursorTrack | null>(null);
+  const [cursorStyle, setCursorStyle] = useState<CursorStyleConfig>(DEFAULT_CURSOR_STYLE);
 
   const videoPlaybackRef = useRef<VideoPlaybackRef>(null);
   const nextZoomIdRef = useRef(1);
@@ -136,6 +170,8 @@ export default function VideoEditor() {
           setSourceFrameRate(
             Number.isFinite(result.metadata?.frameRate) ? result.metadata?.frameRate : undefined,
           );
+          const metadataWithCursor = result.metadata as { cursorTrack?: unknown } | undefined;
+          setCursorTrack(normalizeCursorTrack(metadataWithCursor?.cursorTrack));
         } else {
           setError(t('editor.noVideo'));
         }
@@ -532,6 +568,8 @@ export default function VideoEditor() {
           annotationRegions,
           previewWidth,
           previewHeight,
+          cursorTrack,
+          cursorStyle,
           onProgress: (progress: ExportProgress) => {
             setExportProgress(progress);
           },
@@ -658,6 +696,8 @@ export default function VideoEditor() {
           annotationRegions,
           previewWidth,
           previewHeight,
+          cursorTrack,
+          cursorStyle,
           onProgress: (progress: ExportProgress) => {
             setExportProgress(progress);
           },
@@ -703,7 +743,7 @@ export default function VideoEditor() {
       setShowExportDialog(false);
       setExportProgress(null);
     }
-  }, [videoPath, wallpaper, zoomRegions, trimRegions, shadowIntensity, showBlur, motionBlurEnabled, borderRadius, padding, cropRegion, annotationRegions, isPlaying, aspectRatio, exportQuality, locale, sourceFrameRate, t]);
+  }, [videoPath, wallpaper, zoomRegions, trimRegions, shadowIntensity, showBlur, motionBlurEnabled, borderRadius, padding, cropRegion, annotationRegions, isPlaying, aspectRatio, exportQuality, locale, sourceFrameRate, cursorTrack, cursorStyle, t]);
 
   const handleOpenExportDialog = useCallback(() => {
     if (!videoPath) {
@@ -816,6 +856,8 @@ export default function VideoEditor() {
                       onSelectAnnotation={handleSelectAnnotation}
                       onAnnotationPositionChange={handleAnnotationPositionChange}
                       onAnnotationSizeChange={handleAnnotationSizeChange}
+                      cursorTrack={cursorTrack}
+                      cursorStyle={cursorStyle}
                     />
                   </div>
                 </div>
@@ -919,6 +961,8 @@ export default function VideoEditor() {
           onAnnotationStyleChange={handleAnnotationStyleChange}
           onAnnotationFigureDataChange={handleAnnotationFigureDataChange}
           onAnnotationDelete={handleAnnotationDelete}
+          cursorStyle={cursorStyle}
+          onCursorStyleChange={setCursorStyle}
         />
       </div>
 

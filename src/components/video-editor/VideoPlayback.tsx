@@ -13,6 +13,14 @@ import { applyZoomTransform } from "./videoPlayback/zoomTransform";
 import { createVideoEventHandlers } from "./videoPlayback/videoEventHandlers";
 import { type AspectRatio, formatAspectRatioForCSS } from "@/utils/aspectRatioUtils";
 import { AnnotationOverlay } from "./AnnotationOverlay";
+import {
+  DEFAULT_CURSOR_STYLE,
+  drawCompositedCursor,
+  projectCursorToViewport,
+  resolveCursorState,
+  type CursorStyleConfig,
+  type CursorTrack,
+} from "@/lib/cursor";
 
 interface VideoPlaybackProps {
   videoPath: string;
@@ -42,6 +50,8 @@ interface VideoPlaybackProps {
   onAnnotationPositionChange?: (id: string, position: { x: number; y: number }) => void;
   onAnnotationSizeChange?: (id: string, size: { width: number; height: number }) => void;
   preferredFps?: number;
+  cursorTrack?: CursorTrack | null;
+  cursorStyle?: Partial<CursorStyleConfig>;
 }
 
 export interface VideoPlaybackRef {
@@ -82,6 +92,8 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
   onAnnotationPositionChange,
   onAnnotationSizeChange,
   preferredFps = 60,
+  cursorTrack = null,
+  cursorStyle,
 }, ref) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -116,6 +128,11 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
   const motionBlurEnabledRef = useRef(motionBlurEnabled);
   const videoReadyRafRef = useRef<number | null>(null);
   const preferredFpsRef = useRef(preferredFps);
+  const cursorCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const cursorCanvasCtxRef = useRef<CanvasRenderingContext2D | null>(null);
+  const cursorTrackRef = useRef<CursorTrack | null>(cursorTrack);
+  const cursorStyleRef = useRef<Partial<CursorStyleConfig>>(cursorStyle ?? DEFAULT_CURSOR_STYLE);
+  const cropRegionRef = useRef(cropRegion);
 
   const normalizeTickerFps = useCallback((fps: number) => {
     if (!Number.isFinite(fps)) return 60;
@@ -332,6 +349,18 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
   }, [motionBlurEnabled]);
 
   useEffect(() => {
+    cursorTrackRef.current = cursorTrack;
+  }, [cursorTrack]);
+
+  useEffect(() => {
+    cursorStyleRef.current = cursorStyle ?? DEFAULT_CURSOR_STYLE;
+  }, [cursorStyle]);
+
+  useEffect(() => {
+    cropRegionRef.current = cropRegion;
+  }, [cropRegion]);
+
+  useEffect(() => {
     preferredFpsRef.current = preferredFps;
     const app = appRef.current;
     if (app?.ticker) {
@@ -430,6 +459,89 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
       observer.disconnect();
     };
   }, [pixiReady, videoReady, layoutVideoContent]);
+
+  const ensureCursorCanvas = useCallback(() => {
+    const canvas = cursorCanvasRef.current;
+    const overlayEl = overlayRef.current;
+    if (!canvas || !overlayEl) return;
+
+    const width = overlayEl.clientWidth;
+    const height = overlayEl.clientHeight;
+    if (width <= 0 || height <= 0) return;
+
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const nextWidth = Math.max(1, Math.round(width * dpr));
+    const nextHeight = Math.max(1, Math.round(height * dpr));
+
+    if (canvas.width !== nextWidth || canvas.height !== nextHeight) {
+      canvas.width = nextWidth;
+      canvas.height = nextHeight;
+      canvas.style.width = `${width}px`;
+      canvas.style.height = `${height}px`;
+    }
+
+    let ctx = cursorCanvasCtxRef.current;
+    if (!ctx) {
+      ctx = canvas.getContext('2d', { alpha: true });
+      cursorCanvasCtxRef.current = ctx;
+    }
+    if (!ctx) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }, []);
+
+  const renderCursorOverlay = useCallback((timeMs: number) => {
+    ensureCursorCanvas();
+    const ctx = cursorCanvasCtxRef.current;
+    const layout = {
+      stageSize: stageSizeRef.current,
+      baseOffset: baseOffsetRef.current,
+      maskRect: baseMaskRef.current,
+    };
+    const cameraContainer = cameraContainerRef.current;
+
+    if (!ctx || !cameraContainer) return;
+    if (layout.stageSize.width <= 0 || layout.stageSize.height <= 0 || layout.maskRect.width <= 0 || layout.maskRect.height <= 0) {
+      return;
+    }
+
+    ctx.clearRect(0, 0, layout.stageSize.width, layout.stageSize.height);
+
+    const cursorState = resolveCursorState({
+      timeMs,
+      track: cursorTrackRef.current,
+      zoomRegions: zoomRegionsRef.current,
+      fallbackFocus: { cx: animationStateRef.current.focusX, cy: animationStateRef.current.focusY },
+      style: cursorStyleRef.current,
+    });
+
+    if (!cursorState.visible) return;
+
+    const projected = projectCursorToViewport({
+      normalizedX: cursorState.x,
+      normalizedY: cursorState.y,
+      cropRegion: cropRegionRef.current ?? { x: 0, y: 0, width: 1, height: 1 },
+      baseOffset: layout.baseOffset,
+      maskRect: layout.maskRect,
+      cameraScale: {
+        x: cameraContainer.scale.x,
+        y: cameraContainer.scale.y,
+      },
+      cameraPosition: {
+        x: cameraContainer.position.x,
+        y: cameraContainer.position.y,
+      },
+      stageSize: layout.stageSize,
+    });
+
+    if (!projected.inViewport) return;
+
+    drawCompositedCursor(
+      ctx,
+      { x: projected.x, y: projected.y },
+      cursorState,
+      cursorStyleRef.current,
+    );
+  }, [ensureCursorCanvas]);
 
   useEffect(() => {
     if (!pixiReady || !videoReady) return;
@@ -710,6 +822,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
       );
 
       applyTransform(motionIntensity);
+      renderCursorOverlay(currentTimeRef.current * 1000);
     };
 
     app.ticker.add(ticker);
@@ -718,7 +831,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
         app.ticker.remove(ticker);
       }
     };
-  }, [pixiReady, videoReady, clampFocusToStage]);
+  }, [pixiReady, videoReady, clampFocusToStage, renderCursorOverlay]);
 
   const handleLoadedMetadata = (e: React.SyntheticEvent<HTMLVideoElement, Event>) => {
     const video = e.currentTarget;
@@ -835,6 +948,10 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
           onPointerUp={handleOverlayPointerUp}
           onPointerLeave={handleOverlayPointerLeave}
         >
+          <canvas
+            ref={cursorCanvasRef}
+            className="absolute inset-0 pointer-events-none"
+          />
           <div
             ref={focusIndicatorRef}
             className="absolute rounded-md border border-[#34B27B]/80 bg-[#34B27B]/20 shadow-[0_0_0_1px_rgba(52,178,123,0.35)]"

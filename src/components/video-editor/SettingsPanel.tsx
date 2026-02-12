@@ -18,6 +18,7 @@ import type { ExportQuality, ExportFormat, GifFrameRate, GifSizePreset } from "@
 import { GIF_FRAME_RATES, GIF_SIZE_PRESETS } from "@/lib/exporter";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { useI18n } from "@/i18n";
+import { DEFAULT_CURSOR_STYLE, type CursorStyleConfig } from "@/lib/cursor";
 
 const WALLPAPER_COUNT = 18;
 const WALLPAPER_RELATIVE = Array.from({ length: WALLPAPER_COUNT }, (_, i) => `wallpapers/wallpaper${i + 1}.jpg`);
@@ -91,6 +92,8 @@ interface SettingsPanelProps {
   onAnnotationStyleChange?: (id: string, style: Partial<AnnotationRegion['style']>) => void;
   onAnnotationFigureDataChange?: (id: string, figureData: any) => void;
   onAnnotationDelete?: (id: string) => void;
+  cursorStyle?: CursorStyleConfig;
+  onCursorStyleChange?: (style: CursorStyleConfig) => void;
 }
 
 export default SettingsPanel;
@@ -146,6 +149,8 @@ export function SettingsPanel({
   onAnnotationStyleChange,
   onAnnotationFigureDataChange,
   onAnnotationDelete,
+  cursorStyle = DEFAULT_CURSOR_STYLE,
+  onCursorStyleChange,
 }: SettingsPanelProps) {
   const { t } = useI18n();
   const [wallpaperPaths, setWallpaperPaths] = useState<string[]>([]);
@@ -187,6 +192,14 @@ export function SettingsPanel({
     if (selectedTrimId && onTrimDelete) {
       onTrimDelete(selectedTrimId);
     }
+  };
+
+  const updateCursorStyle = (patch: Partial<CursorStyleConfig>) => {
+    if (!onCursorStyleChange) return;
+    onCursorStyleChange({
+      ...cursorStyle,
+      ...patch,
+    });
   };
 
   const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -348,6 +361,75 @@ export function SettingsPanel({
                     onCheckedChange={onBlurChange}
                     className="data-[state=checked]:bg-[#34B27B] scale-90"
                   />
+                </div>
+              </div>
+
+              <div className="rounded-lg bg-white/5 border border-white/5 p-2 mb-3">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-[10px] font-medium text-slate-300">{t("settings.cursorComposer")}</div>
+                  <Switch
+                    checked={cursorStyle.enabled}
+                    onCheckedChange={(enabled) => updateCursorStyle({ enabled })}
+                    className="data-[state=checked]:bg-[#34B27B] scale-90"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="text-[10px] text-slate-400">{t("settings.cursorSize")}</div>
+                      <span className="text-[10px] text-slate-500 font-mono">{cursorStyle.size.toFixed(2)}x</span>
+                    </div>
+                    <Slider
+                      value={[cursorStyle.size]}
+                      onValueChange={(values) => updateCursorStyle({ size: values[0] })}
+                      min={0.8}
+                      max={3}
+                      step={0.05}
+                      className="w-full [&_[role=slider]]:bg-[#34B27B] [&_[role=slider]]:border-[#34B27B] [&_[role=slider]]:h-3 [&_[role=slider]]:w-3"
+                    />
+                  </div>
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="text-[10px] text-slate-400">{t("settings.cursorHighlight")}</div>
+                      <span className="text-[10px] text-slate-500 font-mono">{Math.round(cursorStyle.highlight * 100)}%</span>
+                    </div>
+                    <Slider
+                      value={[cursorStyle.highlight]}
+                      onValueChange={(values) => updateCursorStyle({ highlight: values[0] })}
+                      min={0}
+                      max={1}
+                      step={0.01}
+                      className="w-full [&_[role=slider]]:bg-[#34B27B] [&_[role=slider]]:border-[#34B27B] [&_[role=slider]]:h-3 [&_[role=slider]]:w-3"
+                    />
+                  </div>
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="text-[10px] text-slate-400">{t("settings.cursorRipple")}</div>
+                      <span className="text-[10px] text-slate-500 font-mono">{Math.round(cursorStyle.ripple * 100)}%</span>
+                    </div>
+                    <Slider
+                      value={[cursorStyle.ripple]}
+                      onValueChange={(values) => updateCursorStyle({ ripple: values[0] })}
+                      min={0}
+                      max={1}
+                      step={0.01}
+                      className="w-full [&_[role=slider]]:bg-[#34B27B] [&_[role=slider]]:border-[#34B27B] [&_[role=slider]]:h-3 [&_[role=slider]]:w-3"
+                    />
+                  </div>
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="text-[10px] text-slate-400">{t("settings.cursorSmoothing")}</div>
+                      <span className="text-[10px] text-slate-500 font-mono">{Math.round(cursorStyle.smoothingMs)}ms</span>
+                    </div>
+                    <Slider
+                      value={[cursorStyle.smoothingMs]}
+                      onValueChange={(values) => updateCursorStyle({ smoothingMs: values[0] })}
+                      min={0}
+                      max={200}
+                      step={5}
+                      className="w-full [&_[role=slider]]:bg-[#34B27B] [&_[role=slider]]:border-[#34B27B] [&_[role=slider]]:h-3 [&_[role=slider]]:w-3"
+                    />
+                  </div>
                 </div>
               </div>
               
