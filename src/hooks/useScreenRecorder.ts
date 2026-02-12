@@ -494,32 +494,16 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
         return;
       }
 
-      let desktopStream: MediaStream;
-      try {
-        desktopStream = await (navigator.mediaDevices as any).getUserMedia({
-          audio: false,
-          video: {
-            mandatory: {
-              chromeMediaSource: "desktop",
-              chromeMediaSourceId: selectedSource.id,
-              maxFrameRate: TARGET_CAPTURE_FPS,
-              cursor: "never",
-            },
+      const desktopStream = await (navigator.mediaDevices as any).getUserMedia({
+        audio: false,
+        video: {
+          mandatory: {
+            chromeMediaSource: "desktop",
+            chromeMediaSourceId: selectedSource.id,
+            maxFrameRate: TARGET_CAPTURE_FPS,
           },
-        });
-      } catch (error) {
-        console.warn("Desktop capture with cursor=never failed, retrying with source defaults.", error);
-        desktopStream = await (navigator.mediaDevices as any).getUserMedia({
-          audio: false,
-          video: {
-            mandatory: {
-              chromeMediaSource: "desktop",
-              chromeMediaSourceId: selectedSource.id,
-              maxFrameRate: TARGET_CAPTURE_FPS,
-            },
-          },
-        });
-      }
+        },
+      });
       stream.current = desktopStream;
       if (!desktopStream) {
         throw new Error("Media stream is not available.");
@@ -650,9 +634,8 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
             return;
           }
 
-          if (videoResult.path) {
-            await window.electronAPI.setCurrentVideoPath(videoResult.path, videoResult.metadata ?? captureMetadata);
-          }
+          // storeRecordedVideo already updates current video path + metadata in main process.
+          // Avoid sending a second large metadata payload over IPC, which can delay editor launch.
 
           await window.electronAPI.switchToEditor();
         } catch (error) {

@@ -29,7 +29,7 @@ function sanitizeCursorTrack(input?: CurrentVideoMetadata['cursorTrack'] | null)
   if (!input || !Array.isArray(input.samples) || input.samples.length === 0) return undefined
 
   const samples = input.samples
-    .slice(0, 20_000)
+    .slice(0, 6_000)
     .map((sample) => {
       const timeMs = Number(sample.timeMs)
       const x = Number(sample.x)
