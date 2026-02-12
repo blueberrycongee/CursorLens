@@ -33,6 +33,43 @@ export function shouldSeekToTime(currentTime: number, targetTime: number, frameR
   return Math.abs(currentTime - targetTime) > getSeekToleranceSeconds(frameRate);
 }
 
+export function estimateRemainingSeconds(currentFrame: number, totalFrames: number, elapsedMs: number): number {
+  if (!Number.isFinite(currentFrame) || !Number.isFinite(totalFrames) || !Number.isFinite(elapsedMs)) {
+    return 0;
+  }
+  if (currentFrame <= 0 || totalFrames <= currentFrame || elapsedMs <= 0) {
+    return 0;
+  }
+  const msPerFrame = elapsedMs / currentFrame;
+  return Math.max(0, Math.round(((totalFrames - currentFrame) * msPerFrame) / 1000));
+}
+
+export async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const timeout = globalThis.setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    promise.then(
+      (value) => {
+        if (settled) return;
+        settled = true;
+        globalThis.clearTimeout(timeout);
+        resolve(value);
+      },
+      (error) => {
+        if (settled) return;
+        settled = true;
+        globalThis.clearTimeout(timeout);
+        reject(error);
+      },
+    );
+  });
+}
+
 export class VideoExporter {
   private config: VideoExporterConfig;
   private decoder: VideoFileDecoder | null = null;
@@ -41,16 +78,25 @@ export class VideoExporter {
   private muxer: VideoMuxer | null = null;
   private cancelled = false;
   private encodeQueue = 0;
-  // Increased queue size for better throughput with hardware encoding
   private readonly MAX_ENCODE_QUEUE = 120;
   private videoDescription: Uint8Array | undefined;
   private videoColorSpace: VideoColorSpaceInit | undefined;
-  // Track muxing promises for parallel processing
-  private muxingPromises: Promise<void>[] = [];
+  private muxingChain: Promise<void> = Promise.resolve();
   private muxingError: Error | null = null;
   private chunkCount = 0;
   private readonly PLAYBACK_SEEK_THRESHOLD_SECONDS = 0.45;
   private readonly PLAYBACK_WAIT_TIMEOUT_MS = 900;
+  private readonly FINALIZE_TIMEOUT_MS = 120_000;
+  private exportStartedAtMs = 0;
+  private progressTick = 0;
+  private finalizingHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  private finalizingCurrentFrame = 0;
+  private finalizingTotalFrames = 0;
+  private finalizingDetailKey: string | undefined;
+  private lastRenderingFrameCount = 0;
+  private lastThroughputLogAtMs = 0;
+  private seekCount = 0;
+  private samplingMode: 'playback' | 'seek-only' = 'seek-only';
 
   constructor(config: VideoExporterConfig) {
     this.config = {
@@ -59,7 +105,6 @@ export class VideoExporter {
     };
   }
 
-  // Calculate the total duration excluding trim regions (in seconds)
   private getEffectiveDuration(totalDuration: number): number {
     const trimRegions = this.config.trimRegions || [];
     const totalTrimDuration = trimRegions.reduce((sum, region) => {
@@ -70,18 +115,15 @@ export class VideoExporter {
 
   private mapEffectiveToSourceTime(effectiveTimeMs: number): number {
     const trimRegions = this.config.trimRegions || [];
-    // Sort trim regions by start time
     const sortedTrims = [...trimRegions].sort((a, b) => a.startMs - b.startMs);
 
     let sourceTimeMs = effectiveTimeMs;
 
     for (const trim of sortedTrims) {
-      // If the source time hasn't reached this trim region yet, we're done
       if (sourceTimeMs < trim.startMs) {
         break;
       }
 
-      // Add the duration of this trim region to the source time
       const trimDuration = trim.endMs - trim.startMs;
       sourceTimeMs += trimDuration;
     }
@@ -94,12 +136,16 @@ export class VideoExporter {
       this.cleanup();
       this.cancelled = false;
       this.muxingError = null;
+      this.exportStartedAtMs = Date.now();
+      this.progressTick = 0;
+      this.lastRenderingFrameCount = 0;
+      this.lastThroughputLogAtMs = this.exportStartedAtMs;
+      this.seekCount = 0;
+      this.samplingMode = 'seek-only';
 
-      // Initialize decoder and load video
       this.decoder = new VideoFileDecoder();
       const videoInfo = await this.decoder.loadVideo(this.config.videoUrl);
 
-      // Initialize frame renderer
       this.renderer = new FrameRenderer({
         width: this.config.width,
         height: this.config.height,
@@ -120,37 +166,36 @@ export class VideoExporter {
       });
       await this.renderer.initialize();
 
-      // Initialize video encoder
       await this.initializeEncoder();
 
-      // Initialize muxer
       this.muxer = new VideoMuxer(this.config, false);
       await this.muxer.initialize();
 
-      // Get the video element for frame extraction
       const videoElement = this.decoder.getVideoElement();
       if (!videoElement) {
         throw new Error('Video element not available');
       }
 
-      // Calculate effective duration and frame count (excluding trim regions)
       const effectiveDuration = this.getEffectiveDuration(videoInfo.duration);
       const totalFrames = Math.ceil(effectiveDuration * this.config.frameRate);
-      
+
       console.log('[VideoExporter] Original duration:', videoInfo.duration, 's');
       console.log('[VideoExporter] Effective duration:', effectiveDuration, 's');
       console.log('[VideoExporter] Total frames to export:', totalFrames);
 
       let frameIndex = 0;
       if (typeof videoElement.requestVideoFrameCallback === 'function') {
+        this.samplingMode = 'playback';
         frameIndex = await this.exportFramesWithPlaybackSampling(videoElement, totalFrames);
         if (frameIndex < totalFrames && !this.cancelled) {
           console.warn(
             `[VideoExporter] Playback sampling ended at frame ${frameIndex}/${totalFrames}; falling back to seek mode for the remainder.`,
           );
+          this.samplingMode = 'seek-only';
           frameIndex = await this.exportFramesBySeeking(videoElement, totalFrames, frameIndex);
         }
       } else {
+        this.samplingMode = 'seek-only';
         frameIndex = await this.exportFramesBySeeking(videoElement, totalFrames, frameIndex);
       }
 
@@ -165,24 +210,34 @@ export class VideoExporter {
         return { success: false, error: 'Export cancelled' };
       }
 
-      // Finalize encoding
+      this.startFinalizingHeartbeat(totalFrames, totalFrames, 'export.finalize.flush');
+
       if (this.encoder && this.encoder.state === 'configured') {
-        await this.encoder.flush();
+        await this.runFinalizingStep(
+          'export.finalize.flush',
+          withTimeout(this.encoder.flush(), this.FINALIZE_TIMEOUT_MS, 'encoder flush'),
+        );
       }
 
-      // Wait for all muxing operations to complete
-      const muxResults = await Promise.allSettled(this.muxingPromises);
-      if (this.muxingError) {
-        throw this.muxingError;
-      }
-      const firstRejected = muxResults.find((result) => result.status === 'rejected') as PromiseRejectedResult | undefined;
-      if (firstRejected) {
-        const reason = firstRejected.reason;
-        throw reason instanceof Error ? reason : new Error(String(reason));
-      }
+      await this.runFinalizingStep(
+        'export.finalize.mux',
+        withTimeout(this.waitForMuxDrain(), this.FINALIZE_TIMEOUT_MS, 'mux drain'),
+      );
 
-      // Finalize muxer and get output blob
-      const blob = await this.muxer!.finalize();
+      const blob = await this.runFinalizingStep(
+        'export.finalize.package',
+        withTimeout(this.muxer!.finalize(), this.FINALIZE_TIMEOUT_MS, 'mux finalize'),
+      );
+      this.stopFinalizingHeartbeat();
+
+      const totalElapsedMs = Date.now() - this.exportStartedAtMs;
+      console.log('[VideoExporter] Export complete', {
+        totalFrames,
+        totalElapsedMs,
+        avgRenderFps: totalElapsedMs > 0 ? Number(((totalFrames * 1000) / totalElapsedMs).toFixed(2)) : 0,
+        samplingMode: this.samplingMode,
+        seekCount: this.seekCount,
+      });
 
       return { success: true, blob };
     } catch (error) {
@@ -202,19 +257,69 @@ export class VideoExporter {
     return this.mapEffectiveToSourceTime(effectiveTimeMs);
   }
 
-  private updateProgress(currentFrame: number, totalFrames: number): void {
+  private updateProgress(
+    currentFrame: number,
+    totalFrames: number,
+    phase: ExportProgress['phase'] = 'rendering',
+    phaseDetailKey?: string,
+    isHeartbeat = false,
+  ): void {
     if (!this.config.onProgress) return;
+    this.progressTick += 1;
+
+    const now = Date.now();
+    const elapsedMs = this.exportStartedAtMs > 0 ? Math.max(0, now - this.exportStartedAtMs) : 0;
+    const estimatedTimeRemaining = phase === 'rendering'
+      ? estimateRemainingSeconds(currentFrame, totalFrames, elapsedMs)
+      : 0;
 
     this.config.onProgress({
       currentFrame,
       totalFrames,
       percentage: totalFrames > 0 ? (currentFrame / totalFrames) * 100 : 100,
-      estimatedTimeRemaining: 0,
+      estimatedTimeRemaining,
+      phase,
+      phaseDetailKey,
+      updatedAtMs: now,
+      elapsedMs,
+      activityTick: this.progressTick,
+      isHeartbeat,
     });
   }
 
   private getKeyFrameIntervalFrames(): number {
     return Math.max(1, Math.round(this.config.frameRate * 2.5));
+  }
+
+  private startFinalizingHeartbeat(currentFrame: number, totalFrames: number, phaseDetailKey: string): void {
+    this.stopFinalizingHeartbeat();
+    this.finalizingCurrentFrame = currentFrame;
+    this.finalizingTotalFrames = totalFrames;
+    this.finalizingDetailKey = phaseDetailKey;
+    this.updateProgress(currentFrame, totalFrames, 'finalizing', phaseDetailKey, false);
+
+    this.finalizingHeartbeatTimer = globalThis.setInterval(() => {
+      this.updateProgress(
+        this.finalizingCurrentFrame,
+        this.finalizingTotalFrames,
+        'finalizing',
+        this.finalizingDetailKey,
+        true,
+      );
+    }, 1000);
+  }
+
+  private stopFinalizingHeartbeat(): void {
+    if (this.finalizingHeartbeatTimer !== null) {
+      globalThis.clearInterval(this.finalizingHeartbeatTimer);
+      this.finalizingHeartbeatTimer = null;
+    }
+  }
+
+  private async runFinalizingStep<T>(phaseDetailKey: string, operation: Promise<T>): Promise<T> {
+    this.finalizingDetailKey = phaseDetailKey;
+    this.updateProgress(this.finalizingCurrentFrame, this.finalizingTotalFrames, 'finalizing', phaseDetailKey, false);
+    return operation;
   }
 
   private async renderAndEncodeFrame(
@@ -255,6 +360,21 @@ export class VideoExporter {
 
     exportFrame.close();
     this.updateProgress(frameIndex + 1, totalFrames);
+
+    const now = Date.now();
+    if (now - this.lastThroughputLogAtMs >= 1000) {
+      const frameDelta = frameIndex + 1 - this.lastRenderingFrameCount;
+      const msDelta = now - this.lastThroughputLogAtMs;
+      const renderFps = msDelta > 0 ? (frameDelta * 1000) / msDelta : 0;
+      console.log('[VideoExporter] Throughput', {
+        currentFrame: frameIndex + 1,
+        totalFrames,
+        renderFps: Number(renderFps.toFixed(2)),
+        elapsedMs: now - this.exportStartedAtMs,
+      });
+      this.lastRenderingFrameCount = frameIndex + 1;
+      this.lastThroughputLogAtMs = now;
+    }
   }
 
   private async seekVideoTo(videoElement: HTMLVideoElement, targetTimeSeconds: number): Promise<void> {
@@ -270,6 +390,7 @@ export class VideoExporter {
     const seekedPromise = new Promise<void>((resolve) => {
       videoElement.addEventListener('seeked', () => resolve(), { once: true });
     });
+    this.seekCount += 1;
     videoElement.currentTime = clampedTime;
     await seekedPromise;
     await this.waitForVideoFrame(videoElement);
@@ -292,62 +413,13 @@ export class VideoExporter {
     return frameIndex;
   }
 
-  private async waitForVideoTime(
-    videoElement: HTMLVideoElement,
-    targetTimeSeconds: number,
-    toleranceSeconds: number,
-  ): Promise<void> {
-    if (videoElement.currentTime + toleranceSeconds >= targetTimeSeconds) {
-      return;
-    }
-
-    if (typeof videoElement.requestVideoFrameCallback === 'function') {
-      await new Promise<void>((resolve) => {
-        let settled = false;
-        const timeout = window.setTimeout(() => {
-          if (!settled) {
-            settled = true;
-            resolve();
-          }
-        }, this.PLAYBACK_WAIT_TIMEOUT_MS);
-
-        const check = (_now: number, metadata: VideoFrameCallbackMetadata) => {
-          const mediaTime = Number.isFinite(metadata.mediaTime) ? metadata.mediaTime : videoElement.currentTime;
-          if (
-            mediaTime + toleranceSeconds >= targetTimeSeconds
-            || videoElement.paused
-            || videoElement.ended
-          ) {
-            if (!settled) {
-              settled = true;
-              window.clearTimeout(timeout);
-              resolve();
-            }
-            return;
-          }
-
-          videoElement.requestVideoFrameCallback(check);
-        };
-
-        videoElement.requestVideoFrameCallback(check);
-      });
-      return;
-    }
-
-    while (
-      videoElement.currentTime + toleranceSeconds < targetTimeSeconds
-      && !videoElement.paused
-      && !videoElement.ended
-    ) {
-      await new Promise((resolve) => window.setTimeout(resolve, 4));
-    }
-  }
-
   private async exportFramesWithPlaybackSampling(videoElement: HTMLVideoElement, totalFrames: number): Promise<number> {
     let frameIndex = 0;
     const tolerance = getSeekToleranceSeconds(this.config.frameRate);
     const seekThreshold = Math.max(this.PLAYBACK_SEEK_THRESHOLD_SECONDS, 4 / this.config.frameRate);
-    const playbackRate = this.config.frameRate > 90 ? 0.5 : this.config.frameRate > 60 ? 0.75 : 1;
+    const playbackRate = 1;
+    let staleTicks = 0;
+    let previousMediaTime = -1;
 
     videoElement.pause();
     videoElement.currentTime = 0;
@@ -363,35 +435,48 @@ export class VideoExporter {
     }
 
     while (frameIndex < totalFrames && !this.cancelled) {
-      const sourceTimeMs = this.getSourceTimeMsForFrame(frameIndex);
-      const sourceTimeSeconds = sourceTimeMs / 1000;
-      const drift = sourceTimeSeconds - videoElement.currentTime;
+      await this.waitForVideoFrame(videoElement, this.PLAYBACK_WAIT_TIMEOUT_MS);
+      const mediaTime = videoElement.currentTime;
 
-      if (!Number.isFinite(videoElement.currentTime) || Math.abs(drift) > seekThreshold) {
-        videoElement.pause();
-        await this.seekVideoTo(videoElement, sourceTimeSeconds);
+      let renderedInTick = 0;
+      while (frameIndex < totalFrames && !this.cancelled) {
+        const sourceTimeMs = this.getSourceTimeMsForFrame(frameIndex);
+        const sourceTimeSeconds = sourceTimeMs / 1000;
+        if (sourceTimeSeconds > mediaTime + tolerance) {
+          break;
+        }
+
         await this.renderAndEncodeFrame(videoElement, frameIndex, totalFrames, sourceTimeMs);
         frameIndex++;
-
-        if (!this.cancelled && frameIndex < totalFrames) {
-          await videoElement.play().catch(() => undefined);
-        }
-        continue;
+        renderedInTick++;
       }
 
-      await this.waitForVideoTime(videoElement, sourceTimeSeconds, tolerance);
-
-      if (this.cancelled) {
+      if (frameIndex >= totalFrames || this.cancelled) {
         break;
       }
 
-      videoElement.pause();
-      await this.waitForVideoFrame(videoElement);
-      await this.renderAndEncodeFrame(videoElement, frameIndex, totalFrames, sourceTimeMs);
-      frameIndex++;
+      const nextSourceTimeSeconds = this.getSourceTimeMsForFrame(frameIndex) / 1000;
+      const drift = nextSourceTimeSeconds - mediaTime;
 
-      if (!this.cancelled && frameIndex < totalFrames) {
-        await videoElement.play().catch(() => undefined);
+      if (!Number.isFinite(mediaTime) || drift > seekThreshold) {
+        await this.seekVideoTo(videoElement, nextSourceTimeSeconds);
+      }
+
+      if (Math.abs(mediaTime - previousMediaTime) < tolerance * 0.5 && renderedInTick === 0) {
+        staleTicks += 1;
+      } else {
+        staleTicks = 0;
+      }
+
+      if (staleTicks >= 3) {
+        await this.seekVideoTo(videoElement, nextSourceTimeSeconds);
+        staleTicks = 0;
+      }
+      previousMediaTime = mediaTime;
+
+      if (videoElement.ended && renderedInTick === 0) {
+        console.warn('[VideoExporter] Playback ended before all frames were sampled.');
+        break;
       }
     }
 
@@ -400,33 +485,55 @@ export class VideoExporter {
     return frameIndex;
   }
 
+  private enqueueMuxOperation(task: () => Promise<void>): void {
+    this.muxingChain = this.muxingChain.then(async () => {
+      if (this.muxingError || this.cancelled) {
+        return;
+      }
+
+      try {
+        await task();
+      } catch (error) {
+        const normalized = error instanceof Error ? error : new Error(String(error));
+        if (!this.muxingError) {
+          this.muxingError = normalized;
+        }
+        this.cancelled = true;
+      }
+    });
+  }
+
+  private async waitForMuxDrain(): Promise<void> {
+    await this.muxingChain;
+    if (this.muxingError) {
+      throw this.muxingError;
+    }
+  }
+
   private async initializeEncoder(): Promise<void> {
     this.encodeQueue = 0;
-    this.muxingPromises = [];
+    this.muxingChain = Promise.resolve();
     this.muxingError = null;
     this.chunkCount = 0;
     let videoDescription: Uint8Array | undefined;
 
     this.encoder = new VideoEncoder({
       output: (chunk, meta) => {
-        // Capture decoder config metadata from encoder output
         if (meta?.decoderConfig?.description && !videoDescription) {
           const desc = meta.decoderConfig.description;
           videoDescription = new Uint8Array(desc instanceof ArrayBuffer ? desc : (desc as any));
           this.videoDescription = videoDescription;
         }
-        // Capture colorSpace from encoder metadata if provided
+
         if (meta?.decoderConfig?.colorSpace && !this.videoColorSpace) {
           this.videoColorSpace = meta.decoderConfig.colorSpace;
         }
 
-        // Stream chunk to muxer immediately (parallel processing)
         const isFirstChunk = this.chunkCount === 0;
         this.chunkCount++;
 
-        const muxingPromise = (async () => {
+        this.enqueueMuxOperation(async () => {
           if (isFirstChunk && this.videoDescription) {
-            // Add decoder config for the first chunk
             const colorSpace = this.videoColorSpace || {
               primaries: 'bt709',
               transfer: 'iec61966-2-1',
@@ -445,20 +552,13 @@ export class VideoExporter {
             };
 
             await this.muxer!.addVideoChunk(chunk, metadata);
-          } else {
-            await this.muxer!.addVideoChunk(chunk, meta);
+            return;
           }
-        })();
 
-        this.muxingPromises.push(muxingPromise);
-        void muxingPromise.catch((error) => {
-          const normalized = error instanceof Error ? error : new Error(String(error));
-          if (!this.muxingError) {
-            this.muxingError = normalized;
-          }
-          this.cancelled = true;
+          await this.muxer!.addVideoChunk(chunk, meta);
         });
-        this.encodeQueue--;
+
+        this.encodeQueue = Math.max(0, this.encodeQueue - 1);
       },
       error: (error) => {
         console.error('[VideoExporter] Encoder error:', error);
@@ -466,42 +566,37 @@ export class VideoExporter {
         if (!this.muxingError) {
           this.muxingError = normalized;
         }
-        // Stop export when encoding fails
         this.cancelled = true;
       },
     });
 
     const codec = this.config.codec || 'avc1.640033';
-    
+
     const encoderConfig: VideoEncoderConfig = {
       codec,
       width: this.config.width,
       height: this.config.height,
       bitrate: this.config.bitrate,
       framerate: this.config.frameRate,
-      // Offline export prefers visual quality/temporal stability over low latency.
       latencyMode: 'quality',
       bitrateMode: 'variable',
       hardwareAcceleration: 'prefer-hardware',
     };
 
-    // Check hardware support first
     const hardwareSupport = await VideoEncoder.isConfigSupported(encoderConfig);
 
     if (hardwareSupport.supported) {
-      // Use hardware encoding
       console.log('[VideoExporter] Using hardware acceleration');
       this.encoder.configure(encoderConfig);
     } else {
-      // Fall back to software encoding
       console.log('[VideoExporter] Hardware not supported, using software encoding');
       encoderConfig.hardwareAcceleration = 'prefer-software';
-      
+
       const softwareSupport = await VideoEncoder.isConfigSupported(encoderConfig);
       if (!softwareSupport.supported) {
         throw new Error('Video encoding not supported on this system');
       }
-      
+
       this.encoder.configure(encoderConfig);
     }
   }
@@ -537,6 +632,8 @@ export class VideoExporter {
   }
 
   private cleanup(): void {
+    this.stopFinalizingHeartbeat();
+
     if (this.encoder) {
       try {
         if (this.encoder.state === 'configured') {
@@ -568,9 +665,18 @@ export class VideoExporter {
 
     this.muxer = null;
     this.encodeQueue = 0;
-    this.muxingPromises = [];
+    this.muxingChain = Promise.resolve();
     this.muxingError = null;
     this.chunkCount = 0;
+    this.exportStartedAtMs = 0;
+    this.progressTick = 0;
+    this.finalizingCurrentFrame = 0;
+    this.finalizingTotalFrames = 0;
+    this.finalizingDetailKey = undefined;
+    this.lastRenderingFrameCount = 0;
+    this.lastThroughputLogAtMs = 0;
+    this.seekCount = 0;
+    this.samplingMode = 'seek-only';
     this.videoDescription = undefined;
     this.videoColorSpace = undefined;
   }
