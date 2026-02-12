@@ -64,7 +64,13 @@ function resolveExportFrameRate(sourceFrameRate: number | undefined, quality: Ex
 
 function normalizeCursorTrack(input: unknown): CursorTrack | null {
   if (!input || typeof input !== "object") return null;
-  const raw = input as { samples?: unknown[]; source?: unknown };
+  const raw = input as {
+    samples?: unknown[];
+    source?: unknown;
+    space?: unknown;
+    stats?: unknown;
+    capture?: unknown;
+  };
   if (!Array.isArray(raw.samples) || raw.samples.length === 0) return null;
 
   const samples = raw.samples
@@ -87,9 +93,51 @@ function normalizeCursorTrack(input: unknown): CursorTrack | null {
     .sort((a, b) => a.timeMs - b.timeMs);
 
   if (samples.length === 0) return null;
+  const rawSpace = raw.space as { mode?: unknown; displayId?: unknown; bounds?: unknown } | undefined;
+  const bounds = rawSpace?.bounds as { x?: unknown; y?: unknown; width?: unknown; height?: unknown } | undefined;
+  const parsedSpace =
+    bounds
+      && Number.isFinite(Number(bounds.x))
+      && Number.isFinite(Number(bounds.y))
+      && Number.isFinite(Number(bounds.width))
+      && Number.isFinite(Number(bounds.height))
+      && Number(bounds.width) > 0
+      && Number(bounds.height) > 0
+      ? {
+          mode: rawSpace?.mode === "source-display" ? "source-display" as const : "virtual-desktop" as const,
+          displayId: typeof rawSpace?.displayId === "string" ? rawSpace.displayId : undefined,
+          bounds: {
+            x: Number(bounds.x),
+            y: Number(bounds.y),
+            width: Number(bounds.width),
+            height: Number(bounds.height),
+          },
+        }
+      : undefined;
+
+  const rawStats = raw.stats as { sampleCount?: unknown; clickCount?: unknown } | undefined;
+  const parsedStats = rawStats
+    ? {
+        sampleCount: Number.isFinite(Number(rawStats.sampleCount)) ? Math.max(0, Math.floor(Number(rawStats.sampleCount))) : undefined,
+        clickCount: Number.isFinite(Number(rawStats.clickCount)) ? Math.max(0, Math.floor(Number(rawStats.clickCount))) : undefined,
+      }
+    : undefined;
+
+  const rawCapture = raw.capture as { sourceId?: unknown; width?: unknown; height?: unknown } | undefined;
+  const parsedCapture = rawCapture
+    ? {
+        sourceId: typeof rawCapture.sourceId === "string" ? rawCapture.sourceId : undefined,
+        width: Number.isFinite(Number(rawCapture.width)) ? Math.max(2, Math.floor(Number(rawCapture.width))) : undefined,
+        height: Number.isFinite(Number(rawCapture.height)) ? Math.max(2, Math.floor(Number(rawCapture.height))) : undefined,
+      }
+    : undefined;
+
   return {
     samples,
     source: raw.source === "synthetic" ? "synthetic" : "recorded",
+    space: parsedSpace,
+    stats: parsedStats,
+    capture: parsedCapture,
   };
 }
 

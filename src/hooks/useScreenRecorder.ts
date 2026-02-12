@@ -549,7 +549,13 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
       console.log(`MediaRecorder initialized with ${recordedMimeType}`);
 
       try {
-        const trackingResult = await window.electronAPI.startCursorTracking();
+        const trackingResult = await window.electronAPI.startCursorTracking({
+          source: {
+            id: typeof selectedSource.id === "string" ? selectedSource.id : undefined,
+            display_id: selectedSource.display_id ?? undefined,
+          },
+          captureSize: { width, height },
+        });
         cursorTrackingActive.current = Boolean(trackingResult?.success);
       } catch (error) {
         cursorTrackingActive.current = false;

@@ -24,6 +24,20 @@ declare namespace NodeJS {
 type CursorTrackMetadata = {
   source?: 'recorded' | 'synthetic'
   samples: Array<{ timeMs: number; x: number; y: number; click?: boolean; visible?: boolean }>
+  space?: {
+    mode?: 'source-display' | 'virtual-desktop'
+    displayId?: string
+    bounds?: { x: number; y: number; width: number; height: number }
+  }
+  stats?: {
+    sampleCount?: number
+    clickCount?: number
+  }
+  capture?: {
+    sourceId?: string
+    width?: number
+    height?: number
+  }
 }
 
 // Used in Renderer process, expose in `preload.ts`
@@ -46,7 +60,10 @@ interface Window {
     }>
     getRecordedVideoPath: () => Promise<{ success: boolean; path?: string; message?: string }>
     setRecordingState: (recording: boolean) => Promise<void>
-    startCursorTracking: () => Promise<{ success: boolean }>
+    startCursorTracking: (options?: {
+      source?: { id?: string; display_id?: string | number | null }
+      captureSize?: { width?: number; height?: number }
+    }) => Promise<{ success: boolean }>
     stopCursorTracking: () => Promise<{ success: boolean; track?: CursorTrackMetadata }>
     onStopRecordingFromTray: (callback: () => void) => () => void
     openExternalUrl: (url: string) => Promise<{ success: boolean; error?: string }>

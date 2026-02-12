@@ -11,6 +11,20 @@ export interface CursorSample {
 export interface CursorTrack {
   samples: CursorSample[];
   source?: 'recorded' | 'synthetic';
+  space?: {
+    mode?: 'source-display' | 'virtual-desktop';
+    displayId?: string;
+    bounds?: { x: number; y: number; width: number; height: number };
+  };
+  stats?: {
+    sampleCount?: number;
+    clickCount?: number;
+  };
+  capture?: {
+    sourceId?: string;
+    width?: number;
+    height?: number;
+  };
 }
 
 export interface CursorStyleConfig {

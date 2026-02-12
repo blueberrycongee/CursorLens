@@ -51,8 +51,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setRecordingState: (recording: boolean) => {
     return ipcRenderer.invoke('set-recording-state', recording)
   },
-  startCursorTracking: () => {
-    return ipcRenderer.invoke('cursor-tracker-start')
+  startCursorTracking: (options?: {
+    source?: { id?: string; display_id?: string | number | null }
+    captureSize?: { width?: number; height?: number }
+  }) => {
+    return ipcRenderer.invoke('cursor-tracker-start', options)
   },
   stopCursorTracking: () => {
     return ipcRenderer.invoke('cursor-tracker-stop')

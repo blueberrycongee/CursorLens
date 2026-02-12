@@ -3,8 +3,21 @@ import { ipcMain, desktopCapturer, BrowserWindow, shell, app, dialog, screen } f
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { RECORDINGS_DIR } from '../main'
+import {
+  normalizePointToBounds,
+  resolveCursorBoundsForSource,
+  type CaptureBounds,
+  type CaptureBoundsMode,
+  type CaptureSourceRef,
+} from '../../src/lib/cursor/captureSpace'
 
-let selectedSource: any = null
+type SelectedSource = {
+  id?: string
+  name?: string
+  display_id?: string | number | null
+}
+
+let selectedSource: SelectedSource | null = null
 
 type Locale = 'en' | 'zh-CN'
 type CurrentVideoMetadata = {
@@ -22,54 +35,48 @@ type CurrentVideoMetadata = {
       click?: boolean
       visible?: boolean
     }>
+    space?: {
+      mode?: CaptureBoundsMode
+      displayId?: string
+      bounds?: CaptureBounds
+    }
+    stats?: {
+      sampleCount?: number
+      clickCount?: number
+    }
+    capture?: {
+      sourceId?: string
+      width?: number
+      height?: number
+    }
   }
 }
 
 type CursorTrackPayload = NonNullable<CurrentVideoMetadata['cursorTrack']>
+type CursorTrackerStartOptions = {
+  source?: CaptureSourceRef | null
+  captureSize?: {
+    width?: number
+    height?: number
+  } | null
+}
 
 type CursorTrackerRuntime = {
   timer: NodeJS.Timeout
   startedAt: number
   samples: CursorTrackPayload['samples']
-  bounds: { x: number; y: number; width: number; height: number }
+  bounds: CaptureBounds
+  boundsMode: CaptureBoundsMode
+  displayId?: string
+  sourceRef?: CaptureSourceRef
+  captureSize?: { width: number; height: number }
   lastPoint: { x: number; y: number } | null
   lastTickAt: number
   lastSampleAt: number
   lastSpeed: number
   stillFrames: number
   lastClickAt: number
-}
-
-function clamp01(value: number): number {
-  if (!Number.isFinite(value)) return 0
-  return Math.min(1, Math.max(0, value))
-}
-
-function resolveVirtualBounds(): { x: number; y: number; width: number; height: number } {
-  const displays = screen.getAllDisplays()
-  if (!displays.length) {
-    return { x: 0, y: 0, width: 1, height: 1 }
-  }
-
-  let minX = Number.POSITIVE_INFINITY
-  let minY = Number.POSITIVE_INFINITY
-  let maxX = Number.NEGATIVE_INFINITY
-  let maxY = Number.NEGATIVE_INFINITY
-
-  for (const display of displays) {
-    const { x, y, width, height } = display.bounds
-    minX = Math.min(minX, x)
-    minY = Math.min(minY, y)
-    maxX = Math.max(maxX, x + width)
-    maxY = Math.max(maxY, y + height)
-  }
-
-  return {
-    x: minX,
-    y: minY,
-    width: Math.max(1, maxX - minX),
-    height: Math.max(1, maxY - minY),
-  }
+  clickCount: number
 }
 
 function pushCursorSample(
@@ -79,22 +86,80 @@ function pushCursorSample(
   click = false,
 ): void {
   const timeMs = Math.max(0, now - tracker.startedAt)
-  const x = clamp01((point.x - tracker.bounds.x) / tracker.bounds.width)
-  const y = clamp01((point.y - tracker.bounds.y) / tracker.bounds.height)
+  const normalized = normalizePointToBounds(point, tracker.bounds)
 
   tracker.samples.push({
     timeMs,
-    x,
-    y,
+    x: normalized.x,
+    y: normalized.y,
     click,
     visible: true,
   })
+
+  if (click) {
+    tracker.clickCount += 1
+  }
 
   if (tracker.samples.length > 12_000) {
     tracker.samples.splice(0, 2_000)
   }
 
   tracker.lastSampleAt = now
+}
+
+function normalizeSourceRef(input?: CaptureSourceRef | SelectedSource | null): CaptureSourceRef | undefined {
+  if (!input) return undefined
+  const sourceId = typeof input.id === 'string' ? input.id : ''
+  const displayId = input.display_id === null || input.display_id === undefined
+    ? undefined
+    : String(input.display_id)
+  if (!sourceId && !displayId) return undefined
+  return {
+    id: sourceId || undefined,
+    display_id: displayId,
+  }
+}
+
+function normalizeCaptureSize(input?: CursorTrackerStartOptions['captureSize']): { width: number; height: number } | undefined {
+  if (!input) return undefined
+  const width = Math.floor(Number(input.width))
+  const height = Math.floor(Number(input.height))
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width < 2 || height < 2) {
+    return undefined
+  }
+  return { width, height }
+}
+
+function resolveCursorSidecarPath(videoPath: string): string {
+  const parsed = path.parse(videoPath)
+  return path.join(parsed.dir, `${parsed.name}.cursor.json`)
+}
+
+async function readCursorTrackSidecar(videoPath: string): Promise<CurrentVideoMetadata['cursorTrack'] | undefined> {
+  const sidecarPath = resolveCursorSidecarPath(videoPath)
+  try {
+    const raw = await fs.readFile(sidecarPath, 'utf-8')
+    const parsed = JSON.parse(raw) as { cursorTrack?: CurrentVideoMetadata['cursorTrack'] } | CurrentVideoMetadata['cursorTrack']
+    const input = (parsed as { cursorTrack?: CurrentVideoMetadata['cursorTrack'] }).cursorTrack ?? (parsed as CurrentVideoMetadata['cursorTrack'])
+    return sanitizeCursorTrack(input)
+  } catch {
+    return undefined
+  }
+}
+
+async function writeCursorTrackSidecar(videoPath: string, cursorTrack: CurrentVideoMetadata['cursorTrack']): Promise<void> {
+  const sanitized = sanitizeCursorTrack(cursorTrack)
+  if (!sanitized) return
+  const sidecarPath = resolveCursorSidecarPath(videoPath)
+  const payload = JSON.stringify(
+    {
+      version: 1,
+      cursorTrack: sanitized,
+    },
+    null,
+    2,
+  )
+  await fs.writeFile(sidecarPath, payload, 'utf-8')
 }
 
 function sanitizeCursorTrack(input?: CurrentVideoMetadata['cursorTrack'] | null): CurrentVideoMetadata['cursorTrack'] | undefined {
@@ -119,10 +184,58 @@ function sanitizeCursorTrack(input?: CurrentVideoMetadata['cursorTrack'] | null)
     .sort((a, b) => a.timeMs - b.timeMs)
 
   if (samples.length === 0) return undefined
-  return {
+  const normalized: CurrentVideoMetadata['cursorTrack'] = {
     source: input.source === 'synthetic' ? 'synthetic' : 'recorded',
     samples,
   }
+
+  if (input.space) {
+    const boundsInput = input.space.bounds
+    const x = Number(boundsInput?.x)
+    const y = Number(boundsInput?.y)
+    const width = Number(boundsInput?.width)
+    const height = Number(boundsInput?.height)
+    if ([x, y, width, height].every(Number.isFinite) && width >= 1 && height >= 1) {
+      normalized.space = {
+        mode: input.space.mode === 'source-display' ? 'source-display' : 'virtual-desktop',
+        displayId: typeof input.space.displayId === 'string' && input.space.displayId.trim().length > 0
+          ? input.space.displayId.trim()
+          : undefined,
+        bounds: {
+          x,
+          y,
+          width,
+          height,
+        },
+      }
+    }
+  }
+
+  if (input.stats) {
+    const sampleCount = Number(input.stats.sampleCount)
+    const clickCount = Number(input.stats.clickCount)
+    normalized.stats = {
+      sampleCount: Number.isFinite(sampleCount) && sampleCount >= 0 ? Math.floor(sampleCount) : samples.length,
+      clickCount: Number.isFinite(clickCount) && clickCount >= 0 ? Math.floor(clickCount) : samples.filter((sample) => sample.click).length,
+    }
+  }
+
+  if (input.capture) {
+    const width = Number(input.capture.width)
+    const height = Number(input.capture.height)
+    const sourceId = typeof input.capture.sourceId === 'string' && input.capture.sourceId.trim().length > 0
+      ? input.capture.sourceId.trim()
+      : undefined
+    if (sourceId || (Number.isFinite(width) && Number.isFinite(height))) {
+      normalized.capture = {
+        sourceId,
+        width: Number.isFinite(width) && width >= 2 ? Math.floor(width) : undefined,
+        height: Number.isFinite(height) && height >= 2 ? Math.floor(height) : undefined,
+      }
+    }
+  }
+
+  return normalized
 }
 
 function normalizeLocale(input?: string): Locale {
@@ -205,17 +318,41 @@ export function registerIpcHandlers(
     const payload = sanitizeCursorTrack({
       source: 'recorded',
       samples: cursorTracker.samples,
+      space: {
+        mode: cursorTracker.boundsMode,
+        displayId: cursorTracker.displayId,
+        bounds: cursorTracker.bounds,
+      },
+      stats: {
+        sampleCount: cursorTracker.samples.length,
+        clickCount: cursorTracker.clickCount,
+      },
+      capture: {
+        sourceId: cursorTracker.sourceRef?.id ?? undefined,
+        width: cursorTracker.captureSize?.width,
+        height: cursorTracker.captureSize?.height,
+      },
     })
     cursorTracker = null
     return payload
   }
 
-  ipcMain.handle('cursor-tracker-start', () => {
+  ipcMain.handle('cursor-tracker-start', (_, options?: CursorTrackerStartOptions) => {
     stopCursorTracker()
 
     const startedAt = Date.now()
-    const bounds = resolveVirtualBounds()
     const initialPoint = screen.getCursorScreenPoint()
+    const sourceRef = normalizeSourceRef(options?.source) ?? normalizeSourceRef(selectedSource)
+    const captureSize = normalizeCaptureSize(options?.captureSize)
+    const displaySnapshot = screen.getAllDisplays().map((display) => ({
+      id: display.id,
+      bounds: display.bounds,
+    }))
+    const initialResolution = resolveCursorBoundsForSource({
+      displays: displaySnapshot,
+      source: sourceRef,
+      pointHint: initialPoint,
+    })
 
     const tracker: CursorTrackerRuntime = {
       timer: globalThis.setInterval(() => {
@@ -223,6 +360,19 @@ export function registerIpcHandlers(
 
         const now = Date.now()
         const point = screen.getCursorScreenPoint()
+        if (cursorTracker.sourceRef?.id?.startsWith('window:')) {
+          const dynamicResolution = resolveCursorBoundsForSource({
+            displays: screen.getAllDisplays().map((display) => ({
+              id: display.id,
+              bounds: display.bounds,
+            })),
+            source: cursorTracker.sourceRef,
+            pointHint: point,
+          })
+          cursorTracker.bounds = dynamicResolution.bounds
+          cursorTracker.boundsMode = dynamicResolution.mode
+          cursorTracker.displayId = dynamicResolution.displayId
+        }
 
         if (!cursorTracker.lastPoint) {
           cursorTracker.lastPoint = { x: point.x, y: point.y }
@@ -265,13 +415,18 @@ export function registerIpcHandlers(
       }, 16),
       startedAt,
       samples: [],
-      bounds,
+      bounds: initialResolution.bounds,
+      boundsMode: initialResolution.mode,
+      displayId: initialResolution.displayId,
+      sourceRef,
+      captureSize,
       lastPoint: null,
       lastTickAt: startedAt,
       lastSampleAt: startedAt,
       lastSpeed: 0,
       stillFrames: 0,
       lastClickAt: 0,
+      clickCount: 0,
     }
 
     cursorTracker = tracker
@@ -334,6 +489,9 @@ export function registerIpcHandlers(
       await fs.writeFile(videoPath, Buffer.from(videoData))
       currentVideoPath = videoPath
       currentVideoMetadata = sanitizeVideoMetadata(metadata)
+      if (currentVideoMetadata?.cursorTrack) {
+        await writeCursorTrackSidecar(videoPath, currentVideoMetadata.cursorTrack)
+      }
       return {
         success: true,
         path: videoPath,
@@ -372,9 +530,9 @@ export function registerIpcHandlers(
   })
 
   ipcMain.handle('set-recording-state', (_, recording: boolean) => {
-    const source = selectedSource || { name: 'Screen' }
+    const sourceName = selectedSource?.name || 'Screen'
     if (onRecordingStateChange) {
-      onRecordingStateChange(recording, source.name)
+      onRecordingStateChange(recording, sourceName)
     }
   })
 
@@ -474,13 +632,32 @@ export function registerIpcHandlers(
     }
   });
 
-  ipcMain.handle('set-current-video-path', (_, path: string, metadata?: CurrentVideoMetadata) => {
-    currentVideoPath = path
+  ipcMain.handle('set-current-video-path', async (_, nextPath: string, metadata?: CurrentVideoMetadata) => {
+    currentVideoPath = nextPath
     currentVideoMetadata = sanitizeVideoMetadata(metadata)
+    if (currentVideoPath && !currentVideoMetadata?.cursorTrack) {
+      const sidecarTrack = await readCursorTrackSidecar(currentVideoPath)
+      if (sidecarTrack) {
+        currentVideoMetadata = {
+          ...(currentVideoMetadata ?? {}),
+          cursorTrack: sidecarTrack,
+        }
+      }
+    }
     return { success: true };
   });
 
-  ipcMain.handle('get-current-video-path', () => {
+  ipcMain.handle('get-current-video-path', async () => {
+    if (currentVideoPath && !currentVideoMetadata?.cursorTrack) {
+      const sidecarTrack = await readCursorTrackSidecar(currentVideoPath)
+      if (sidecarTrack) {
+        currentVideoMetadata = {
+          ...(currentVideoMetadata ?? {}),
+          cursorTrack: sidecarTrack,
+        }
+      }
+    }
+
     return currentVideoPath
       ? { success: true, path: currentVideoPath, metadata: currentVideoMetadata ?? undefined }
       : { success: false };
