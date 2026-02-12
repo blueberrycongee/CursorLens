@@ -40,7 +40,8 @@ function resolvePreviewFrameRate(sourceFrameRate?: number): number {
   if (!Number.isFinite(sourceFrameRate)) return 60;
   const normalized = Math.round(sourceFrameRate || 60);
   if (normalized < 30) return 30;
-  if (normalized > 120) return 120;
+  // Keep editor preview capped to 60fps for consistent UI responsiveness.
+  if (normalized > 60) return 60;
   return normalized;
 }
 

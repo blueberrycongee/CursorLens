@@ -329,69 +329,103 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
       ctx2d.closePath();
     };
 
-    let frameToken = 0;
+    let rafToken = 0;
+    let videoFrameCallbackToken: number | null = null;
+    let running = true;
     let lastDrawTime = 0;
     const frameIntervalMs = 1000 / compositeFrameRate;
-    const drawFrame = (timestamp: number) => {
-      if (timestamp - lastDrawTime >= frameIntervalMs) {
-        lastDrawTime = timestamp;
 
-        if (desktopVideo.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
-          ctx.drawImage(desktopVideo, 0, 0, sourceWidth, sourceHeight);
-        }
-
-        if (webcamVideo.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
-          const x = overlay.x;
-          const y = overlay.y;
-          const w = overlay.width;
-          const h = overlay.height;
-
-          ctx.save();
-          if (overlayOptions.shape === "circle") {
-            const radius = Math.min(w, h) / 2;
-            ctx.beginPath();
-            ctx.arc(x + w / 2, y + h / 2, radius, 0, Math.PI * 2);
-            ctx.closePath();
-          } else if (overlayOptions.shape === "square") {
-            ctx.beginPath();
-            ctx.rect(x, y, w, h);
-            ctx.closePath();
-          } else {
-            drawRoundedRectPath(ctx, x, y, w, h, overlay.cornerRadius);
-          }
-          ctx.clip();
-          drawVideoCover(ctx, webcamVideo, x, y, w, h);
-          ctx.restore();
-
-          ctx.lineWidth = 2;
-          ctx.strokeStyle = "rgba(255,255,255,0.45)";
-          if (overlayOptions.shape === "circle") {
-            const radius = Math.min(w, h) / 2;
-            ctx.beginPath();
-            ctx.arc(x + w / 2, y + h / 2, radius, 0, Math.PI * 2);
-            ctx.closePath();
-            ctx.stroke();
-          } else if (overlayOptions.shape === "square") {
-            ctx.strokeRect(x, y, w, h);
-          } else {
-            drawRoundedRectPath(ctx, x, y, w, h, overlay.cornerRadius);
-            ctx.stroke();
-          }
-        }
+    const drawCompositedFrame = () => {
+      if (desktopVideo.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+        ctx.drawImage(desktopVideo, 0, 0, sourceWidth, sourceHeight);
       }
 
-      frameToken = requestAnimationFrame(drawFrame);
+      if (webcamVideo.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+        const x = overlay.x;
+        const y = overlay.y;
+        const w = overlay.width;
+        const h = overlay.height;
+
+        ctx.save();
+        if (overlayOptions.shape === "circle") {
+          const radius = Math.min(w, h) / 2;
+          ctx.beginPath();
+          ctx.arc(x + w / 2, y + h / 2, radius, 0, Math.PI * 2);
+          ctx.closePath();
+        } else if (overlayOptions.shape === "square") {
+          ctx.beginPath();
+          ctx.rect(x, y, w, h);
+          ctx.closePath();
+        } else {
+          drawRoundedRectPath(ctx, x, y, w, h, overlay.cornerRadius);
+        }
+        ctx.clip();
+        drawVideoCover(ctx, webcamVideo, x, y, w, h);
+        ctx.restore();
+
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = "rgba(255,255,255,0.45)";
+        if (overlayOptions.shape === "circle") {
+          const radius = Math.min(w, h) / 2;
+          ctx.beginPath();
+          ctx.arc(x + w / 2, y + h / 2, radius, 0, Math.PI * 2);
+          ctx.closePath();
+          ctx.stroke();
+        } else if (overlayOptions.shape === "square") {
+          ctx.strokeRect(x, y, w, h);
+        } else {
+          drawRoundedRectPath(ctx, x, y, w, h, overlay.cornerRadius);
+          ctx.stroke();
+        }
+      }
     };
-    frameToken = requestAnimationFrame(drawFrame);
+
+    const maybeDrawFrame = (timestamp: number) => {
+      if (timestamp - lastDrawTime < frameIntervalMs) {
+        return;
+      }
+      lastDrawTime = timestamp;
+      drawCompositedFrame();
+    };
+
+    const hasVideoFrameCallback = typeof desktopVideo.requestVideoFrameCallback === "function";
+    if (hasVideoFrameCallback) {
+      const scheduleVideoFrame = () => {
+        if (!running) return;
+        videoFrameCallbackToken = desktopVideo.requestVideoFrameCallback((timestamp) => {
+          maybeDrawFrame(timestamp);
+          scheduleVideoFrame();
+        });
+      };
+      scheduleVideoFrame();
+    } else {
+      const tick = (timestamp: number) => {
+        if (!running) return;
+        maybeDrawFrame(timestamp);
+        rafToken = requestAnimationFrame(tick);
+      };
+      rafToken = requestAnimationFrame(tick);
+    }
 
     const compositeStream = canvas.captureStream(compositeFrameRate);
+    const compositeTrack = compositeStream.getVideoTracks()[0];
+    if (compositeTrack && "contentHint" in compositeTrack) {
+      compositeTrack.contentHint = "detail";
+    }
     return {
       compositeStream,
       width: sourceWidth,
       height: sourceHeight,
       frameRate: compositeFrameRate,
       cleanup: () => {
-        cancelAnimationFrame(frameToken);
+        running = false;
+        cancelAnimationFrame(rafToken);
+        if (
+          videoFrameCallbackToken !== null
+          && typeof desktopVideo.cancelVideoFrameCallback === "function"
+        ) {
+          desktopVideo.cancelVideoFrameCallback(videoFrameCallbackToken);
+        }
         desktopVideo.pause();
         webcamVideo.pause();
         webcamStream.getTracks().forEach(track => track.stop());
