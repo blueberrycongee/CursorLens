@@ -577,14 +577,20 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
   useEffect(() => {
     const overlayEl = overlayRef.current;
     if (!overlayEl) return;
-    if (!selectedZoom) {
-      overlayEl.style.cursor = 'default';
-      overlayEl.style.pointerEvents = 'none';
-      return;
+    const shouldHideCursor = hideCapturedSystemCursorRef.current;
+    if (shouldHideCursor) {
+      overlayEl.style.cursor = 'none';
+    } else {
+      overlayEl.style.cursor = selectedZoom ? (isPlaying ? 'not-allowed' : 'grab') : 'default';
     }
-    overlayEl.style.cursor = isPlaying ? 'not-allowed' : 'grab';
-    overlayEl.style.pointerEvents = isPlaying ? 'none' : 'auto';
-  }, [selectedZoom, isPlaying]);
+    overlayEl.style.pointerEvents = selectedZoom ? (isPlaying ? 'none' : 'auto') : 'none';
+  }, [selectedZoom, isPlaying, hideCapturedSystemCursor]);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    container.style.cursor = hideCapturedSystemCursor ? 'none' : 'default';
+  }, [hideCapturedSystemCursor]);
 
   useEffect(() => {
     const container = containerRef.current;
