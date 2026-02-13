@@ -1,14 +1,56 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildKeptRanges,
+  clampAudioGain,
   VideoExporter,
   estimateRemainingSeconds,
   getSeekToleranceSeconds,
   hasRecordedCursorSamples,
+  normalizeTrimRanges,
   shouldSeekToTime,
   withTimeout,
 } from "./videoExporter";
 
 describe("videoExporter seek helpers", () => {
+  it("normalizes and merges overlapping trim ranges", () => {
+    const merged = normalizeTrimRanges(
+      [
+        { id: "a", startMs: 200, endMs: 400 },
+        { id: "b", startMs: 300, endMs: 700 },
+        { id: "c", startMs: -100, endMs: 100 },
+      ],
+      1000,
+    );
+
+    expect(merged).toEqual([
+      { startMs: 0, endMs: 100 },
+      { startMs: 200, endMs: 700 },
+    ]);
+  });
+
+  it("builds kept ranges by subtracting trim ranges", () => {
+    const kept = buildKeptRanges(
+      1000,
+      [
+        { id: "a", startMs: 100, endMs: 300 },
+        { id: "b", startMs: 500, endMs: 600 },
+      ],
+    );
+
+    expect(kept).toEqual([
+      { startMs: 0, endMs: 100 },
+      { startMs: 300, endMs: 500 },
+      { startMs: 600, endMs: 1000 },
+    ]);
+  });
+
+  it("clamps audio gain to supported bounds", () => {
+    expect(clampAudioGain(undefined)).toBe(1);
+    expect(clampAudioGain(-2)).toBe(0);
+    expect(clampAudioGain(0.5)).toBe(0.5);
+    expect(clampAudioGain(9)).toBe(2);
+  });
+
   it("uses half-frame tolerance at common frame rates", () => {
     expect(getSeekToleranceSeconds(60)).toBeCloseTo(1 / 120, 6);
     expect(getSeekToleranceSeconds(30)).toBeCloseTo(1 / 60, 6);

@@ -4,6 +4,8 @@ export interface ExportConfig {
   frameRate: number;
   bitrate: number;
   codec?: string;
+  audioEnabled?: boolean;
+  audioGain?: number;
 }
 
 export interface ExportProgress {

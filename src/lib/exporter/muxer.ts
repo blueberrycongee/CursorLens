@@ -5,13 +5,14 @@ import {
   BufferTarget, 
   EncodedVideoPacketSource, 
   EncodedAudioPacketSource,
+  AudioBufferSource,
   EncodedPacket 
 } from 'mediabunny';
 
 export class VideoMuxer {
   private output: Output | null = null;
   private videoSource: EncodedVideoPacketSource | null = null;
-  private audioSource: EncodedAudioPacketSource | null = null;
+  private audioSource: EncodedAudioPacketSource | AudioBufferSource | null = null;
   private hasAudio: boolean;
   private target: BufferTarget | null = null;
   private config: ExportConfig;
@@ -40,7 +41,10 @@ export class VideoMuxer {
 
     // Create audio source if needed
     if (this.hasAudio) {
-      this.audioSource = new EncodedAudioPacketSource('opus');
+      this.audioSource = new AudioBufferSource({
+        codec: 'opus',
+        bitrate: 128_000,
+      });
       this.output.addAudioTrack(this.audioSource);
     }
 
@@ -61,7 +65,7 @@ export class VideoMuxer {
   }
 
   async addAudioChunk(chunk: EncodedAudioChunk, meta?: EncodedAudioChunkMetadata): Promise<void> {
-    if (!this.audioSource) {
+    if (!(this.audioSource instanceof EncodedAudioPacketSource)) {
       throw new Error('Audio not configured for this muxer');
     }
     
@@ -70,6 +74,14 @@ export class VideoMuxer {
     
     // Add metadata with the first chunk
     await this.audioSource.add(packet, meta);
+  }
+
+  async addAudioBuffer(buffer: AudioBuffer): Promise<void> {
+    if (!(this.audioSource instanceof AudioBufferSource)) {
+      throw new Error('PCM audio input is not configured for this muxer');
+    }
+
+    await this.audioSource.add(buffer);
   }
 
   async finalize(): Promise<Blob> {

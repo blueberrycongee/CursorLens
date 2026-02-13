@@ -5,6 +5,7 @@ import { VideoMuxer } from './muxer';
 import type { ZoomRegion, CropRegion, TrimRegion, AnnotationRegion } from '@/components/video-editor/types';
 import { frameDurationUs, frameIndexToTimestampUs, normalizeFrameRate } from './frameClock';
 import type { CursorStyleConfig, CursorTrack } from '@/lib/cursor';
+import { ALL_FORMATS, AudioBufferSink, BlobSource, Input, UrlSource, type InputAudioTrack } from 'mediabunny';
 
 interface VideoExporterConfig extends ExportConfig {
   videoUrl: string;
@@ -27,6 +28,14 @@ interface VideoExporterConfig extends ExportConfig {
   hideCapturedSystemCursor?: boolean;
   onProgress?: (progress: ExportProgress) => void;
 }
+
+type TimeRangeMs = {
+  startMs: number;
+  endMs: number;
+};
+
+const DEFAULT_AUDIO_GAIN = 1;
+const MAX_AUDIO_GAIN = 2;
 
 export function hasRecordedCursorSamples(track?: CursorTrack | null): boolean {
   if (!track?.samples?.length) return false;
@@ -81,6 +90,73 @@ export async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, lab
   });
 }
 
+export function clampAudioGain(value: number | undefined): number {
+  if (!Number.isFinite(value)) return DEFAULT_AUDIO_GAIN;
+  return Math.max(0, Math.min(MAX_AUDIO_GAIN, value as number));
+}
+
+export function normalizeTrimRanges(trimRegions: TrimRegion[] | undefined, totalDurationMs: number): TimeRangeMs[] {
+  if (!trimRegions?.length || !Number.isFinite(totalDurationMs) || totalDurationMs <= 0) {
+    return [];
+  }
+
+  const sorted = trimRegions
+    .map((region) => {
+      const start = Number.isFinite(region.startMs) ? region.startMs : 0;
+      const end = Number.isFinite(region.endMs) ? region.endMs : start;
+      return {
+        startMs: Math.max(0, Math.min(start, totalDurationMs)),
+        endMs: Math.max(0, Math.min(end, totalDurationMs)),
+      };
+    })
+    .filter((region) => region.endMs > region.startMs)
+    .sort((a, b) => a.startMs - b.startMs);
+
+  if (sorted.length === 0) {
+    return [];
+  }
+
+  const merged: TimeRangeMs[] = [];
+  for (const region of sorted) {
+    const previous = merged[merged.length - 1];
+    if (!previous || region.startMs > previous.endMs) {
+      merged.push({ ...region });
+      continue;
+    }
+
+    previous.endMs = Math.max(previous.endMs, region.endMs);
+  }
+
+  return merged;
+}
+
+export function buildKeptRanges(totalDurationMs: number, trimRegions: TrimRegion[] | undefined): TimeRangeMs[] {
+  if (!Number.isFinite(totalDurationMs) || totalDurationMs <= 0) {
+    return [];
+  }
+
+  const normalizedTrims = normalizeTrimRanges(trimRegions, totalDurationMs);
+  if (normalizedTrims.length === 0) {
+    return [{ startMs: 0, endMs: totalDurationMs }];
+  }
+
+  const kept: TimeRangeMs[] = [];
+  let cursorMs = 0;
+
+  for (const trim of normalizedTrims) {
+    if (trim.startMs > cursorMs) {
+      kept.push({ startMs: cursorMs, endMs: trim.startMs });
+    }
+    cursorMs = Math.max(cursorMs, trim.endMs);
+  }
+
+  if (cursorMs < totalDurationMs) {
+    kept.push({ startMs: cursorMs, endMs: totalDurationMs });
+  }
+
+  return kept.filter((range) => range.endMs > range.startMs);
+}
+
 export class VideoExporter {
   private config: VideoExporterConfig;
   private decoder: VideoFileDecoder | null = null;
@@ -109,25 +185,37 @@ export class VideoExporter {
   private seekCount = 0;
   private samplingMode: 'playback' | 'seek-only' = 'seek-only';
   private maxObservedTimingDriftMs = 0;
+  private sourceDurationMs = 0;
+  private sourceAudioInput: Input | null = null;
+  private sourceAudioTrack: InputAudioTrack | null = null;
 
   constructor(config: VideoExporterConfig) {
+    const audioGain = clampAudioGain(config.audioGain);
     this.config = {
       ...config,
+      audioEnabled: config.audioEnabled !== false,
+      audioGain,
       frameRate: normalizeFrameRate(config.frameRate),
     };
   }
 
   private getEffectiveDuration(totalDuration: number): number {
-    const trimRegions = this.config.trimRegions || [];
-    const totalTrimDuration = trimRegions.reduce((sum, region) => {
-      return sum + (region.endMs - region.startMs) / 1000;
-    }, 0);
-    return totalDuration - totalTrimDuration;
+    const totalDurationMs = Math.max(0, Math.round(totalDuration * 1000));
+    if (totalDurationMs <= 0) {
+      return 0;
+    }
+
+    const trimRanges = normalizeTrimRanges(this.config.trimRegions, totalDurationMs);
+    const trimmedMs = trimRanges.reduce((sum, region) => sum + (region.endMs - region.startMs), 0);
+    return Math.max(0, (totalDurationMs - trimmedMs) / 1000);
   }
 
   private mapEffectiveToSourceTime(effectiveTimeMs: number): number {
-    const trimRegions = this.config.trimRegions || [];
-    const sortedTrims = [...trimRegions].sort((a, b) => a.startMs - b.startMs);
+    if (this.sourceDurationMs <= 0) {
+      return Math.max(0, effectiveTimeMs);
+    }
+
+    const sortedTrims = normalizeTrimRanges(this.config.trimRegions, this.sourceDurationMs);
 
     let sourceTimeMs = effectiveTimeMs;
 
@@ -140,7 +228,165 @@ export class VideoExporter {
       sourceTimeMs += trimDuration;
     }
 
-    return sourceTimeMs;
+    return Math.max(0, Math.min(sourceTimeMs, this.sourceDurationMs));
+  }
+
+  private async openSourceInputFromUrl(): Promise<Input> {
+    return new Input({
+      formats: ALL_FORMATS,
+      source: new UrlSource(this.config.videoUrl),
+    });
+  }
+
+  private async openSourceInputFromBlob(): Promise<Input> {
+    const response = await fetch(this.config.videoUrl);
+    if (!response.ok && response.status !== 0) {
+      throw new Error(`Failed to fetch source media for audio extraction (status ${response.status})`);
+    }
+
+    const blob = await response.blob();
+    return new Input({
+      formats: ALL_FORMATS,
+      source: new BlobSource(blob),
+    });
+  }
+
+  private disposeSourceAudioInput(): void {
+    if (this.sourceAudioInput) {
+      try {
+        this.sourceAudioInput.dispose();
+      } catch (error) {
+        console.warn('Error disposing source audio input:', error);
+      }
+    }
+
+    this.sourceAudioInput = null;
+    this.sourceAudioTrack = null;
+  }
+
+  private async resolveSourceAudioTrack(): Promise<boolean> {
+    this.disposeSourceAudioInput();
+    if (this.config.audioEnabled === false) {
+      return false;
+    }
+
+    try {
+      const input = await this.openSourceInputFromUrl();
+      const audioTrack = await input.getPrimaryAudioTrack();
+      if (!audioTrack) {
+        input.dispose();
+        return false;
+      }
+      this.sourceAudioInput = input;
+      this.sourceAudioTrack = audioTrack;
+      return true;
+    } catch (urlError) {
+      console.warn('[VideoExporter] Unable to read source audio via UrlSource. Retrying with BlobSource.', urlError);
+    }
+
+    try {
+      const input = await this.openSourceInputFromBlob();
+      const audioTrack = await input.getPrimaryAudioTrack();
+      if (!audioTrack) {
+        input.dispose();
+        return false;
+      }
+      this.sourceAudioInput = input;
+      this.sourceAudioTrack = audioTrack;
+      return true;
+    } catch (blobError) {
+      console.warn('[VideoExporter] Audio track extraction failed; continuing with video-only export.', blobError);
+      this.disposeSourceAudioInput();
+      return false;
+    }
+  }
+
+  private createAudioSlice(
+    sourceBuffer: AudioBuffer,
+    startFrame: number,
+    endFrame: number,
+    gain: number,
+  ): AudioBuffer | null {
+    const safeStart = Math.max(0, Math.min(startFrame, sourceBuffer.length));
+    const safeEnd = Math.max(safeStart, Math.min(endFrame, sourceBuffer.length));
+    const frameCount = safeEnd - safeStart;
+
+    if (frameCount <= 0) {
+      return null;
+    }
+
+    const sliced = new AudioBuffer({
+      length: frameCount,
+      numberOfChannels: sourceBuffer.numberOfChannels,
+      sampleRate: sourceBuffer.sampleRate,
+    });
+
+    for (let channel = 0; channel < sourceBuffer.numberOfChannels; channel += 1) {
+      const source = sourceBuffer.getChannelData(channel);
+      const target = sliced.getChannelData(channel);
+
+      if (gain === 1) {
+        target.set(source.subarray(safeStart, safeEnd));
+        continue;
+      }
+
+      for (let i = 0; i < frameCount; i += 1) {
+        target[i] = source[safeStart + i] * gain;
+      }
+    }
+
+    return sliced;
+  }
+
+  private async exportAudioTrack(): Promise<void> {
+    if (!this.sourceAudioTrack || !this.muxer || this.sourceDurationMs <= 0 || this.cancelled) {
+      return;
+    }
+
+    const gain = clampAudioGain(this.config.audioGain);
+    const keptRanges = buildKeptRanges(this.sourceDurationMs, this.config.trimRegions);
+    if (keptRanges.length === 0) {
+      return;
+    }
+
+    const sink = new AudioBufferSink(this.sourceAudioTrack);
+
+    for (const range of keptRanges) {
+      if (this.cancelled) {
+        break;
+      }
+
+      const startSeconds = range.startMs / 1000;
+      const endSeconds = range.endMs / 1000;
+      const decodeStartSeconds = Math.max(0, startSeconds - 0.1);
+
+      for await (const wrapped of sink.buffers(decodeStartSeconds, endSeconds)) {
+        if (this.cancelled) {
+          return;
+        }
+
+        const sourceBuffer = wrapped.buffer;
+        const bufferStartMs = wrapped.timestamp * 1000;
+        const bufferEndMs = bufferStartMs + wrapped.duration * 1000;
+        const clipStartMs = Math.max(bufferStartMs, range.startMs);
+        const clipEndMs = Math.min(bufferEndMs, range.endMs);
+
+        if (clipEndMs <= clipStartMs) {
+          continue;
+        }
+
+        const sampleRate = sourceBuffer.sampleRate;
+        const startFrame = Math.floor(((clipStartMs - bufferStartMs) / 1000) * sampleRate);
+        const endFrame = Math.ceil(((clipEndMs - bufferStartMs) / 1000) * sampleRate);
+        const slice = this.createAudioSlice(sourceBuffer, startFrame, endFrame, gain);
+
+        if (!slice) {
+          continue;
+        }
+
+        await this.muxer.addAudioBuffer(slice);
+      }
+    }
   }
 
   async export(): Promise<ExportResult> {
@@ -155,9 +401,12 @@ export class VideoExporter {
       this.seekCount = 0;
       this.maxObservedTimingDriftMs = 0;
       this.samplingMode = 'seek-only';
+      this.sourceDurationMs = 0;
 
       this.decoder = new VideoFileDecoder();
       const videoInfo = await this.decoder.loadVideo(this.config.videoUrl);
+      this.sourceDurationMs = Math.max(0, Math.round(videoInfo.duration * 1000));
+      const hasSourceAudio = await this.resolveSourceAudioTrack();
 
       this.renderer = new FrameRenderer({
         width: this.config.width,
@@ -184,7 +433,7 @@ export class VideoExporter {
 
       await this.initializeEncoder();
 
-      this.muxer = new VideoMuxer(this.config, false);
+      this.muxer = new VideoMuxer(this.config, hasSourceAudio);
       await this.muxer.initialize();
 
       const videoElement = this.decoder.getVideoElement();
@@ -241,6 +490,13 @@ export class VideoExporter {
         'export.finalize.mux',
         withTimeout(this.waitForMuxDrain(), this.FINALIZE_TIMEOUT_MS, 'mux drain'),
       );
+
+      if (hasSourceAudio) {
+        await this.runFinalizingStep(
+          'export.finalize.audio',
+          withTimeout(this.exportAudioTrack(), this.FINALIZE_TIMEOUT_MS, 'audio encode'),
+        );
+      }
 
       const blob = await this.runFinalizingStep(
         'export.finalize.package',
@@ -661,6 +917,7 @@ export class VideoExporter {
 
   private cleanup(): void {
     this.stopFinalizingHeartbeat();
+    this.disposeSourceAudioInput();
 
     if (this.encoder) {
       try {
@@ -707,5 +964,6 @@ export class VideoExporter {
     this.samplingMode = 'seek-only';
     this.videoDescription = undefined;
     this.videoColorSpace = undefined;
+    this.sourceDurationMs = 0;
   }
 }
