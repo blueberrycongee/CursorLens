@@ -49,6 +49,30 @@ type ActiveNativeRecorderSession = {
 
 let activeSession: ActiveNativeRecorderSession | null = null
 
+function isChildProcessAlive(processRef: ChildProcess): boolean {
+  const pid = processRef.pid
+  if (!pid || processRef.exitCode !== null) {
+    return false
+  }
+
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function clearStaleActiveSession(): void {
+  if (!activeSession) {
+    return
+  }
+
+  if (!isChildProcessAlive(activeSession.process)) {
+    activeSession = null
+  }
+}
+
 function parseReadyLine(line: string): RecorderReadyInfo | null {
   const match = /SCK_RECORDER_READY\s+width=(\d+)\s+height=(\d+)\s+fps=(\d+)\s+source=([a-zA-Z-]+)/.exec(line)
   if (!match) return null
@@ -195,6 +219,7 @@ export async function startNativeMacRecorder(options: NativeRecorderStartOptions
     return { success: false, message: 'Native ScreenCaptureKit recorder is only supported on macOS.' }
   }
 
+  clearStaleActiveSession()
   if (activeSession) {
     return { success: false, message: 'Native recorder is already active.' }
   }
@@ -295,6 +320,13 @@ export async function startNativeMacRecorder(options: NativeRecorderStartOptions
       exitPromise,
     }
 
+    const helperPid = helperProcess.pid
+    void exitPromise.finally(() => {
+      if (activeSession?.process.pid === helperPid) {
+        activeSession = null
+      }
+    })
+
     return {
       success: true,
       ready: readyInfo,
@@ -315,13 +347,21 @@ export async function stopNativeMacRecorder(): Promise<NativeRecorderStopResult>
     return { success: false, message: 'Native recorder is not active.' }
   }
 
-  session.process.kill('SIGINT')
+  try {
+    session.process.kill('SIGINT')
+  } catch {
+    // process may already be gone; rely on exitPromise/timeout path
+  }
 
   const exitResult = await Promise.race([
     session.exitPromise,
     new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
       globalThis.setTimeout(() => {
-        session.process.kill('SIGKILL')
+        try {
+          session.process.kill('SIGKILL')
+        } catch {
+          // process may already be gone
+        }
         resolve({ code: null, signal: 'SIGKILL' })
       }, 15_000)
     }),
