@@ -370,7 +370,8 @@ export function occludeCapturedCursorArtifact(
 
   const rawContentScale = options.contentScale ?? 1;
   const safeContentScale = Math.max(0.1, Math.min(8, Number.isFinite(rawContentScale) ? rawContentScale : 1));
-  const radius = Math.max(8, 9.5 * state.scale * safeContentScale);
+  // Over-cover pointer glyph + OS cursor antialias fringe to avoid visible remnants.
+  const radius = Math.max(18, 16 * state.scale * safeContentScale);
   const diameter = Math.max(2, Math.round(radius * 2));
   const destX = point.x - diameter / 2;
   const destY = point.y - diameter / 2;
@@ -382,12 +383,16 @@ export function occludeCapturedCursorArtifact(
   const sourceScaleY = source.height / stageHeight;
 
   const candidates = [
-    { dx: 1.6, dy: 0.6 },
-    { dx: -1.6, dy: 0.6 },
-    { dx: 1.6, dy: -0.6 },
-    { dx: -1.6, dy: -0.6 },
-    { dx: 0, dy: 1.8 },
-    { dx: 0, dy: -1.8 },
+    { dx: 2.6, dy: 0.8 },
+    { dx: -2.6, dy: 0.8 },
+    { dx: 2.6, dy: -0.8 },
+    { dx: -2.6, dy: -0.8 },
+    { dx: 0, dy: 2.8 },
+    { dx: 0, dy: -2.8 },
+    { dx: 2.1, dy: 2.1 },
+    { dx: -2.1, dy: 2.1 },
+    { dx: 2.1, dy: -2.1 },
+    { dx: -2.1, dy: -2.1 },
   ];
 
   const sourceW = source.width;
@@ -407,6 +412,7 @@ export function occludeCapturedCursorArtifact(
     ctx.beginPath();
     ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
     ctx.clip();
+    ctx.filter = 'blur(0.7px)';
     ctx.drawImage(
       source,
       sx,
@@ -421,6 +427,15 @@ export function occludeCapturedCursorArtifact(
     ctx.restore();
     return;
   }
+
+  // Last fallback: softly neutralize local pointer pixels if no valid donor patch found.
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
+  ctx.clip();
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.16)';
+  ctx.fillRect(destX, destY, diameter, diameter);
+  ctx.restore();
 }
 
 export function normalizePointerSample(

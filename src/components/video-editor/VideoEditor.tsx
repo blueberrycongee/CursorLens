@@ -148,6 +148,17 @@ function parseSystemCursorMode(input: unknown): 'always' | 'never' | undefined {
   return undefined;
 }
 
+function readLastSystemCursorHiddenPreference(): boolean {
+  try {
+    const raw = window.localStorage.getItem("openscreen.recordSystemCursor");
+    if (raw === "0") return true;
+    if (raw === "1") return false;
+  } catch {
+    // ignore localStorage errors
+  }
+  return false;
+}
+
 export default function VideoEditor() {
   const { t, locale } = useI18n();
   const [videoPath, setVideoPath] = useState<string | null>(null);
@@ -231,7 +242,12 @@ export default function VideoEditor() {
             systemCursorMode?: unknown;
           } | undefined;
           setCursorTrack(normalizeCursorTrack(metadataWithCursor?.cursorTrack));
-          setHideCapturedSystemCursor(parseSystemCursorMode(metadataWithCursor?.systemCursorMode) === 'never');
+          const parsedMode = parseSystemCursorMode(metadataWithCursor?.systemCursorMode);
+          if (parsedMode) {
+            setHideCapturedSystemCursor(parsedMode === 'never');
+          } else {
+            setHideCapturedSystemCursor(readLastSystemCursorHiddenPreference());
+          }
         } else {
           setError(t('editor.noVideo'));
         }
