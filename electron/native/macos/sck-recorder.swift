@@ -122,9 +122,36 @@ struct RecorderArguments {
 enum RecorderError: Error, CustomStringConvertible {
     case invalidArguments(String)
     case sourceNotFound(String)
+    case permissionDenied(String)
+    case windowNotFound(String)
+    case windowCaptureDenied(String)
+    case streamStartFailed(String)
     case streamNotStarted
     case writerFailed(String)
     case cameraUnavailable(String)
+
+    var code: String {
+        switch self {
+        case .invalidArguments:
+            return "invalid_arguments"
+        case .sourceNotFound:
+            return "source_not_found"
+        case .permissionDenied:
+            return "permission_denied"
+        case .windowNotFound:
+            return "window_not_found"
+        case .windowCaptureDenied:
+            return "window_capture_denied"
+        case .streamStartFailed:
+            return "stream_start_failed"
+        case .streamNotStarted:
+            return "stream_not_started"
+        case .writerFailed:
+            return "writer_failed"
+        case .cameraUnavailable:
+            return "camera_unavailable"
+        }
+    }
 
     var description: String {
         switch self {
@@ -132,6 +159,14 @@ enum RecorderError: Error, CustomStringConvertible {
             return "Invalid arguments: \(message)"
         case let .sourceNotFound(message):
             return "Capture source not found: \(message)"
+        case let .permissionDenied(message):
+            return "Screen Recording permission denied: \(message)"
+        case let .windowNotFound(message):
+            return "Selected window unavailable: \(message)"
+        case let .windowCaptureDenied(message):
+            return "Selected window cannot be captured: \(message)"
+        case let .streamStartFailed(message):
+            return "Failed to start capture stream: \(message)"
         case .streamNotStarted:
             return "Stream did not start"
         case let .writerFailed(message):
@@ -593,6 +628,10 @@ final class SCKRecorder {
     }
 
     func start() async throws -> (width: Int, height: Int, sourceKind: String) {
+        if !CGPreflightScreenCaptureAccess() {
+            throw RecorderError.permissionDenied("Allow CursorLens in System Settings > Privacy & Security > Screen Recording, then relaunch the app.")
+        }
+
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         let resolved = try resolveSource(from: content)
 
@@ -642,7 +681,7 @@ final class SCKRecorder {
             try await stream.startCapture()
         } catch {
             cameraProvider?.stop()
-            throw error
+            throw mapStreamStartError(error, sourceKind: resolved.sourceKind)
         }
 
         self.writer = writer
@@ -670,8 +709,10 @@ final class SCKRecorder {
     private func resolveSource(from content: SCShareableContent) throws -> (filter: SCContentFilter, width: Int, height: Int, sourceKind: String) {
         if let sourceId = args.sourceId, sourceId.hasPrefix("window:"),
            let numericPart = sourceId.split(separator: ":").dropFirst().first,
-           let windowId = UInt32(numericPart),
-           let window = content.windows.first(where: { $0.windowID == windowId }) {
+           let windowId = UInt32(numericPart) {
+            guard let window = content.windows.first(where: { $0.windowID == windowId }) else {
+                throw RecorderError.windowNotFound("The selected window is no longer on-screen (it may be minimized, closed, or moved to another Space).")
+            }
             let width = max(2, forceEven(args.targetWidth ?? Int(window.frame.width)))
             let height = max(2, forceEven(args.targetHeight ?? Int(window.frame.height)))
             return (
@@ -704,6 +745,29 @@ final class SCKRecorder {
         )
     }
 
+    private func mapStreamStartError(_ error: Error, sourceKind: String) -> RecorderError {
+        let nsError = error as NSError
+        let localized = nsError.localizedDescription
+        let normalized = localized.lowercased()
+
+        if normalized.contains("not authorized") || normalized.contains("permission") || normalized.contains("denied") {
+            return .permissionDenied("Allow CursorLens in System Settings > Privacy & Security > Screen Recording, then relaunch the app.")
+        }
+
+        if sourceKind == "window" {
+            if normalized.contains("protected")
+                || normalized.contains("not shar")
+                || normalized.contains("cannot be captured")
+                || normalized.contains("secure")
+            {
+                return .windowCaptureDenied("macOS marked this window as protected content and blocked capture.")
+            }
+            return .windowCaptureDenied("The selected window failed to start capture. Keep the window visible and try again.")
+        }
+
+        return .streamStartFailed(localized)
+    }
+
     private func forceEven(_ value: Int) -> Int {
         value % 2 == 0 ? value : value - 1
     }
@@ -732,7 +796,11 @@ struct NativeRecorderMain {
             fflush(stdout)
             exit(0)
         } catch {
-            fputs("SCK_RECORDER_ERROR \(error)\n", stderr)
+            if let recorderError = error as? RecorderError {
+                fputs("SCK_RECORDER_ERROR code=\(recorderError.code) message=\(recorderError)\n", stderr)
+            } else {
+                fputs("SCK_RECORDER_ERROR code=unknown message=\(error)\n", stderr)
+            }
             fflush(stderr)
             exit(1)
         }

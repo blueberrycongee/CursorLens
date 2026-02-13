@@ -71,6 +71,7 @@ interface Window {
       height?: number
     }) => Promise<{
       success: boolean
+      code?: string
       message?: string
       width?: number
       height?: number

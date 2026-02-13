@@ -631,6 +631,34 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
       const platform = await window.electronAPI.getPlatform();
       const shouldUseNativeRecorder = platform === "darwin";
 
+      const resolveNativeStartFailureMessage = (
+        code?: string,
+        fallbackMessage?: string,
+        sourceId?: string,
+      ): string => {
+        const isWindowSource = typeof sourceId === "string" && sourceId.startsWith("window:");
+        switch (code) {
+          case "permission_denied":
+            return "Screen Recording permission is not granted. Open System Settings > Privacy & Security > Screen Recording, allow CursorLens, then relaunch the app.";
+          case "window_not_found":
+            return "The selected window is no longer available (it may be minimized, closed, or moved to another Space). Keep the window on-screen and try again.";
+          case "window_capture_denied":
+            return "macOS blocked capture for this window (protected/secure content). Select a different window that allows capture.";
+          case "source_not_found":
+            return isWindowSource
+              ? "The selected window source is invalid. Re-select the window and try again."
+              : "The selected capture source is invalid. Re-select a source and try again.";
+          case "stream_start_failed":
+            return isWindowSource
+              ? "Failed to start capture for the selected window. Keep the window visible and try again."
+              : "Failed to start screen capture. Re-select the source and try again.";
+          default:
+            return fallbackMessage && fallbackMessage.trim().length > 0
+              ? fallbackMessage
+              : "Failed to start native screen recorder.";
+        }
+      };
+
       if (shouldUseNativeRecorder) {
         const sourceRef = {
           id: typeof selectedSource.id === "string" ? selectedSource.id : undefined,
@@ -656,7 +684,17 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
         }
 
         if (!nativeStart.success) {
-          throw new Error(nativeStart.message ?? "Failed to start native ScreenCaptureKit recorder.");
+          const userMessage = resolveNativeStartFailureMessage(
+            nativeStart.code,
+            nativeStart.message,
+            sourceRef.id,
+          );
+          console.error("Native ScreenCaptureKit recorder start failed.", {
+            code: nativeStart.code,
+            message: nativeStart.message,
+            sourceId: sourceRef.id,
+          });
+          throw new Error(userMessage);
         }
 
         const nativeWidth = Math.max(2, Math.round(nativeStart.width ?? 1920));

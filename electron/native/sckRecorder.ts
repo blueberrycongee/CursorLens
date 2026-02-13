@@ -39,6 +39,11 @@ type RecorderReadyInfo = {
   sourceKind: 'display' | 'window' | 'unknown'
 }
 
+type RecorderHelperErrorInfo = {
+  code: string
+  message: string
+}
+
 type ActiveNativeRecorderSession = {
   process: ChildProcess
   outputPath: string
@@ -95,6 +100,15 @@ function parseReadyLine(line: string): RecorderReadyInfo | null {
     height: Math.max(2, Math.round(height)),
     frameRate: Math.max(1, Math.round(frameRate)),
     sourceKind,
+  }
+}
+
+function parseHelperErrorLine(line: string): RecorderHelperErrorInfo | null {
+  const match = /^SCK_RECORDER_ERROR\s+code=([a-z0-9_-]+)\s+message=(.+)$/i.exec(line)
+  if (!match) return null
+  return {
+    code: String(match[1]).toLowerCase(),
+    message: String(match[2]).trim(),
   }
 }
 
@@ -212,6 +226,7 @@ export function forceTerminateNativeMacRecorder(): void {
 
 export async function startNativeMacRecorder(options: NativeRecorderStartOptions): Promise<{
   success: boolean
+  code?: string
   message?: string
   ready?: RecorderReadyInfo
 }> {
@@ -262,6 +277,7 @@ export async function startNativeMacRecorder(options: NativeRecorderStartOptions
 
     let readyInfo: RecorderReadyInfo | null = null
     let stderrBuffer = ''
+    let helperError: RecorderHelperErrorInfo | null = null
 
     const cleanupStdout = collectLines(helperProcess.stdout, (line) => {
       const maybeReady = parseReadyLine(line)
@@ -275,6 +291,10 @@ export async function startNativeMacRecorder(options: NativeRecorderStartOptions
 
     const cleanupStderr = collectLines(helperProcess.stderr, (line) => {
       stderrBuffer += `${line}\n`
+      const parsed = parseHelperErrorLine(line)
+      if (parsed) {
+        helperError = parsed
+      }
       console.error(`[sck-recorder] ${line}`)
     })
 
@@ -308,8 +328,10 @@ export async function startNativeMacRecorder(options: NativeRecorderStartOptions
       cleanupStdout()
       cleanupStderr()
       const exit = await exitPromise
-      const reason = stderrBuffer.trim() || `Helper exited before ready (code=${exit.code ?? 'null'}, signal=${exit.signal ?? 'none'})`
-      return { success: false, message: reason }
+      const reason = helperError?.message
+        || stderrBuffer.trim()
+        || `Helper exited before ready (code=${exit.code ?? 'null'}, signal=${exit.signal ?? 'none'})`
+      return { success: false, code: helperError?.code, message: reason }
     }
 
     activeSession = {
@@ -334,6 +356,7 @@ export async function startNativeMacRecorder(options: NativeRecorderStartOptions
   } catch (error) {
     return {
       success: false,
+      code: 'start_exception',
       message: error instanceof Error ? error.message : String(error),
     }
   }

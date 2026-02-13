@@ -670,6 +670,7 @@ export function registerIpcHandlers(
       if (!result.success || !result.ready) {
         return {
           success: false,
+          code: result.code,
           message: result.message ?? 'Failed to start native ScreenCaptureKit recorder.',
         }
       }
