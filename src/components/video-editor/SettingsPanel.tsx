@@ -9,7 +9,7 @@ import { useState } from "react";
 import Block from '@uiw/react-color-block';
 import { Trash2, Download, Crop, X, Bug, Upload, Star, Film, Image, Sparkles, Palette } from "lucide-react";
 import { toast } from "sonner";
-import type { ZoomDepth, CropRegion, AnnotationRegion, AnnotationType } from "./types";
+import type { ZoomDepth, CropRegion, AnnotationRegion, AnnotationType, FigureData } from "./types";
 import { CropControl } from "./CropControl";
 import { KeyboardShortcutsHelp } from "./KeyboardShortcutsHelp";
 import { AnnotationSettingsPanel } from "./AnnotationSettingsPanel";
@@ -90,7 +90,7 @@ interface SettingsPanelProps {
   onAnnotationContentChange?: (id: string, content: string) => void;
   onAnnotationTypeChange?: (id: string, type: AnnotationType) => void;
   onAnnotationStyleChange?: (id: string, style: Partial<AnnotationRegion['style']>) => void;
-  onAnnotationFigureDataChange?: (id: string, figureData: unknown) => void;
+  onAnnotationFigureDataChange?: (id: string, figureData: FigureData) => void;
   onAnnotationDelete?: (id: string) => void;
   hasAudioTrack?: boolean;
   audioEnabled?: boolean;
