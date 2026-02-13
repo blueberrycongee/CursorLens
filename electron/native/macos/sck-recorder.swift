@@ -622,17 +622,19 @@ final class SCKRecorder {
     private var stream: SCStream?
     private var writer: ScreenStreamWriter?
     private var cameraProvider: CameraCaptureProvider?
+    private let permissionGuidance = "Allow CursorLens in System Settings > Privacy & Security > Screen Recording, then relaunch the app."
 
     init(args: RecorderArguments) {
         self.args = args
     }
 
     func start() async throws -> (width: Int, height: Int, sourceKind: String) {
-        if !CGPreflightScreenCaptureAccess() {
-            throw RecorderError.permissionDenied("Allow CursorLens in System Settings > Privacy & Security > Screen Recording, then relaunch the app.")
+        let content: SCShareableContent
+        do {
+            content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+        } catch {
+            throw mapShareableContentError(error)
         }
-
-        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         let resolved = try resolveSource(from: content)
 
         let outputURL = URL(fileURLWithPath: args.outputPath)
@@ -751,7 +753,7 @@ final class SCKRecorder {
         let normalized = localized.lowercased()
 
         if normalized.contains("not authorized") || normalized.contains("permission") || normalized.contains("denied") {
-            return .permissionDenied("Allow CursorLens in System Settings > Privacy & Security > Screen Recording, then relaunch the app.")
+            return .permissionDenied(permissionGuidance)
         }
 
         if sourceKind == "window" {
@@ -766,6 +768,18 @@ final class SCKRecorder {
         }
 
         return .streamStartFailed(localized)
+    }
+
+    private func mapShareableContentError(_ error: Error) -> RecorderError {
+        let nsError = error as NSError
+        let localized = nsError.localizedDescription
+        let normalized = localized.lowercased()
+
+        if normalized.contains("not authorized") || normalized.contains("permission") || normalized.contains("denied") {
+            return .permissionDenied(permissionGuidance)
+        }
+
+        return .streamStartFailed("Failed to enumerate shareable content: \(localized)")
     }
 
     private func forceEven(_ value: Int) -> Int {
