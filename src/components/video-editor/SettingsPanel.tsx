@@ -94,6 +94,8 @@ interface SettingsPanelProps {
   onAnnotationDelete?: (id: string) => void;
   cursorStyle?: CursorStyleConfig;
   onCursorStyleChange?: (style: CursorStyleConfig) => void;
+  hideCapturedSystemCursor?: boolean;
+  onHideCapturedSystemCursorChange?: (hidden: boolean) => void;
 }
 
 export default SettingsPanel;
@@ -151,6 +153,8 @@ export function SettingsPanel({
   onAnnotationDelete,
   cursorStyle = DEFAULT_CURSOR_STYLE,
   onCursorStyleChange,
+  hideCapturedSystemCursor = false,
+  onHideCapturedSystemCursorChange,
 }: SettingsPanelProps) {
   const { t } = useI18n();
   const [wallpaperPaths, setWallpaperPaths] = useState<string[]>([]);
@@ -375,6 +379,14 @@ export function SettingsPanel({
                   <Switch
                     checked={cursorStyle.enabled}
                     onCheckedChange={(enabled) => updateCursorStyle({ enabled })}
+                    className="data-[state=checked]:bg-[#34B27B] scale-90"
+                  />
+                </div>
+                <div className="flex items-center justify-between p-1.5 rounded-md bg-black/20 border border-white/5 mb-2">
+                  <div className="text-[10px] text-slate-300">{t("settings.hideCapturedCursor")}</div>
+                  <Switch
+                    checked={hideCapturedSystemCursor}
+                    onCheckedChange={onHideCapturedSystemCursorChange}
                     className="data-[state=checked]:bg-[#34B27B] scale-90"
                   />
                 </div>

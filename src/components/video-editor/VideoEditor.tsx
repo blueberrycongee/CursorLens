@@ -148,7 +148,17 @@ function parseSystemCursorMode(input: unknown): 'always' | 'never' | undefined {
   return undefined;
 }
 
+const EDITOR_HIDE_CURSOR_STORAGE_KEY = "openscreen.editor.hideCapturedSystemCursor";
+
 function readLastSystemCursorHiddenPreference(): boolean {
+  try {
+    const editorPreference = window.localStorage.getItem(EDITOR_HIDE_CURSOR_STORAGE_KEY);
+    if (editorPreference === "1") return true;
+    if (editorPreference === "0") return false;
+  } catch {
+    // ignore localStorage errors
+  }
+
   try {
     const raw = window.localStorage.getItem("openscreen.recordSystemCursor");
     if (raw === "0") return true;
@@ -193,7 +203,7 @@ export default function VideoEditor() {
   const [sourceFrameRate, setSourceFrameRate] = useState<number | undefined>(undefined);
   const [cursorTrack, setCursorTrack] = useState<CursorTrack | null>(null);
   const [cursorStyle, setCursorStyle] = useState<CursorStyleConfig>(DEFAULT_CURSOR_STYLE);
-  const [hideCapturedSystemCursor, setHideCapturedSystemCursor] = useState(false);
+  const [hideCapturedSystemCursor, setHideCapturedSystemCursor] = useState(readLastSystemCursorHiddenPreference);
 
   const videoPlaybackRef = useRef<VideoPlaybackRef>(null);
   const nextZoomIdRef = useRef(1);
@@ -259,6 +269,14 @@ export default function VideoEditor() {
     }
     loadVideo();
   }, [t]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(EDITOR_HIDE_CURSOR_STORAGE_KEY, hideCapturedSystemCursor ? "1" : "0");
+    } catch {
+      // ignore localStorage errors
+    }
+  }, [hideCapturedSystemCursor]);
 
   // Initialize default wallpaper with resolved asset path
   useEffect(() => {
@@ -1042,6 +1060,8 @@ export default function VideoEditor() {
           onAnnotationDelete={handleAnnotationDelete}
           cursorStyle={cursorStyle}
           onCursorStyleChange={setCursorStyle}
+          hideCapturedSystemCursor={hideCapturedSystemCursor}
+          onHideCapturedSystemCursorChange={setHideCapturedSystemCursor}
         />
       </div>
 
