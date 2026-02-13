@@ -5,12 +5,13 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build && electron-builder",
+    "build:native": "node scripts/build-native-macos-helper.mjs",
+    "build": "npm run build:native && tsc && vite build && electron-builder",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview",
-    "build:mac": "tsc && vite build && electron-builder --mac",
-    "build:win": "tsc && vite build && electron-builder --win",
-    "build:linux": "tsc && vite build && electron-builder --linux",
+    "build:mac": "npm run build:native && tsc && vite build && electron-builder --mac",
+    "build:win": "npm run build:native && tsc && vite build && electron-builder --win",
+    "build:linux": "npm run build:native && tsc && vite build && electron-builder --linux",
     "test": "vitest --run",
     "test:watch": "vitest"
   },

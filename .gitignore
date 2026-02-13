@@ -27,3 +27,5 @@ thirdparty/
 .codex/
 *.kiro/
 # npx electron-builder --mac --win
+electron/native/bin/*
+!electron/native/bin/.gitkeep

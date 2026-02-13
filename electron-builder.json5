@@ -24,6 +24,10 @@
     {
       "from": "public/wallpapers",
       "to": "assets/wallpapers"
+    },
+    {
+      "from": "electron/native/bin/sck-recorder",
+      "to": "native/sck-recorder"
     }
   ],
 
