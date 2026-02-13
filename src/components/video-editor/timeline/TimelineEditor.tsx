@@ -25,6 +25,7 @@ import { useI18n } from "@/i18n";
 const ZOOM_ROW_ID = "row-zoom";
 const TRIM_ROW_ID = "row-trim";
 const ANNOTATION_ROW_ID = "row-annotation";
+const AUDIO_ROW_ID = "row-audio";
 const FALLBACK_RANGE_MS = 1000;
 const TARGET_MARKER_COUNT = 12;
 
@@ -52,6 +53,9 @@ interface TimelineEditorProps {
   onSelectAnnotation?: (id: string | null) => void;
   aspectRatio: AspectRatio;
   onAspectRatioChange: (aspectRatio: AspectRatio) => void;
+  hasAudioTrack?: boolean;
+  audioEnabled?: boolean;
+  audioGain?: number;
 }
 
 interface TimelineScaleConfig {
@@ -387,6 +391,9 @@ function Timeline({
   selectedZoomId,
   selectedTrimId,
   selectedAnnotationId,
+  hasAudioTrack,
+  audioEnabled,
+  audioGain,
   keyframes = [],
 }: {
   items: TimelineRenderItem[];
@@ -400,8 +407,12 @@ function Timeline({
   selectedZoomId: string | null;
   selectedTrimId?: string | null;
   selectedAnnotationId?: string | null;
+  hasAudioTrack: boolean;
+  audioEnabled: boolean;
+  audioGain: number;
   keyframes?: { id: string; time: number }[];
 }) {
+  const { t } = useI18n();
   const { setTimelineRef, style, sidebarWidth, range, pixelsToValue } = useTimelineContext();
   const localTimelineRef = useRef<HTMLDivElement | null>(null);
 
@@ -500,6 +511,28 @@ function Timeline({
           </Item>
         ))}
       </Row>
+
+      <Row id={AUDIO_ROW_ID}>
+        <div className="h-10 w-full px-2 flex items-center">
+          <div
+            className={cn(
+              "w-full h-8 rounded-lg border px-3 flex items-center justify-between",
+              hasAudioTrack
+                ? "border-[#34B27B]/30 bg-[linear-gradient(90deg,rgba(52,178,123,0.18),rgba(52,178,123,0.06))]"
+                : "border-white/10 bg-white/5",
+            )}
+          >
+            <span className="text-[10px] font-medium text-slate-300 uppercase tracking-wide">{t("timeline.audio")}</span>
+            <span className="text-[10px] text-slate-400 font-mono">
+              {!hasAudioTrack
+                ? t("timeline.audioUnavailable")
+                : audioEnabled
+                ? `${Math.round(audioGain * 100)}%`
+                : t("timeline.audioMuted")}
+            </span>
+          </div>
+        </div>
+      </Row>
     </div>
   );
 }
@@ -528,6 +561,9 @@ export default function TimelineEditor({
   onSelectAnnotation,
   aspectRatio,
   onAspectRatioChange,
+  hasAudioTrack = true,
+  audioEnabled = true,
+  audioGain = 1,
 }: TimelineEditorProps) {
   const { t } = useI18n();
   const totalMs = useMemo(() => Math.max(0, Math.round(videoDuration * 1000)), [videoDuration]);
@@ -984,6 +1020,9 @@ export default function TimelineEditor({
             selectedZoomId={selectedZoomId}
             selectedTrimId={selectedTrimId}
             selectedAnnotationId={selectedAnnotationId}
+            hasAudioTrack={hasAudioTrack}
+            audioEnabled={audioEnabled}
+            audioGain={audioGain}
             keyframes={keyframes}
           />
         </TimelineWrapper>

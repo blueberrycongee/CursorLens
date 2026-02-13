@@ -92,6 +92,11 @@ interface SettingsPanelProps {
   onAnnotationStyleChange?: (id: string, style: Partial<AnnotationRegion['style']>) => void;
   onAnnotationFigureDataChange?: (id: string, figureData: any) => void;
   onAnnotationDelete?: (id: string) => void;
+  hasAudioTrack?: boolean;
+  audioEnabled?: boolean;
+  onAudioEnabledChange?: (enabled: boolean) => void;
+  audioGain?: number;
+  onAudioGainChange?: (gain: number) => void;
   cursorStyle?: CursorStyleConfig;
   onCursorStyleChange?: (style: CursorStyleConfig) => void;
   hideCapturedSystemCursor?: boolean;
@@ -151,6 +156,11 @@ export function SettingsPanel({
   onAnnotationStyleChange,
   onAnnotationFigureDataChange,
   onAnnotationDelete,
+  hasAudioTrack = true,
+  audioEnabled = true,
+  onAudioEnabledChange,
+  audioGain = 1,
+  onAudioGainChange,
   cursorStyle = DEFAULT_CURSOR_STYLE,
   onCursorStyleChange,
   hideCapturedSystemCursor = false,
@@ -504,6 +514,36 @@ export function SettingsPanel({
               </div>
               
               <div className="grid grid-cols-2 gap-2">
+                <div className="col-span-2 rounded-lg bg-white/5 border border-white/5 p-2">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="text-[10px] font-medium text-slate-300">{t("settings.audioTrack")}</div>
+                    <Switch
+                      checked={hasAudioTrack && audioEnabled}
+                      disabled={!hasAudioTrack}
+                      onCheckedChange={onAudioEnabledChange}
+                      className="data-[state=checked]:bg-[#34B27B] scale-90 disabled:opacity-50"
+                    />
+                  </div>
+                  {hasAudioTrack ? (
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <div className="text-[10px] text-slate-400">{t("settings.audioVolume")}</div>
+                        <span className="text-[10px] text-slate-500 font-mono">{Math.round(audioGain * 100)}%</span>
+                      </div>
+                      <Slider
+                        value={[audioGain]}
+                        onValueChange={(values) => onAudioGainChange?.(values[0])}
+                        min={0}
+                        max={1}
+                        step={0.01}
+                        disabled={!audioEnabled}
+                        className="w-full [&_[role=slider]]:bg-[#34B27B] [&_[role=slider]]:border-[#34B27B] [&_[role=slider]]:h-3 [&_[role=slider]]:w-3 disabled:opacity-50"
+                      />
+                    </div>
+                  ) : (
+                    <div className="text-[10px] text-slate-500">{t("settings.audioTrackMissing")}</div>
+                  )}
+                </div>
                 <div className="p-2 rounded-lg bg-white/5 border border-white/5">
                   <div className="flex items-center justify-between mb-1">
                     <div className="text-[10px] font-medium text-slate-300">{t("settings.shadow")}</div>

@@ -210,6 +210,9 @@ export default function VideoEditor() {
   const [gifLoop, setGifLoop] = useState(true);
   const [gifSizePreset, setGifSizePreset] = useState<GifSizePreset>('medium');
   const [sourceFrameRate, setSourceFrameRate] = useState<number | undefined>(undefined);
+  const [sourceHasAudio, setSourceHasAudio] = useState(true);
+  const [audioEnabled, setAudioEnabled] = useState(true);
+  const [audioGain, setAudioGain] = useState(1);
   const [cursorTrack, setCursorTrack] = useState<CursorTrack | null>(null);
   const [cursorStyle, setCursorStyle] = useState<CursorStyleConfig>(DEFAULT_CURSOR_STYLE);
   const [hideCapturedSystemCursor, setHideCapturedSystemCursor] = useState(readLastSystemCursorHiddenPreference);
@@ -259,8 +262,16 @@ export default function VideoEditor() {
           const metadataWithCursor = result.metadata as {
             cursorTrack?: unknown;
             systemCursorMode?: unknown;
+            hasMicrophoneAudio?: unknown;
           } | undefined;
           setCursorTrack(normalizeCursorTrack(metadataWithCursor?.cursorTrack));
+          if (typeof metadataWithCursor?.hasMicrophoneAudio === "boolean") {
+            setSourceHasAudio(metadataWithCursor.hasMicrophoneAudio);
+            setAudioEnabled(metadataWithCursor.hasMicrophoneAudio);
+          } else {
+            setSourceHasAudio(true);
+            setAudioEnabled(true);
+          }
           const parsedMode = parseSystemCursorMode(metadataWithCursor?.systemCursorMode);
           if (parsedMode) {
             setHideCapturedSystemCursor(parsedMode === 'never');
@@ -286,6 +297,27 @@ export default function VideoEditor() {
       // ignore localStorage errors
     }
   }, [hideCapturedSystemCursor]);
+
+  useEffect(() => {
+    let rafId: number | null = null;
+    const applyAudioState = () => {
+      const video = videoPlaybackRef.current?.video;
+      if (!video) {
+        rafId = window.requestAnimationFrame(applyAudioState);
+        return;
+      }
+
+      video.muted = !sourceHasAudio || !audioEnabled;
+      video.volume = sourceHasAudio ? Math.max(0, Math.min(audioGain, 1)) : 0;
+    };
+
+    applyAudioState();
+    return () => {
+      if (rafId !== null) {
+        window.cancelAnimationFrame(rafId);
+      }
+    };
+  }, [audioEnabled, audioGain, sourceHasAudio, videoPath]);
 
   // Initialize default wallpaper with resolved asset path
   useEffect(() => {
@@ -803,6 +835,8 @@ export default function VideoEditor() {
           cursorTrack,
           cursorStyle,
           hideCapturedSystemCursor,
+          audioEnabled: sourceHasAudio && audioEnabled,
+          audioGain,
           onProgress: (progress: ExportProgress) => {
             setExportProgress(progress);
           },
@@ -848,7 +882,7 @@ export default function VideoEditor() {
       setShowExportDialog(false);
       setExportProgress(null);
     }
-  }, [videoPath, wallpaper, zoomRegions, trimRegions, shadowIntensity, showBlur, motionBlurEnabled, borderRadius, padding, cropRegion, annotationRegions, isPlaying, aspectRatio, exportQuality, locale, sourceFrameRate, cursorTrack, cursorStyle, hideCapturedSystemCursor, t]);
+  }, [videoPath, wallpaper, zoomRegions, trimRegions, shadowIntensity, showBlur, motionBlurEnabled, borderRadius, padding, cropRegion, annotationRegions, isPlaying, aspectRatio, exportQuality, locale, sourceFrameRate, sourceHasAudio, audioEnabled, audioGain, cursorTrack, cursorStyle, hideCapturedSystemCursor, t]);
 
   const handleOpenExportDialog = useCallback(() => {
     if (!videoPath) {
@@ -1013,6 +1047,9 @@ export default function VideoEditor() {
               onSelectAnnotation={handleSelectAnnotation}
               aspectRatio={aspectRatio}
               onAspectRatioChange={setAspectRatio}
+              hasAudioTrack={sourceHasAudio}
+              audioEnabled={audioEnabled}
+              audioGain={audioGain}
             />
               </div>
             </Panel>
@@ -1067,6 +1104,11 @@ export default function VideoEditor() {
           onAnnotationStyleChange={handleAnnotationStyleChange}
           onAnnotationFigureDataChange={handleAnnotationFigureDataChange}
           onAnnotationDelete={handleAnnotationDelete}
+          hasAudioTrack={sourceHasAudio}
+          audioEnabled={audioEnabled}
+          onAudioEnabledChange={setAudioEnabled}
+          audioGain={audioGain}
+          onAudioGainChange={setAudioGain}
           cursorStyle={cursorStyle}
           onCursorStyleChange={setCursorStyle}
           hideCapturedSystemCursor={hideCapturedSystemCursor}
