@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 import AVFoundation
 import CoreGraphics
 import CoreMedia
@@ -628,6 +629,7 @@ final class SCKRecorder {
         self.args = args
     }
 
+    @MainActor
     func start() async throws -> (width: Int, height: Int, sourceKind: String) {
         let content: SCShareableContent
         do {
@@ -789,11 +791,22 @@ final class SCKRecorder {
 
 @main
 struct NativeRecorderMain {
+    @MainActor
+    private static func initializeWindowCaptureRuntime() {
+        // Window-targeted SCContentFilter paths depend on an initialized CGS/AppKit runtime.
+        _ = NSApplication.shared
+        NSApp.setActivationPolicy(.prohibited)
+    }
+
     static func main() async {
         do {
             let args = try RecorderArguments.parse(from: CommandLine.arguments)
             guard #available(macOS 13.0, *) else {
                 throw RecorderError.invalidArguments("ScreenCaptureKit recorder requires macOS 13.0+")
+            }
+
+            await MainActor.run {
+                initializeWindowCaptureRuntime()
             }
 
             let recorder = SCKRecorder(args: args)
