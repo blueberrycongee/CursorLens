@@ -3,7 +3,12 @@ import { ipcMain, desktopCapturer, BrowserWindow, shell, app, dialog, screen } f
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { RECORDINGS_DIR } from '../main'
-import { startNativeMacRecorder, stopNativeMacRecorder } from '../native/sckRecorder'
+import {
+  forceTerminateNativeMacRecorder,
+  isNativeMacRecorderActive,
+  startNativeMacRecorder,
+  stopNativeMacRecorder,
+} from '../native/sckRecorder'
 import { getNativeCursorKind, startNativeCursorKindMonitor, stopNativeCursorKindMonitor } from '../native/cursorKindMonitor'
 import { getWindowBoundsById, parseWindowIdFromSourceId } from './windowBounds'
 import {
@@ -837,4 +842,25 @@ export function registerIpcHandlers(
   ipcMain.handle('get-platform', () => {
     return process.platform;
   });
+
+  const shutdown = async (): Promise<void> => {
+    try {
+      stopCursorTracker()
+
+      if (isNativeMacRecorderActive()) {
+        const result = await stopNativeMacRecorder()
+        if (!result.success) {
+          console.warn('[ipc] native recorder stop during shutdown reported failure:', result.message)
+          forceTerminateNativeMacRecorder()
+        }
+      }
+    } catch (error) {
+      console.warn('[ipc] failed to shutdown capture resources cleanly:', error)
+      forceTerminateNativeMacRecorder()
+    }
+  }
+
+  return {
+    shutdown,
+  }
 }

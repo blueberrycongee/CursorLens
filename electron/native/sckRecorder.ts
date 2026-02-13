@@ -166,6 +166,26 @@ export function isNativeMacRecorderActive(): boolean {
   return Boolean(activeSession)
 }
 
+export function forceTerminateNativeMacRecorder(): void {
+  const session = activeSession
+  activeSession = null
+  if (!session) return
+
+  try {
+    session.process.kill('SIGTERM')
+  } catch {
+    // ignore process teardown errors
+  }
+
+  globalThis.setTimeout(() => {
+    try {
+      session.process.kill('SIGKILL')
+    } catch {
+      // ignore process teardown errors
+    }
+  }, 300)
+}
+
 export async function startNativeMacRecorder(options: NativeRecorderStartOptions): Promise<{
   success: boolean
   message?: string
@@ -307,26 +327,26 @@ export async function stopNativeMacRecorder(): Promise<NativeRecorderStopResult>
     }),
   ])
 
-  if (exitResult.code !== 0) {
+  let hasValidOutput = false
+  try {
+    const stat = await fs.stat(session.outputPath)
+    hasValidOutput = stat.isFile() && stat.size >= 1024
+  } catch {
+    hasValidOutput = false
+  }
+
+  if (!hasValidOutput) {
     return {
       success: false,
-      message: `Native recorder exited abnormally (code=${exitResult.code ?? 'null'}, signal=${exitResult.signal ?? 'none'})`,
+      message: 'Native recorder output file is missing or empty.',
     }
   }
 
-  try {
-    const stat = await fs.stat(session.outputPath)
-    if (!stat.isFile() || stat.size < 1024) {
-      return {
-        success: false,
-        message: 'Native recorder output file is missing or empty.',
-      }
-    }
-  } catch {
-    return {
-      success: false,
-      message: 'Native recorder output file was not found.',
-    }
+  const exitedCleanly = exitResult.code === 0
+  if (!exitedCleanly) {
+    console.warn(
+      `[sck-recorder] helper exited with non-zero status but produced output. code=${exitResult.code ?? 'null'} signal=${exitResult.signal ?? 'none'}`,
+    )
   }
 
   return {

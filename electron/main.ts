@@ -45,6 +45,9 @@ let sourceSelectorWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let selectedSourceName = ''
 let selectedDesktopSourceId: string | null = null
+let shutdownInProgress = false
+let shutdownFinished = false
+let ipcRuntime: { shutdown: () => Promise<void> } | null = null
 
 // Tray Icons
 const defaultTrayIcon = getTrayIcon('openscreen.png');
@@ -159,6 +162,37 @@ app.on('activate', () => {
   }
 })
 
+app.on('before-quit', (event) => {
+  if (shutdownFinished) {
+    return
+  }
+
+  event.preventDefault()
+  if (shutdownInProgress) {
+    return
+  }
+
+  shutdownInProgress = true
+
+  void (async () => {
+    try {
+      if (ipcRuntime) {
+        await Promise.race([
+          ipcRuntime.shutdown(),
+          new Promise<void>((resolve) => {
+            globalThis.setTimeout(resolve, 12_000)
+          }),
+        ])
+      }
+    } catch (error) {
+      console.warn('Failed to cleanly shutdown capture resources before quit:', error)
+    } finally {
+      shutdownFinished = true
+      app.quit()
+    }
+  })()
+})
+
 
 
 // Register all IPC handlers when app is ready
@@ -201,7 +235,7 @@ app.whenReady().then(async () => {
   // Ensure recordings directory exists
   await ensureRecordingsDir()
 
-  registerIpcHandlers(
+  ipcRuntime = registerIpcHandlers(
     createEditorWindowWrapper,
     createSourceSelectorWindowWrapper,
     () => mainWindow,
