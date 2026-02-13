@@ -277,7 +277,7 @@ export async function startNativeMacRecorder(options: NativeRecorderStartOptions
 
     let readyInfo: RecorderReadyInfo | null = null
     let stderrBuffer = ''
-    let helperError: RecorderHelperErrorInfo | null = null
+    const helperErrorRef: { current?: RecorderHelperErrorInfo } = {}
 
     const cleanupStdout = collectLines(helperProcess.stdout, (line) => {
       const maybeReady = parseReadyLine(line)
@@ -293,7 +293,7 @@ export async function startNativeMacRecorder(options: NativeRecorderStartOptions
       stderrBuffer += `${line}\n`
       const parsed = parseHelperErrorLine(line)
       if (parsed) {
-        helperError = parsed
+        helperErrorRef.current = parsed
       }
       console.error(`[sck-recorder] ${line}`)
     })
@@ -328,10 +328,10 @@ export async function startNativeMacRecorder(options: NativeRecorderStartOptions
       cleanupStdout()
       cleanupStderr()
       const exit = await exitPromise
-      const reason = helperError?.message
+      const reason = helperErrorRef.current?.message
         || stderrBuffer.trim()
         || `Helper exited before ready (code=${exit.code ?? 'null'}, signal=${exit.signal ?? 'none'})`
-      return { success: false, code: helperError?.code, message: reason }
+      return { success: false, code: helperErrorRef.current?.code, message: reason }
     }
 
     activeSession = {
