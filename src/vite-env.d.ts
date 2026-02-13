@@ -54,6 +54,33 @@ interface Window {
     }>
     getAssetBasePath: () => Promise<string | null>
     setRecordingState: (recording: boolean) => Promise<void>
+    startNativeScreenRecording: (options?: {
+      source?: { id?: string; display_id?: string | number | null }
+      cursorMode?: 'always' | 'never'
+      frameRate?: number
+      width?: number
+      height?: number
+    }) => Promise<{
+      success: boolean
+      message?: string
+      width?: number
+      height?: number
+      frameRate?: number
+      sourceKind?: 'display' | 'window' | 'unknown'
+    }>
+    stopNativeScreenRecording: () => Promise<{
+      success: boolean
+      path?: string
+      message?: string
+      metadata?: {
+        frameRate?: number
+        width?: number
+        height?: number
+        mimeType?: string
+        capturedAt?: number
+        systemCursorMode?: 'always' | 'never'
+      }
+    }>
     startCursorTracking: (options?: {
       source?: { id?: string; display_id?: string | number | null }
       captureSize?: { width?: number; height?: number }

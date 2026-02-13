@@ -3,6 +3,7 @@ import { ipcMain, desktopCapturer, BrowserWindow, shell, app, dialog, screen } f
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { RECORDINGS_DIR } from '../main'
+import { startNativeMacRecorder, stopNativeMacRecorder } from '../native/sckRecorder'
 import { getWindowBoundsById, parseWindowIdFromSourceId } from './windowBounds'
 import {
   isPointInsideBounds,
@@ -62,6 +63,14 @@ type CursorTrackerStartOptions = {
     width?: number
     height?: number
   } | null
+}
+
+type NativeRecorderStartOptions = {
+  source?: CaptureSourceRef | SelectedSource | null
+  cursorMode?: 'always' | 'never'
+  frameRate?: number
+  width?: number
+  height?: number
 }
 
 type CursorTrackerRuntime = {
@@ -606,6 +615,68 @@ export function registerIpcHandlers(
     const sourceName = selectedSource?.name || 'Screen'
     if (onRecordingStateChange) {
       onRecordingStateChange(recording, sourceName)
+    }
+  })
+
+  ipcMain.handle('native-screen-recorder-start', async (_, options?: NativeRecorderStartOptions) => {
+    try {
+      if (process.platform !== 'darwin') {
+        return { success: false, message: 'Native ScreenCaptureKit recorder is only supported on macOS.' }
+      }
+
+      const sourceRef = normalizeSourceRef(options?.source) ?? normalizeSourceRef(selectedSource)
+      const cursorMode = options?.cursorMode === 'never' ? 'never' : 'always'
+      const frameRate = Number.isFinite(options?.frameRate) ? Number(options?.frameRate) : 60
+      const width = Number.isFinite(options?.width) ? Number(options?.width) : undefined
+      const height = Number.isFinite(options?.height) ? Number(options?.height) : undefined
+      const outputPath = path.join(RECORDINGS_DIR, `recording-${Date.now()}.mp4`)
+
+      const result = await startNativeMacRecorder({
+        outputPath,
+        sourceId: typeof sourceRef?.id === 'string' ? sourceRef.id : undefined,
+        displayId: sourceRef?.display_id ? String(sourceRef.display_id) : undefined,
+        cursorMode,
+        frameRate,
+        width,
+        height,
+      })
+
+      if (!result.success || !result.ready) {
+        return {
+          success: false,
+          message: result.message ?? 'Failed to start native ScreenCaptureKit recorder.',
+        }
+      }
+
+      const sourceName = selectedSource?.name || 'Screen'
+      onRecordingStateChange?.(true, sourceName)
+
+      return {
+        success: true,
+        width: result.ready.width,
+        height: result.ready.height,
+        frameRate: result.ready.frameRate,
+        sourceKind: result.ready.sourceKind,
+      }
+    } catch (error) {
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : String(error),
+      }
+    }
+  })
+
+  ipcMain.handle('native-screen-recorder-stop', async () => {
+    try {
+      const result = await stopNativeMacRecorder()
+      const sourceName = selectedSource?.name || 'Screen'
+      onRecordingStateChange?.(false, sourceName)
+      return result
+    } catch (error) {
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : String(error),
+      }
     }
   })
 

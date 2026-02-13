@@ -52,6 +52,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setRecordingState: (recording: boolean) => {
     return ipcRenderer.invoke('set-recording-state', recording)
   },
+  startNativeScreenRecording: (options?: {
+    source?: { id?: string; display_id?: string | number | null }
+    cursorMode?: 'always' | 'never'
+    frameRate?: number
+    width?: number
+    height?: number
+  }) => {
+    return ipcRenderer.invoke('native-screen-recorder-start', options)
+  },
+  stopNativeScreenRecording: () => {
+    return ipcRenderer.invoke('native-screen-recorder-stop')
+  },
   startCursorTracking: (options?: {
     source?: { id?: string; display_id?: string | number | null }
     captureSize?: { width?: number; height?: number }
