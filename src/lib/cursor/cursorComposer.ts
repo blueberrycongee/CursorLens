@@ -3,6 +3,7 @@ import { DEFAULT_FOCUS } from '@/components/video-editor/videoPlayback/constants
 import { findDominantRegion } from '@/components/video-editor/videoPlayback/zoomRegionUtils';
 import {
   DEFAULT_CURSOR_STYLE,
+  type CursorKind,
   type CursorResolvedState,
   type CursorResolveParams,
   type CursorSample,
@@ -12,7 +13,10 @@ import {
 } from './types';
 
 const CLICK_PULSE_MS = 420;
-const CURSOR_GLYPH_HOTSPOT = { x: -4, y: -8 };
+const CURSOR_GLYPH_HOTSPOT: Record<CursorKind, { x: number; y: number }> = {
+  arrow: { x: -4, y: -8 },
+  ibeam: { x: 0, y: 0 },
+};
 
 function clamp01(value: number): number {
   if (!Number.isFinite(value)) return 0;
@@ -49,6 +53,10 @@ function normalizeCursorStyle(input?: Partial<CursorStyleConfig>): CursorStyleCo
 
 function sampleIsVisible(sample: CursorSample): boolean {
   return sample.visible !== false;
+}
+
+function sampleCursorKind(sample: CursorSample): CursorKind {
+  return sample.cursorKind === 'ibeam' ? 'ibeam' : 'arrow';
 }
 
 function getFallbackFocus(timeMs: number, zoomRegions?: ZoomRegion[], fallbackFocus?: ZoomFocus): ZoomFocus {
@@ -111,7 +119,10 @@ function findSurroundingSamples(samples: CursorSample[], timeMs: number): {
   return { prev, next, alpha };
 }
 
-function interpolateFromTrack(samples: CursorSample[], timeMs: number): { x: number; y: number; visible: boolean } | null {
+function interpolateFromTrack(
+  samples: CursorSample[],
+  timeMs: number,
+): { x: number; y: number; visible: boolean; cursorKind: CursorKind } | null {
   const surrounding = findSurroundingSamples(samples, timeMs);
   if (!surrounding) return null;
 
@@ -119,15 +130,21 @@ function interpolateFromTrack(samples: CursorSample[], timeMs: number): { x: num
   const x = lerp(prev.x, next.x, alpha);
   const y = lerp(prev.y, next.y, alpha);
   const visible = sampleIsVisible(prev) || sampleIsVisible(next);
+  const cursorKind = alpha < 0.5 ? sampleCursorKind(prev) : sampleCursorKind(next);
 
   return {
     x: clamp01(x),
     y: clamp01(y),
     visible,
+    cursorKind,
   };
 }
 
-function smoothFromTrack(samples: CursorSample[], timeMs: number, windowMs: number): { x: number; y: number; visible: boolean } | null {
+function smoothFromTrack(
+  samples: CursorSample[],
+  timeMs: number,
+  windowMs: number,
+): { x: number; y: number; visible: boolean; cursorKind: CursorKind } | null {
   if (windowMs <= 0 || samples.length === 0) {
     return interpolateFromTrack(samples, timeMs);
   }
@@ -140,6 +157,8 @@ function smoothFromTrack(samples: CursorSample[], timeMs: number, windowMs: numb
   let sumY = 0;
   let weightSum = 0;
   let hasVisible = false;
+  let arrowWeight = 0;
+  let ibeamWeight = 0;
 
   for (const sample of samples) {
     if (sample.timeMs < start) continue;
@@ -151,6 +170,11 @@ function smoothFromTrack(samples: CursorSample[], timeMs: number, windowMs: numb
     sumY += sample.y * weight;
     weightSum += weight;
     hasVisible ||= sampleIsVisible(sample);
+    if (sampleCursorKind(sample) === 'ibeam') {
+      ibeamWeight += weight;
+    } else {
+      arrowWeight += weight;
+    }
   }
 
   if (weightSum <= 0.0001) {
@@ -161,6 +185,7 @@ function smoothFromTrack(samples: CursorSample[], timeMs: number, windowMs: numb
     x: clamp01(sumX / weightSum),
     y: clamp01(sumY / weightSum),
     visible: hasVisible,
+    cursorKind: ibeamWeight > arrowWeight ? 'ibeam' : 'arrow',
   };
 }
 
@@ -236,6 +261,7 @@ export function resolveCursorState(params: CursorResolveParams): CursorResolvedS
 
   const clickPulse = resolveClickPulse(sampleTimeMs, collectClickTimes(params.track, params.zoomRegions));
   const clickAccent = easeOutCubic(clickPulse);
+  const cursorKind = fromTrack?.cursorKind ?? 'arrow';
 
   return {
     visible,
@@ -245,7 +271,7 @@ export function resolveCursorState(params: CursorResolveParams): CursorResolvedS
     highlightAlpha: style.highlight * (0.35 + clickAccent * 0.25),
     rippleScale: 1 + clickAccent * 1.8,
     rippleAlpha: style.ripple * clickPulse,
-    cursorKind: 'arrow',
+    cursorKind,
   };
 }
 
@@ -275,7 +301,7 @@ export function projectCursorToViewport(args: {
   return { x, y, inViewport };
 }
 
-function drawCursorGlyph(ctx: CanvasRenderingContext2D): void {
+function drawArrowCursorGlyph(ctx: CanvasRenderingContext2D): void {
   ctx.beginPath();
   ctx.moveTo(-4, -8);
   ctx.lineTo(13, 2);
@@ -293,6 +319,43 @@ function drawCursorGlyph(ctx: CanvasRenderingContext2D): void {
   ctx.stroke();
 }
 
+function drawIBeamCursorGlyph(ctx: CanvasRenderingContext2D): void {
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  ctx.strokeStyle = '#0f1218';
+  ctx.lineWidth = 4.2;
+  ctx.beginPath();
+  ctx.moveTo(0, -10);
+  ctx.lineTo(0, 10);
+  ctx.moveTo(-4.8, -10);
+  ctx.lineTo(4.8, -10);
+  ctx.moveTo(-4.8, 10);
+  ctx.lineTo(4.8, 10);
+  ctx.stroke();
+
+  ctx.strokeStyle = '#f7f9ff';
+  ctx.lineWidth = 2.4;
+  ctx.beginPath();
+  ctx.moveTo(0, -10);
+  ctx.lineTo(0, 10);
+  ctx.moveTo(-4.8, -10);
+  ctx.lineTo(4.8, -10);
+  ctx.moveTo(-4.8, 10);
+  ctx.lineTo(4.8, 10);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawCursorGlyph(ctx: CanvasRenderingContext2D, cursorKind: CursorKind): void {
+  if (cursorKind === 'ibeam') {
+    drawIBeamCursorGlyph(ctx);
+    return;
+  }
+  drawArrowCursorGlyph(ctx);
+}
+
 export function drawCompositedCursor(
   ctx: CanvasRenderingContext2D,
   point: { x: number; y: number },
@@ -305,6 +368,8 @@ export function drawCompositedCursor(
   const normalized = normalizeCursorStyle(style);
   const safeContentScale = Math.max(0.1, Math.min(8, Number.isFinite(contentScale) ? contentScale : 1));
   const scale = state.scale * safeContentScale;
+  const cursorKind: CursorKind = state.cursorKind === 'ibeam' ? 'ibeam' : 'arrow';
+  const cursorHotspot = CURSOR_GLYPH_HOTSPOT[cursorKind];
   const translatedX = point.x + normalized.offsetX;
   const translatedY = point.y + normalized.offsetY;
 
@@ -343,15 +408,15 @@ export function drawCompositedCursor(
     ctx.shadowOffsetX = 0;
     ctx.shadowOffsetY = 2 * scale;
     // Align OS hotspot with synthetic glyph tip to avoid visible drift versus source cursor.
-    ctx.translate(-CURSOR_GLYPH_HOTSPOT.x * scale, -CURSOR_GLYPH_HOTSPOT.y * scale);
+    ctx.translate(-cursorHotspot.x * scale, -cursorHotspot.y * scale);
     ctx.scale(scale, scale);
-    drawCursorGlyph(ctx);
+    drawCursorGlyph(ctx, cursorKind);
     ctx.restore();
   } else {
     ctx.save();
-    ctx.translate(-CURSOR_GLYPH_HOTSPOT.x * scale, -CURSOR_GLYPH_HOTSPOT.y * scale);
+    ctx.translate(-cursorHotspot.x * scale, -cursorHotspot.y * scale);
     ctx.scale(scale, scale);
-    drawCursorGlyph(ctx);
+    drawCursorGlyph(ctx, cursorKind);
     ctx.restore();
   }
 
@@ -454,5 +519,6 @@ export function normalizePointerSample(
     y: clamp01(screenHeight > 0 ? screenY / screenHeight : 0.5),
     click,
     visible: true,
+    cursorKind: 'arrow',
   };
 }

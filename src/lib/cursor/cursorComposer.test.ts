@@ -28,6 +28,25 @@ describe('cursorComposer', () => {
     expect(state.visible).toBe(true);
     expect(state.x).toBeCloseTo(0.2, 2);
     expect(state.y).toBeCloseTo(0.2, 2);
+    expect(state.cursorKind).toBe('arrow');
+  });
+
+  it('resolves ibeam cursor kind from recorded samples', () => {
+    const track: CursorTrack = {
+      source: 'recorded',
+      samples: [
+        { timeMs: 0, x: 0.2, y: 0.2, visible: true, cursorKind: 'arrow' },
+        { timeMs: 120, x: 0.3, y: 0.3, visible: true, cursorKind: 'ibeam' },
+      ],
+    };
+
+    const state = resolveCursorState({
+      timeMs: 100,
+      track,
+      style: { ...DEFAULT_CURSOR_STYLE, smoothingMs: 0 },
+    });
+
+    expect(state.cursorKind).toBe('ibeam');
   });
 
   it('uses fallback focus when no cursor track exists', () => {
@@ -180,6 +199,59 @@ describe('cursorComposer', () => {
     );
 
     expect(scaleCalls[0]).toEqual({ x: 2, y: 2 });
+  });
+
+  it('draws ibeam glyph with center hotspot alignment', () => {
+    const translateCalls: Array<{ x: number; y: number }> = [];
+    const moveCalls: Array<{ x: number; y: number }> = [];
+    const context = {
+      save: () => {},
+      restore: () => {},
+      translate: (x: number, y: number) => {
+        translateCalls.push({ x, y });
+      },
+      scale: () => {},
+      beginPath: () => {},
+      moveTo: (x: number, y: number) => {
+        moveCalls.push({ x, y });
+      },
+      lineTo: () => {},
+      closePath: () => {},
+      fill: () => {},
+      stroke: () => {},
+      arc: () => {},
+      set globalAlpha(_: number) {},
+      set fillStyle(_: string | CanvasGradient | CanvasPattern) {},
+      set strokeStyle(_: string | CanvasGradient | CanvasPattern) {},
+      set lineWidth(_: number) {},
+      set lineCap(_: CanvasLineCap) {},
+      set lineJoin(_: CanvasLineJoin) {},
+      set shadowColor(_: string) {},
+      set shadowBlur(_: number) {},
+      set shadowOffsetX(_: number) {},
+      set shadowOffsetY(_: number) {},
+    } as unknown as CanvasRenderingContext2D;
+
+    drawCompositedCursor(
+      context,
+      { x: 100, y: 60 },
+      {
+        visible: true,
+        x: 0.5,
+        y: 0.5,
+        scale: 1,
+        highlightAlpha: 0,
+        rippleScale: 1,
+        rippleAlpha: 0,
+        cursorKind: 'ibeam',
+      },
+      { ...DEFAULT_CURSOR_STYLE, shadow: 0 },
+    );
+
+    expect(translateCalls[0]).toEqual({ x: 100, y: 60 });
+    expect(translateCalls[1].x).toBeCloseTo(0, 6);
+    expect(translateCalls[1].y).toBeCloseTo(0, 6);
+    expect(moveCalls[0]).toEqual({ x: 0, y: -10 });
   });
 
   it('occludes captured cursor artifact by sampling nearby pixels', () => {
