@@ -18,7 +18,7 @@ import type { ExportQuality, ExportFormat, GifFrameRate, GifSizePreset } from "@
 import { GIF_FRAME_RATES, GIF_SIZE_PRESETS } from "@/lib/exporter";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { useI18n } from "@/i18n";
-import { DEFAULT_CURSOR_STYLE, type CursorStyleConfig } from "@/lib/cursor";
+import { DEFAULT_CURSOR_STYLE, type CursorMovementStyle, type CursorStyleConfig } from "@/lib/cursor";
 
 const WALLPAPER_COUNT = 18;
 const WALLPAPER_RELATIVE = Array.from({ length: WALLPAPER_COUNT }, (_, i) => `wallpapers/wallpaper${i + 1}.jpg`);
@@ -112,6 +112,17 @@ const ZOOM_DEPTH_OPTIONS: Array<{ depth: ZoomDepth; label: string }> = [
   { depth: 4, label: "2.2×" },
   { depth: 5, label: "3.5×" },
   { depth: 6, label: "5×" },
+];
+
+const CURSOR_MOVEMENT_PRESETS: Array<{
+  style: Exclude<CursorMovementStyle, "custom">;
+  smoothingMs: number;
+  labelKey: string;
+}> = [
+  { style: "rapid", smoothingMs: 0, labelKey: "settings.cursorMovementRapid" },
+  { style: "quick", smoothingMs: 36, labelKey: "settings.cursorMovementQuick" },
+  { style: "default", smoothingMs: 78, labelKey: "settings.cursorMovementDefault" },
+  { style: "slow", smoothingMs: 130, labelKey: "settings.cursorMovementSlow" },
 ];
 
 export function SettingsPanel({ 
@@ -215,6 +226,17 @@ export function SettingsPanel({
       ...patch,
     });
   };
+
+  const applyMovementPreset = (style: Exclude<CursorMovementStyle, "custom">) => {
+    const preset = CURSOR_MOVEMENT_PRESETS.find((item) => item.style === style);
+    if (!preset) return;
+    updateCursorStyle({
+      movementStyle: preset.style,
+      smoothingMs: preset.smoothingMs,
+    });
+  };
+
+  const activeMovementStyle: CursorMovementStyle = cursorStyle.movementStyle ?? "custom";
 
   const formatSignedPx = (value: number) => {
     const rounded = Math.round(value);
@@ -400,6 +422,103 @@ export function SettingsPanel({
                     className="data-[state=checked]:bg-[#34B27B] scale-90"
                   />
                 </div>
+                <div className="rounded-md bg-black/20 border border-white/5 p-2 mb-2 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="text-[10px] text-slate-300">{t("settings.cursorMovementStyle")}</div>
+                    <span className="text-[10px] text-slate-500">
+                      {activeMovementStyle === "custom"
+                        ? t("settings.cursorMovementCustom")
+                        : t(`settings.cursorMovement${activeMovementStyle.charAt(0).toUpperCase()}${activeMovementStyle.slice(1)}`)}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-4 gap-1">
+                    {CURSOR_MOVEMENT_PRESETS.map((preset) => (
+                      <Button
+                        key={preset.style}
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className={cn(
+                          "h-6 px-0 text-[10px] border transition-all",
+                          activeMovementStyle === preset.style
+                            ? "bg-[#34B27B]/20 border-[#34B27B]/40 text-[#9DF3CB] hover:bg-[#34B27B]/25"
+                            : "bg-white/5 border-white/10 text-slate-300 hover:bg-white/10 hover:text-white",
+                        )}
+                        onClick={() => applyMovementPreset(preset.style)}
+                      >
+                        {t(preset.labelKey)}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+                <div className="rounded-md bg-black/20 border border-white/5 p-2 mb-2 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="text-[10px] text-slate-300">{t("settings.cursorAutoHideStatic")}</div>
+                    <Switch
+                      checked={cursorStyle.autoHideStatic}
+                      onCheckedChange={(autoHideStatic) => updateCursorStyle({ autoHideStatic })}
+                      className="data-[state=checked]:bg-[#34B27B] scale-90"
+                    />
+                  </div>
+                  {cursorStyle.autoHideStatic && (
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <div className="text-[10px] text-slate-400">{t("settings.cursorStaticHideDelay")}</div>
+                          <span className="text-[10px] text-slate-500 font-mono">{Math.round(cursorStyle.staticHideDelayMs)}ms</span>
+                        </div>
+                        <Slider
+                          value={[cursorStyle.staticHideDelayMs]}
+                          onValueChange={(values) => updateCursorStyle({ staticHideDelayMs: values[0] })}
+                          min={0}
+                          max={4000}
+                          step={20}
+                          className="w-full [&_[role=slider]]:bg-[#34B27B] [&_[role=slider]]:border-[#34B27B] [&_[role=slider]]:h-3 [&_[role=slider]]:w-3"
+                        />
+                      </div>
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <div className="text-[10px] text-slate-400">{t("settings.cursorStaticHideFade")}</div>
+                          <span className="text-[10px] text-slate-500 font-mono">{Math.round(cursorStyle.staticHideFadeMs)}ms</span>
+                        </div>
+                        <Slider
+                          value={[cursorStyle.staticHideFadeMs]}
+                          onValueChange={(values) => updateCursorStyle({ staticHideFadeMs: values[0] })}
+                          min={40}
+                          max={1200}
+                          step={20}
+                          className="w-full [&_[role=slider]]:bg-[#34B27B] [&_[role=slider]]:border-[#34B27B] [&_[role=slider]]:h-3 [&_[role=slider]]:w-3"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+                <div className="rounded-md bg-black/20 border border-white/5 p-2 mb-2 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="text-[10px] text-slate-300">{t("settings.cursorLoopPosition")}</div>
+                    <Switch
+                      checked={cursorStyle.loopCursorPosition}
+                      onCheckedChange={(loopCursorPosition) => updateCursorStyle({ loopCursorPosition })}
+                      className="data-[state=checked]:bg-[#34B27B] scale-90"
+                    />
+                  </div>
+                  {cursorStyle.loopCursorPosition && (
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <div className="text-[10px] text-slate-400">{t("settings.cursorLoopBlend")}</div>
+                        <span className="text-[10px] text-slate-500 font-mono">{Math.round(cursorStyle.loopBlendMs)}ms</span>
+                      </div>
+                      <Slider
+                        value={[cursorStyle.loopBlendMs]}
+                        onValueChange={(values) => updateCursorStyle({ loopBlendMs: values[0] })}
+                        min={80}
+                        max={3000}
+                        step={20}
+                        className="w-full [&_[role=slider]]:bg-[#34B27B] [&_[role=slider]]:border-[#34B27B] [&_[role=slider]]:h-3 [&_[role=slider]]:w-3"
+                      />
+                    </div>
+                  )}
+                </div>
                 <div className="grid grid-cols-2 gap-2">
                   <div>
                     <div className="flex items-center justify-between mb-1">
@@ -450,7 +569,7 @@ export function SettingsPanel({
                     </div>
                     <Slider
                       value={[cursorStyle.smoothingMs]}
-                      onValueChange={(values) => updateCursorStyle({ smoothingMs: values[0] })}
+                      onValueChange={(values) => updateCursorStyle({ smoothingMs: values[0], movementStyle: "custom" })}
                       min={0}
                       max={200}
                       step={5}
