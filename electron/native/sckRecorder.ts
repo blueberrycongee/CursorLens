@@ -10,6 +10,9 @@ export type NativeRecorderStartOptions = {
   sourceId?: string
   displayId?: string
   cursorMode: NativeCursorMode
+  cameraEnabled?: boolean
+  cameraShape?: 'rounded' | 'square' | 'circle'
+  cameraSizePercent?: number
   frameRate: number
   width?: number
   height?: number
@@ -195,6 +198,12 @@ export async function startNativeMacRecorder(options: NativeRecorderStartOptions
     }
     if (options.height && options.height > 1) {
       args.push('--height', String(Math.round(options.height)))
+    }
+    if (options.cameraEnabled) {
+      args.push('--camera-enabled', '1')
+      args.push('--camera-shape', options.cameraShape ?? 'rounded')
+      const sizePercent = Math.max(14, Math.min(40, Math.round(options.cameraSizePercent ?? 22)))
+      args.push('--camera-size-percent', String(sizePercent))
     }
 
     const helperProcess = spawn(helperPath, args, {

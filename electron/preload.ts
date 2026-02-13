@@ -55,6 +55,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   startNativeScreenRecording: (options?: {
     source?: { id?: string; display_id?: string | number | null }
     cursorMode?: 'always' | 'never'
+    cameraEnabled?: boolean
+    cameraShape?: 'rounded' | 'square' | 'circle'
+    cameraSizePercent?: number
     frameRate?: number
     width?: number
     height?: number

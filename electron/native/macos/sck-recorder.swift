@@ -3,7 +3,22 @@ import AVFoundation
 import CoreGraphics
 import CoreMedia
 import CoreVideo
+import CoreImage
 import ScreenCaptureKit
+
+enum CameraOverlayShape: String {
+    case rounded
+    case square
+    case circle
+}
+
+struct OverlayRect {
+    let x: Int
+    let y: Int
+    let width: Int
+    let height: Int
+    let cornerRadius: Int
+}
 
 struct RecorderArguments {
     let outputPath: String
@@ -13,6 +28,9 @@ struct RecorderArguments {
     let fps: Int
     let targetWidth: Int?
     let targetHeight: Int?
+    let cameraEnabled: Bool
+    let cameraShape: CameraOverlayShape
+    let cameraSizePercent: Int
 
     static func parse(from argv: [String]) throws -> RecorderArguments {
         var outputPath: String?
@@ -22,6 +40,9 @@ struct RecorderArguments {
         var fps = 60
         var targetWidth: Int?
         var targetHeight: Int?
+        var cameraEnabled = false
+        var cameraShape: CameraOverlayShape = .rounded
+        var cameraSizePercent = 22
 
         var idx = 1
         while idx < argv.count {
@@ -58,6 +79,20 @@ struct RecorderArguments {
                     targetHeight = parsed
                 }
                 idx += 2
+            case "--camera-enabled":
+                guard let value = next else { throw RecorderError.invalidArguments("Missing --camera-enabled value") }
+                cameraEnabled = value == "1" || value.lowercased() == "true"
+                idx += 2
+            case "--camera-shape":
+                if let value = next, let shape = CameraOverlayShape(rawValue: value.lowercased()) {
+                    cameraShape = shape
+                }
+                idx += 2
+            case "--camera-size-percent":
+                if let value = next, let parsed = Int(value) {
+                    cameraSizePercent = parsed
+                }
+                idx += 2
             default:
                 idx += 1
             }
@@ -67,6 +102,8 @@ struct RecorderArguments {
             throw RecorderError.invalidArguments("--output is required")
         }
 
+        let clampedSizePercent = max(14, min(40, cameraSizePercent))
+
         return RecorderArguments(
             outputPath: outputPath,
             sourceId: sourceId,
@@ -74,7 +111,10 @@ struct RecorderArguments {
             hideCursor: hideCursor,
             fps: fps,
             targetWidth: targetWidth,
-            targetHeight: targetHeight
+            targetHeight: targetHeight,
+            cameraEnabled: cameraEnabled,
+            cameraShape: cameraShape,
+            cameraSizePercent: clampedSizePercent
         )
     }
 }
@@ -84,6 +124,7 @@ enum RecorderError: Error, CustomStringConvertible {
     case sourceNotFound(String)
     case streamNotStarted
     case writerFailed(String)
+    case cameraUnavailable(String)
 
     var description: String {
         switch self {
@@ -95,6 +136,8 @@ enum RecorderError: Error, CustomStringConvertible {
             return "Stream did not start"
         case let .writerFailed(message):
             return "Writer failed: \(message)"
+        case let .cameraUnavailable(message):
+            return "Camera unavailable: \(message)"
         }
     }
 }
@@ -124,14 +167,138 @@ final class StopSignal {
     }
 }
 
+final class CameraCaptureProvider: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
+    private static let virtualKeywords = [
+        "virtual",
+        "obs",
+        "continuity",
+        "desk view",
+        "presenter",
+        "iphone",
+        "epoccam",
+        "ndi",
+        "snap camera",
+    ]
+
+    private let session = AVCaptureSession()
+    private let outputQueue = DispatchQueue(label: "com.cursorlens.sck-recorder.camera-output")
+    private let storageQueue = DispatchQueue(label: "com.cursorlens.sck-recorder.camera-storage")
+    private var latestPixelBuffer: CVPixelBuffer?
+
+    func start() throws {
+        guard let device = selectCaptureDevice() else {
+            throw RecorderError.cameraUnavailable("No video input device available")
+        }
+
+        let input = try AVCaptureDeviceInput(device: device)
+        let output = AVCaptureVideoDataOutput()
+        output.videoSettings = [
+            kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA),
+        ]
+        output.alwaysDiscardsLateVideoFrames = true
+        output.setSampleBufferDelegate(self, queue: outputQueue)
+
+        session.beginConfiguration()
+        session.sessionPreset = .high
+
+        guard session.canAddInput(input) else {
+            session.commitConfiguration()
+            throw RecorderError.cameraUnavailable("Unable to attach camera input")
+        }
+        session.addInput(input)
+
+        guard session.canAddOutput(output) else {
+            session.commitConfiguration()
+            throw RecorderError.cameraUnavailable("Unable to attach camera output")
+        }
+        session.addOutput(output)
+
+        if let connection = output.connection(with: .video), connection.isVideoMirroringSupported {
+            connection.isVideoMirrored = false
+        }
+
+        session.commitConfiguration()
+        session.startRunning()
+    }
+
+    func stop() {
+        session.stopRunning()
+        storageQueue.sync {
+            latestPixelBuffer = nil
+        }
+    }
+
+    func copyLatestPixelBuffer() -> CVPixelBuffer? {
+        storageQueue.sync {
+            latestPixelBuffer
+        }
+    }
+
+    func captureOutput(
+        _ output: AVCaptureOutput,
+        didOutput sampleBuffer: CMSampleBuffer,
+        from connection: AVCaptureConnection
+    ) {
+        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+
+        storageQueue.sync {
+            latestPixelBuffer = pixelBuffer
+        }
+    }
+
+    private func selectCaptureDevice() -> AVCaptureDevice? {
+        var deviceTypes: [AVCaptureDevice.DeviceType] = [.builtInWideAngleCamera]
+        if #available(macOS 14.0, *) {
+            deviceTypes.append(.external)
+        } else {
+            deviceTypes.append(.externalUnknown)
+        }
+        let devices = AVCaptureDevice.DiscoverySession(
+            deviceTypes: deviceTypes,
+            mediaType: .video,
+            position: .unspecified
+        ).devices
+        guard !devices.isEmpty else { return nil }
+
+        let nonVirtual = devices.filter { device in
+            let label = device.localizedName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            return !Self.virtualKeywords.contains(where: { keyword in
+                label.contains(keyword)
+            })
+        }
+
+        return nonVirtual.first ?? devices.first
+    }
+}
+
 final class ScreenStreamWriter: NSObject, SCStreamOutput {
     private let writer: AVAssetWriter
     private let input: AVAssetWriterInput
     private let adaptor: AVAssetWriterInputPixelBufferAdaptor
+    private let ciContext = CIContext(options: [
+        CIContextOption.cacheIntermediates: false,
+    ])
+    private let colorSpace = CGColorSpaceCreateDeviceRGB()
+
+    private let videoWidth: Int
+    private let videoHeight: Int
+    private let cameraProvider: CameraCaptureProvider?
+    private let overlayRect: OverlayRect?
+    private let overlayMaskImage: CIImage?
+    private let overlayBorderImage: CIImage?
+
     private var firstPTS: CMTime?
     private(set) var frameCount = 0
 
-    init(outputURL: URL, width: Int, height: Int, fps: Int) throws {
+    init(
+        outputURL: URL,
+        width: Int,
+        height: Int,
+        fps: Int,
+        cameraProvider: CameraCaptureProvider?,
+        cameraShape: CameraOverlayShape,
+        cameraSizePercent: Int
+    ) throws {
         writer = try AVAssetWriter(outputURL: outputURL, fileType: .mp4)
         input = AVAssetWriterInput(
             mediaType: .video,
@@ -161,12 +328,32 @@ final class ScreenStreamWriter: NSObject, SCStreamOutput {
                 kCVPixelFormatOpenGLCompatibility as String: true,
             ]
         )
+
+        videoWidth = width
+        videoHeight = height
+        self.cameraProvider = cameraProvider
+
+        if cameraProvider != nil {
+            let overlay = Self.computeOverlayRect(
+                canvasWidth: width,
+                canvasHeight: height,
+                shape: cameraShape,
+                sizePercent: cameraSizePercent
+            )
+            overlayRect = overlay
+            overlayMaskImage = Self.buildMaskImage(canvasWidth: width, canvasHeight: height, overlay: overlay, shape: cameraShape)
+            overlayBorderImage = Self.buildBorderImage(canvasWidth: width, canvasHeight: height, overlay: overlay, shape: cameraShape)
+        } else {
+            overlayRect = nil
+            overlayMaskImage = nil
+            overlayBorderImage = nil
+        }
     }
 
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of outputType: SCStreamOutputType) {
         guard outputType == .screen else { return }
         guard CMSampleBufferDataIsReady(sampleBuffer) else { return }
-        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        guard let screenPixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
 
         let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
         if firstPTS == nil {
@@ -178,8 +365,15 @@ final class ScreenStreamWriter: NSObject, SCStreamOutput {
         guard let firstPTS else { return }
         guard input.isReadyForMoreMediaData else { return }
 
+        let outputPixelBuffer: CVPixelBuffer
+        if let composed = composeFrame(screenPixelBuffer: screenPixelBuffer) {
+            outputPixelBuffer = composed
+        } else {
+            outputPixelBuffer = screenPixelBuffer
+        }
+
         let relative = CMTimeSubtract(pts, firstPTS)
-        if adaptor.append(pixelBuffer, withPresentationTime: relative) {
+        if adaptor.append(outputPixelBuffer, withPresentationTime: relative) {
             frameCount += 1
         }
     }
@@ -198,6 +392,193 @@ final class ScreenStreamWriter: NSObject, SCStreamOutput {
             throw RecorderError.writerFailed("AVAssetWriter finished with status=\(writer.status.rawValue)")
         }
     }
+
+    private func composeFrame(screenPixelBuffer: CVPixelBuffer) -> CVPixelBuffer? {
+        guard cameraProvider != nil else { return nil }
+        guard let pool = adaptor.pixelBufferPool else { return nil }
+
+        var outputBuffer: CVPixelBuffer?
+        let poolResult = CVPixelBufferPoolCreatePixelBuffer(nil, pool, &outputBuffer)
+        guard poolResult == kCVReturnSuccess, let outputBuffer else {
+            return nil
+        }
+
+        var composed = CIImage(cvImageBuffer: screenPixelBuffer)
+
+        if
+            let cameraProvider,
+            let cameraPixelBuffer = cameraProvider.copyLatestPixelBuffer(),
+            let cameraImage = composeCameraImage(cameraPixelBuffer: cameraPixelBuffer)
+        {
+            if let overlayMaskImage {
+                composed = cameraImage.applyingFilter("CIBlendWithMask", parameters: [
+                    kCIInputBackgroundImageKey: composed,
+                    kCIInputMaskImageKey: overlayMaskImage,
+                ])
+            } else {
+                composed = cameraImage.composited(over: composed)
+            }
+
+            if let overlayBorderImage {
+                composed = overlayBorderImage.composited(over: composed)
+            }
+        }
+
+        ciContext.render(
+            composed,
+            to: outputBuffer,
+            bounds: CGRect(x: 0, y: 0, width: videoWidth, height: videoHeight),
+            colorSpace: colorSpace
+        )
+
+        return outputBuffer
+    }
+
+    private func composeCameraImage(cameraPixelBuffer: CVPixelBuffer) -> CIImage? {
+        guard let overlayRect else { return nil }
+
+        let targetRect = Self.convertToCISpace(overlayRect: overlayRect, canvasHeight: videoHeight)
+        let source = CIImage(cvImageBuffer: cameraPixelBuffer)
+        let sourceExtent = source.extent
+
+        guard sourceExtent.width > 1, sourceExtent.height > 1 else {
+            return nil
+        }
+
+        let sourceAspect = sourceExtent.width / sourceExtent.height
+        let targetAspect = targetRect.width / targetRect.height
+
+        var cropRect = sourceExtent
+        if sourceAspect > targetAspect {
+            let cropWidth = sourceExtent.height * targetAspect
+            cropRect.origin.x += (sourceExtent.width - cropWidth) / 2
+            cropRect.size.width = cropWidth
+        } else if sourceAspect < targetAspect {
+            let cropHeight = sourceExtent.width / targetAspect
+            cropRect.origin.y += (sourceExtent.height - cropHeight) / 2
+            cropRect.size.height = cropHeight
+        }
+
+        let cropped = source.cropped(to: cropRect)
+        let normalized = cropped.transformed(by: CGAffineTransform(translationX: -cropRect.origin.x, y: -cropRect.origin.y))
+        let scaled = normalized.transformed(by: CGAffineTransform(
+            scaleX: targetRect.width / cropRect.width,
+            y: targetRect.height / cropRect.height
+        ))
+
+        return scaled.transformed(by: CGAffineTransform(translationX: targetRect.origin.x, y: targetRect.origin.y))
+    }
+
+    private static func clamp(_ value: Int, min: Int, max: Int) -> Int {
+        Swift.max(min, Swift.min(max, value))
+    }
+
+    private static func computeOverlayRect(
+        canvasWidth: Int,
+        canvasHeight: Int,
+        shape: CameraOverlayShape,
+        sizePercent: Int
+    ) -> OverlayRect {
+        let clampedSizePercent = clamp(sizePercent, min: 14, max: 40)
+        let width = clamp(Int(round(Double(canvasWidth) * Double(clampedSizePercent) / 100.0)), min: 180, max: 560)
+        let height = shape == .rounded
+            ? Int(round(Double(width) * 9.0 / 16.0))
+            : width
+        let margin = clamp(Int(round(Double(canvasWidth) * 0.015)), min: 16, max: 36)
+        let cornerRadius = shape == .rounded
+            ? clamp(Int(round(Double(width) * 0.08)), min: 12, max: 26)
+            : 0
+
+        return OverlayRect(
+            x: canvasWidth - width - margin,
+            y: canvasHeight - height - margin,
+            width: width,
+            height: height,
+            cornerRadius: cornerRadius
+        )
+    }
+
+    private static func convertToCISpace(overlayRect: OverlayRect, canvasHeight: Int) -> CGRect {
+        CGRect(
+            x: CGFloat(overlayRect.x),
+            y: CGFloat(canvasHeight - overlayRect.y - overlayRect.height),
+            width: CGFloat(overlayRect.width),
+            height: CGFloat(overlayRect.height)
+        )
+    }
+
+    private static func createOverlayPath(rect: CGRect, shape: CameraOverlayShape, cornerRadius: CGFloat) -> CGPath {
+        switch shape {
+        case .square:
+            return CGPath(rect: rect, transform: nil)
+        case .circle:
+            return CGPath(ellipseIn: rect, transform: nil)
+        case .rounded:
+            return CGPath(roundedRect: rect, cornerWidth: cornerRadius, cornerHeight: cornerRadius, transform: nil)
+        }
+    }
+
+    private static func buildMaskImage(canvasWidth: Int, canvasHeight: Int, overlay: OverlayRect, shape: CameraOverlayShape) -> CIImage? {
+        if shape == .square {
+            return nil
+        }
+
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        guard let ctx = CGContext(
+            data: nil,
+            width: canvasWidth,
+            height: canvasHeight,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else {
+            return nil
+        }
+
+        let rect = CGRect(x: 0, y: 0, width: canvasWidth, height: canvasHeight)
+        ctx.clear(rect)
+        let shapeRect = convertToCISpace(overlayRect: overlay, canvasHeight: canvasHeight)
+        let path = createOverlayPath(rect: shapeRect, shape: shape, cornerRadius: CGFloat(overlay.cornerRadius))
+
+        ctx.setShouldAntialias(true)
+        ctx.addPath(path)
+        ctx.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
+        ctx.fillPath()
+
+        guard let image = ctx.makeImage() else { return nil }
+        return CIImage(cgImage: image)
+    }
+
+    private static func buildBorderImage(canvasWidth: Int, canvasHeight: Int, overlay: OverlayRect, shape: CameraOverlayShape) -> CIImage? {
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        guard let ctx = CGContext(
+            data: nil,
+            width: canvasWidth,
+            height: canvasHeight,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else {
+            return nil
+        }
+
+        let rect = CGRect(x: 0, y: 0, width: canvasWidth, height: canvasHeight)
+        ctx.clear(rect)
+
+        let shapeRect = convertToCISpace(overlayRect: overlay, canvasHeight: canvasHeight)
+        let path = createOverlayPath(rect: shapeRect, shape: shape, cornerRadius: CGFloat(overlay.cornerRadius))
+
+        ctx.setShouldAntialias(true)
+        ctx.addPath(path)
+        ctx.setStrokeColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.45))
+        ctx.setLineWidth(2)
+        ctx.strokePath()
+
+        guard let image = ctx.makeImage() else { return nil }
+        return CIImage(cgImage: image)
+    }
 }
 
 @available(macOS 13.0, *)
@@ -205,6 +586,7 @@ final class SCKRecorder {
     private let args: RecorderArguments
     private var stream: SCStream?
     private var writer: ScreenStreamWriter?
+    private var cameraProvider: CameraCaptureProvider?
 
     init(args: RecorderArguments) {
         self.args = args
@@ -217,12 +599,32 @@ final class SCKRecorder {
         let outputURL = URL(fileURLWithPath: args.outputPath)
         try FileManager.default.createDirectory(at: outputURL.deletingLastPathComponent(), withIntermediateDirectories: true)
 
-        let writer = try ScreenStreamWriter(
-            outputURL: outputURL,
-            width: resolved.width,
-            height: resolved.height,
-            fps: args.fps
-        )
+        var cameraProvider: CameraCaptureProvider?
+        if args.cameraEnabled {
+            let provider = CameraCaptureProvider()
+            do {
+                try provider.start()
+                cameraProvider = provider
+            } catch {
+                throw RecorderError.cameraUnavailable(String(describing: error))
+            }
+        }
+
+        let writer: ScreenStreamWriter
+        do {
+            writer = try ScreenStreamWriter(
+                outputURL: outputURL,
+                width: resolved.width,
+                height: resolved.height,
+                fps: args.fps,
+                cameraProvider: cameraProvider,
+                cameraShape: args.cameraShape,
+                cameraSizePercent: args.cameraSizePercent
+            )
+        } catch {
+            cameraProvider?.stop()
+            throw error
+        }
 
         let config = SCStreamConfiguration()
         config.width = resolved.width
@@ -234,12 +636,18 @@ final class SCKRecorder {
         config.showsCursor = !args.hideCursor
 
         let stream = SCStream(filter: resolved.filter, configuration: config, delegate: nil)
-        try stream.addStreamOutput(writer, type: .screen, sampleHandlerQueue: DispatchQueue(label: "com.cursorlens.sck-recorder.video"))
 
-        try await stream.startCapture()
+        do {
+            try stream.addStreamOutput(writer, type: .screen, sampleHandlerQueue: DispatchQueue(label: "com.cursorlens.sck-recorder.video"))
+            try await stream.startCapture()
+        } catch {
+            cameraProvider?.stop()
+            throw error
+        }
 
         self.writer = writer
         self.stream = stream
+        self.cameraProvider = cameraProvider
 
         return (width: resolved.width, height: resolved.height, sourceKind: resolved.sourceKind)
     }
@@ -247,6 +655,11 @@ final class SCKRecorder {
     func stop() async throws -> Int {
         guard let stream, let writer else {
             throw RecorderError.streamNotStarted
+        }
+
+        defer {
+            cameraProvider?.stop()
+            cameraProvider = nil
         }
 
         try await stream.stopCapture()

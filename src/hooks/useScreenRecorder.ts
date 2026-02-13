@@ -592,17 +592,31 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
       const cursorMode: CursorMode = recordSystemCursor ? "always" : "never";
       const systemCursorMode: CursorMode = cursorMode;
       const platform = await window.electronAPI.getPlatform();
-      const shouldUseNativeRecorder = platform === "darwin" && !includeCamera;
+      const shouldUseNativeRecorder = platform === "darwin";
 
       if (shouldUseNativeRecorder) {
-        const nativeStart = await window.electronAPI.startNativeScreenRecording({
-          source: {
-            id: typeof selectedSource.id === "string" ? selectedSource.id : undefined,
-            display_id: selectedSource.display_id ?? undefined,
-          },
-          cursorMode,
-          frameRate: TARGET_CAPTURE_FPS,
-        });
+        const sourceRef = {
+          id: typeof selectedSource.id === "string" ? selectedSource.id : undefined,
+          display_id: selectedSource.display_id ?? undefined,
+        };
+        const startNative = async (cameraEnabled: boolean) =>
+          await window.electronAPI.startNativeScreenRecording({
+            source: sourceRef,
+            cursorMode,
+            cameraEnabled,
+            cameraShape,
+            cameraSizePercent,
+            frameRate: TARGET_CAPTURE_FPS,
+          });
+
+        let nativeStart = await startNative(includeCamera);
+        if (!nativeStart.success && includeCamera) {
+          console.warn(
+            "Native camera overlay capture failed, retrying native recording without camera overlay.",
+            nativeStart.message,
+          );
+          nativeStart = await startNative(false);
+        }
 
         if (!nativeStart.success) {
           throw new Error(nativeStart.message ?? "Failed to start native ScreenCaptureKit recorder.");
@@ -623,10 +637,7 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
 
         try {
           const trackingResult = await window.electronAPI.startCursorTracking({
-            source: {
-              id: typeof selectedSource.id === "string" ? selectedSource.id : undefined,
-              display_id: selectedSource.display_id ?? undefined,
-            },
+            source: sourceRef,
             captureSize: { width: nativeWidth, height: nativeHeight },
           });
           cursorTrackingActive.current = Boolean(trackingResult?.success);

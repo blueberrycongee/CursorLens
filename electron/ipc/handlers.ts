@@ -68,6 +68,9 @@ type CursorTrackerStartOptions = {
 type NativeRecorderStartOptions = {
   source?: CaptureSourceRef | SelectedSource | null
   cursorMode?: 'always' | 'never'
+  cameraEnabled?: boolean
+  cameraShape?: 'rounded' | 'square' | 'circle'
+  cameraSizePercent?: number
   frameRate?: number
   width?: number
   height?: number
@@ -626,6 +629,13 @@ export function registerIpcHandlers(
 
       const sourceRef = normalizeSourceRef(options?.source) ?? normalizeSourceRef(selectedSource)
       const cursorMode = options?.cursorMode === 'never' ? 'never' : 'always'
+      const cameraEnabled = options?.cameraEnabled === true
+      const cameraShape = options?.cameraShape === 'square' || options?.cameraShape === 'circle'
+        ? options.cameraShape
+        : 'rounded'
+      const cameraSizePercent = Number.isFinite(options?.cameraSizePercent)
+        ? Number(options?.cameraSizePercent)
+        : 22
       const frameRate = Number.isFinite(options?.frameRate) ? Number(options?.frameRate) : 60
       const width = Number.isFinite(options?.width) ? Number(options?.width) : undefined
       const height = Number.isFinite(options?.height) ? Number(options?.height) : undefined
@@ -636,6 +646,9 @@ export function registerIpcHandlers(
         sourceId: typeof sourceRef?.id === 'string' ? sourceRef.id : undefined,
         displayId: sourceRef?.display_id ? String(sourceRef.display_id) : undefined,
         cursorMode,
+        cameraEnabled,
+        cameraShape,
+        cameraSizePercent,
         frameRate,
         width,
         height,
