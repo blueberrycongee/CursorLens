@@ -141,6 +141,13 @@ function normalizeCursorTrack(input: unknown): CursorTrack | null {
   };
 }
 
+function parseSystemCursorMode(input: unknown): 'always' | 'never' | undefined {
+  if (input === 'always' || input === 'never') {
+    return input;
+  }
+  return undefined;
+}
+
 export default function VideoEditor() {
   const { t, locale } = useI18n();
   const [videoPath, setVideoPath] = useState<string | null>(null);
@@ -175,6 +182,7 @@ export default function VideoEditor() {
   const [sourceFrameRate, setSourceFrameRate] = useState<number | undefined>(undefined);
   const [cursorTrack, setCursorTrack] = useState<CursorTrack | null>(null);
   const [cursorStyle, setCursorStyle] = useState<CursorStyleConfig>(DEFAULT_CURSOR_STYLE);
+  const [hideCapturedSystemCursor, setHideCapturedSystemCursor] = useState(false);
 
   const videoPlaybackRef = useRef<VideoPlaybackRef>(null);
   const nextZoomIdRef = useRef(1);
@@ -218,8 +226,12 @@ export default function VideoEditor() {
           setSourceFrameRate(
             Number.isFinite(result.metadata?.frameRate) ? result.metadata?.frameRate : undefined,
           );
-          const metadataWithCursor = result.metadata as { cursorTrack?: unknown } | undefined;
+          const metadataWithCursor = result.metadata as {
+            cursorTrack?: unknown;
+            systemCursorMode?: unknown;
+          } | undefined;
           setCursorTrack(normalizeCursorTrack(metadataWithCursor?.cursorTrack));
+          setHideCapturedSystemCursor(parseSystemCursorMode(metadataWithCursor?.systemCursorMode) === 'never');
         } else {
           setError(t('editor.noVideo'));
         }
@@ -618,6 +630,7 @@ export default function VideoEditor() {
           previewHeight,
           cursorTrack,
           cursorStyle,
+          hideCapturedSystemCursor,
           onProgress: (progress: ExportProgress) => {
             setExportProgress(progress);
           },
@@ -746,6 +759,7 @@ export default function VideoEditor() {
           previewHeight,
           cursorTrack,
           cursorStyle,
+          hideCapturedSystemCursor,
           onProgress: (progress: ExportProgress) => {
             setExportProgress(progress);
           },
@@ -791,7 +805,7 @@ export default function VideoEditor() {
       setShowExportDialog(false);
       setExportProgress(null);
     }
-  }, [videoPath, wallpaper, zoomRegions, trimRegions, shadowIntensity, showBlur, motionBlurEnabled, borderRadius, padding, cropRegion, annotationRegions, isPlaying, aspectRatio, exportQuality, locale, sourceFrameRate, cursorTrack, cursorStyle, t]);
+  }, [videoPath, wallpaper, zoomRegions, trimRegions, shadowIntensity, showBlur, motionBlurEnabled, borderRadius, padding, cropRegion, annotationRegions, isPlaying, aspectRatio, exportQuality, locale, sourceFrameRate, cursorTrack, cursorStyle, hideCapturedSystemCursor, t]);
 
   const handleOpenExportDialog = useCallback(() => {
     if (!videoPath) {
@@ -906,6 +920,7 @@ export default function VideoEditor() {
                       onAnnotationSizeChange={handleAnnotationSizeChange}
                       cursorTrack={cursorTrack}
                       cursorStyle={cursorStyle}
+                      hideCapturedSystemCursor={hideCapturedSystemCursor}
                     />
                   </div>
                 </div>

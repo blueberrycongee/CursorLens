@@ -28,6 +28,7 @@ type CurrentVideoMetadata = {
   height?: number
   mimeType?: string
   capturedAt?: number
+  systemCursorMode?: 'always' | 'never'
   cursorTrack?: {
     source?: 'recorded' | 'synthetic'
     samples: Array<{
@@ -298,6 +299,9 @@ function sanitizeVideoMetadata(metadata?: CurrentVideoMetadata | null): CurrentV
   }
   if (Number.isFinite(capturedAt) && capturedAt > 0) {
     normalized.capturedAt = Math.floor(capturedAt)
+  }
+  if (metadata.systemCursorMode === 'always' || metadata.systemCursorMode === 'never') {
+    normalized.systemCursorMode = metadata.systemCursorMode
   }
 
   const cursorTrack = sanitizeCursorTrack(metadata.cursorTrack)

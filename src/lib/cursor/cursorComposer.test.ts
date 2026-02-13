@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_CURSOR_STYLE, type CursorTrack } from './types';
-import { drawCompositedCursor, normalizePointerSample, projectCursorToViewport, resolveCursorState } from './cursorComposer';
+import {
+  drawCompositedCursor,
+  normalizePointerSample,
+  occludeCapturedCursorArtifact,
+  projectCursorToViewport,
+  resolveCursorState,
+} from './cursorComposer';
 
 describe('cursorComposer', () => {
   it('interpolates and smooths recorded cursor track', () => {
@@ -172,5 +178,45 @@ describe('cursorComposer', () => {
     );
 
     expect(scaleCalls[0]).toEqual({ x: 2, y: 2 });
+  });
+
+  it('occludes captured cursor artifact by sampling nearby pixels', () => {
+    let drawImageCalls = 0;
+    const context = {
+      save: () => {},
+      restore: () => {},
+      beginPath: () => {},
+      arc: () => {},
+      clip: () => {},
+      drawImage: () => {
+        drawImageCalls += 1;
+      },
+    } as unknown as CanvasRenderingContext2D;
+
+    const sourceCanvas = {
+      width: 1920,
+      height: 1080,
+    } as HTMLCanvasElement;
+
+    occludeCapturedCursorArtifact(
+      context,
+      { x: 300, y: 180 },
+      {
+        visible: true,
+        x: 0.4,
+        y: 0.5,
+        scale: 1,
+        highlightAlpha: 0,
+        rippleScale: 1,
+        rippleAlpha: 0,
+      },
+      {
+        sourceCanvas,
+        stageSize: { width: 1280, height: 720 },
+        contentScale: 1,
+      },
+    );
+
+    expect(drawImageCalls).toBe(1);
   });
 });

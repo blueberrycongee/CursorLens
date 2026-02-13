@@ -16,6 +16,7 @@ import { AnnotationOverlay } from "./AnnotationOverlay";
 import {
   DEFAULT_CURSOR_STYLE,
   drawCompositedCursor,
+  occludeCapturedCursorArtifact,
   projectCursorToViewport,
   resolveCursorState,
   type CursorStyleConfig,
@@ -52,6 +53,7 @@ interface VideoPlaybackProps {
   preferredFps?: number;
   cursorTrack?: CursorTrack | null;
   cursorStyle?: Partial<CursorStyleConfig>;
+  hideCapturedSystemCursor?: boolean;
 }
 
 export interface VideoPlaybackRef {
@@ -94,6 +96,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
   preferredFps = 60,
   cursorTrack = null,
   cursorStyle,
+  hideCapturedSystemCursor = false,
 }, ref) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -132,6 +135,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
   const cursorCanvasCtxRef = useRef<CanvasRenderingContext2D | null>(null);
   const cursorTrackRef = useRef<CursorTrack | null>(cursorTrack);
   const cursorStyleRef = useRef<Partial<CursorStyleConfig>>(cursorStyle ?? DEFAULT_CURSOR_STYLE);
+  const hideCapturedSystemCursorRef = useRef<boolean>(hideCapturedSystemCursor);
   const cropRegionRef = useRef(cropRegion);
 
   const normalizeTickerFps = useCallback((fps: number) => {
@@ -357,6 +361,10 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
   }, [cursorStyle]);
 
   useEffect(() => {
+    hideCapturedSystemCursorRef.current = hideCapturedSystemCursor;
+  }, [hideCapturedSystemCursor]);
+
+  useEffect(() => {
     cropRegionRef.current = cropRegion;
   }, [cropRegion]);
 
@@ -535,6 +543,22 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
     });
 
     if (!projected.inViewport) return;
+
+    if (hideCapturedSystemCursorRef.current) {
+      const sourceCanvas = appRef.current?.canvas as HTMLCanvasElement | undefined;
+      if (sourceCanvas) {
+        occludeCapturedCursorArtifact(
+          ctx,
+          { x: projected.x, y: projected.y },
+          cursorState,
+          {
+            sourceCanvas,
+            stageSize: layout.stageSize,
+            contentScale: Math.max(0.1, (Math.abs(cameraContainer.scale.x) + Math.abs(cameraContainer.scale.y)) / 2),
+          },
+        );
+      }
+    }
 
     drawCompositedCursor(
       ctx,

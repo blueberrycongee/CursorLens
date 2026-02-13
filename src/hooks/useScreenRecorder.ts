@@ -497,6 +497,7 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
       }
 
       const cursorMode = recordSystemCursor ? "always" : "never";
+      const systemCursorMode: "always" | "never" = cursorMode;
       const desktopStream = await captureDesktopStream(selectedSource, cursorMode);
       stream.current = desktopStream;
       if (!desktopStream) {
@@ -650,6 +651,7 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
             height,
             mimeType: recordedMimeType,
             capturedAt: timestamp,
+            systemCursorMode,
             cursorTrack: capturedCursorTrack,
           };
           const videoResult = await window.electronAPI.storeRecordedVideo(arrayBuffer, videoFileName, captureMetadata);

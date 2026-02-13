@@ -51,12 +51,12 @@ interface Window {
     storeRecordedVideo: (
       videoData: ArrayBuffer,
       fileName: string,
-      metadata?: { frameRate?: number; width?: number; height?: number; mimeType?: string; capturedAt?: number; cursorTrack?: CursorTrackMetadata }
+      metadata?: { frameRate?: number; width?: number; height?: number; mimeType?: string; capturedAt?: number; systemCursorMode?: 'always' | 'never'; cursorTrack?: CursorTrackMetadata }
     ) => Promise<{
       success: boolean
       path?: string
       message?: string
-      metadata?: { frameRate?: number; width?: number; height?: number; mimeType?: string; capturedAt?: number; cursorTrack?: CursorTrackMetadata }
+      metadata?: { frameRate?: number; width?: number; height?: number; mimeType?: string; capturedAt?: number; systemCursorMode?: 'always' | 'never'; cursorTrack?: CursorTrackMetadata }
     }>
     getRecordedVideoPath: () => Promise<{ success: boolean; path?: string; message?: string }>
     setRecordingState: (recording: boolean) => Promise<void>
@@ -71,12 +71,12 @@ interface Window {
     openVideoFilePicker: (locale?: string) => Promise<{ success: boolean; path?: string; cancelled?: boolean }>
     setCurrentVideoPath: (
       path: string,
-      metadata?: { frameRate?: number; width?: number; height?: number; mimeType?: string; capturedAt?: number; cursorTrack?: CursorTrackMetadata }
+      metadata?: { frameRate?: number; width?: number; height?: number; mimeType?: string; capturedAt?: number; systemCursorMode?: 'always' | 'never'; cursorTrack?: CursorTrackMetadata }
     ) => Promise<{ success: boolean }>
     getCurrentVideoPath: () => Promise<{
       success: boolean
       path?: string
-      metadata?: { frameRate?: number; width?: number; height?: number; mimeType?: string; capturedAt?: number; cursorTrack?: CursorTrackMetadata }
+      metadata?: { frameRate?: number; width?: number; height?: number; mimeType?: string; capturedAt?: number; systemCursorMode?: 'always' | 'never'; cursorTrack?: CursorTrackMetadata }
     }>
     clearCurrentVideoPath: () => Promise<{ success: boolean }>
     getPlatform: () => Promise<string>

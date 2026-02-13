@@ -8,6 +8,7 @@ import { clampFocusToStage as clampFocusToStageUtil } from '@/components/video-e
 import { renderAnnotations } from './annotationRenderer';
 import {
   drawCompositedCursor,
+  occludeCapturedCursorArtifact,
   projectCursorToViewport,
   resolveCursorState,
   type CursorStyleConfig,
@@ -33,6 +34,7 @@ interface FrameRenderConfig {
   previewHeight?: number;
   cursorTrack?: CursorTrack | null;
   cursorStyle?: Partial<CursorStyleConfig>;
+  hideCapturedSystemCursor?: boolean;
 }
 
 interface AnimationState {
@@ -393,6 +395,19 @@ export class FrameRenderer {
     });
 
     if (!projected.inViewport) return;
+
+    if (this.config.hideCapturedSystemCursor && this.compositeCanvas) {
+      occludeCapturedCursorArtifact(
+        this.compositeCtx,
+        { x: projected.x, y: projected.y },
+        cursorState,
+        {
+          sourceCanvas: this.compositeCanvas,
+          stageSize: this.layoutCache.stageSize,
+          contentScale: Math.max(0.1, (Math.abs(this.cameraContainer.scale.x) + Math.abs(this.cameraContainer.scale.y)) / 2),
+        },
+      );
+    }
 
     drawCompositedCursor(
       this.compositeCtx,

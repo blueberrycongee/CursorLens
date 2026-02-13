@@ -356,6 +356,73 @@ export function drawCompositedCursor(
   ctx.restore();
 }
 
+export function occludeCapturedCursorArtifact(
+  ctx: CanvasRenderingContext2D,
+  point: { x: number; y: number },
+  state: CursorResolvedState,
+  options: {
+    sourceCanvas: HTMLCanvasElement;
+    stageSize: { width: number; height: number };
+    contentScale?: number;
+  },
+): void {
+  if (!state.visible) return;
+
+  const rawContentScale = options.contentScale ?? 1;
+  const safeContentScale = Math.max(0.1, Math.min(8, Number.isFinite(rawContentScale) ? rawContentScale : 1));
+  const radius = Math.max(8, 9.5 * state.scale * safeContentScale);
+  const diameter = Math.max(2, Math.round(radius * 2));
+  const destX = point.x - diameter / 2;
+  const destY = point.y - diameter / 2;
+
+  const stageWidth = Math.max(1, options.stageSize.width);
+  const stageHeight = Math.max(1, options.stageSize.height);
+  const source = options.sourceCanvas;
+  const sourceScaleX = source.width / stageWidth;
+  const sourceScaleY = source.height / stageHeight;
+
+  const candidates = [
+    { dx: 1.6, dy: 0.6 },
+    { dx: -1.6, dy: 0.6 },
+    { dx: 1.6, dy: -0.6 },
+    { dx: -1.6, dy: -0.6 },
+    { dx: 0, dy: 1.8 },
+    { dx: 0, dy: -1.8 },
+  ];
+
+  const sourceW = source.width;
+  const sourceH = source.height;
+
+  for (const candidate of candidates) {
+    const sourceRectX = destX + candidate.dx * radius;
+    const sourceRectY = destY + candidate.dy * radius;
+
+    const sx = Math.max(0, Math.min(sourceW - diameter * sourceScaleX, sourceRectX * sourceScaleX));
+    const sy = Math.max(0, Math.min(sourceH - diameter * sourceScaleY, sourceRectY * sourceScaleY));
+
+    const isSameArea = Math.abs(sx - destX * sourceScaleX) < 0.5 && Math.abs(sy - destY * sourceScaleY) < 0.5;
+    if (isSameArea) continue;
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.drawImage(
+      source,
+      sx,
+      sy,
+      diameter * sourceScaleX,
+      diameter * sourceScaleY,
+      destX,
+      destY,
+      diameter,
+      diameter,
+    );
+    ctx.restore();
+    return;
+  }
+}
+
 export function normalizePointerSample(
   timeMs: number,
   screenX: number,

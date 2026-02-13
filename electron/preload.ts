@@ -36,6 +36,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       height?: number;
       mimeType?: string;
       capturedAt?: number;
+      systemCursorMode?: 'always' | 'never';
       cursorTrack?: {
         source?: 'recorded' | 'synthetic';
         samples: Array<{ timeMs: number; x: number; y: number; click?: boolean; visible?: boolean }>;
@@ -80,6 +81,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     height?: number;
     mimeType?: string;
     capturedAt?: number;
+    systemCursorMode?: 'always' | 'never';
     cursorTrack?: {
       source?: 'recorded' | 'synthetic';
       samples: Array<{ timeMs: number; x: number; y: number; click?: boolean; visible?: boolean }>;
