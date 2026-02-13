@@ -16,6 +16,15 @@ type UseScreenRecorderOptions = {
 };
 
 export type CaptureProfile = "balanced" | "quality" | "ultra";
+type CursorMode = "always" | "never";
+
+type LegacyDesktopGetUserMedia = (constraints: {
+  audio?: MediaTrackConstraints | boolean;
+  video?: {
+    mandatory?: Record<string, string | number | boolean | undefined>;
+    cursor?: CursorMode;
+  };
+}) => Promise<MediaStream>;
 
 type CompositionResources = {
   compositeStream: MediaStream;
@@ -75,6 +84,14 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
   const startTime = useRef<number>(0);
   const compositionCleanup = useRef<(() => void) | null>(null);
   const cursorTrackingActive = useRef(false);
+  const nativeRecordingActive = useRef(false);
+  const nativeRecordingMetadata = useRef<{
+    frameRate: number;
+    width: number;
+    height: number;
+    mimeType: string;
+    systemCursorMode: CursorMode;
+  } | null>(null);
 
   const profileSettings: Record<CaptureProfile, { targetFps: number; maxFps: number; bitrateScale: number; cameraCompositeFpsCap: number; maxLongEdge: number }> = {
     balanced: { targetFps: 30, maxFps: 60, bitrateScale: 0.9, cameraCompositeFpsCap: 30, maxLongEdge: 1920 },
@@ -174,7 +191,18 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
     throw lastError instanceof Error ? lastError : new Error("Failed to create MediaRecorder with available codecs.");
   };
 
-  const cleanupActiveMedia = () => {
+  const cleanupActiveMedia = (options: { stopNative?: boolean } = {}) => {
+    const stopNative = options.stopNative ?? true;
+
+    if (stopNative && nativeRecordingActive.current) {
+      nativeRecordingActive.current = false;
+      nativeRecordingMetadata.current = null;
+      void window.electronAPI?.stopNativeScreenRecording?.().catch((error) => {
+        console.warn("Failed to stop native ScreenCaptureKit recorder during cleanup.", error);
+      });
+      window.electronAPI?.setRecordingState(false);
+    }
+
     if (cursorTrackingActive.current) {
       cursorTrackingActive.current = false;
       void window.electronAPI?.stopCursorTracking?.().catch((error) => {
@@ -195,7 +223,70 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
     }
   };
 
+  const stopNativeRecording = async () => {
+    const initialMetadata = nativeRecordingMetadata.current;
+    nativeRecordingActive.current = false;
+    nativeRecordingMetadata.current = null;
+
+    let capturedCursorTrack:
+      | { source?: "recorded" | "synthetic"; samples: Array<{ timeMs: number; x: number; y: number; click?: boolean; visible?: boolean }> }
+      | undefined;
+
+    if (cursorTrackingActive.current) {
+      cursorTrackingActive.current = false;
+      try {
+        const cursorResult = await window.electronAPI.stopCursorTracking();
+        capturedCursorTrack = cursorResult.track;
+      } catch (error) {
+        console.warn("Failed to retrieve cursor tracking payload for native recording.", error);
+      }
+    }
+
+    try {
+      const stopResult = await window.electronAPI.stopNativeScreenRecording();
+      setRecording(false);
+      window.electronAPI?.setRecordingState(false);
+
+      if (!stopResult.success || !stopResult.path) {
+        console.error("Failed to stop native ScreenCaptureKit recording:", stopResult.message);
+        return;
+      }
+
+      const fallbackMetadata = initialMetadata ?? {
+        frameRate: 60,
+        width: 1920,
+        height: 1080,
+        mimeType: "video/mp4",
+        systemCursorMode: "always" as CursorMode,
+      };
+      const metadata = stopResult.metadata ?? fallbackMetadata;
+      const capturedAt = stopResult.metadata?.capturedAt ?? Date.now();
+
+      await window.electronAPI.setCurrentVideoPath(stopResult.path, {
+        frameRate: metadata.frameRate,
+        width: metadata.width,
+        height: metadata.height,
+        mimeType: metadata.mimeType ?? "video/mp4",
+        capturedAt,
+        systemCursorMode: metadata.systemCursorMode ?? fallbackMetadata.systemCursorMode,
+        cursorTrack: capturedCursorTrack,
+      });
+
+      await window.electronAPI.switchToEditor();
+    } catch (error) {
+      console.error("Failed to finalize native ScreenCaptureKit recording:", error);
+      setRecording(false);
+      window.electronAPI?.setRecordingState(false);
+    } finally {
+      cleanupActiveMedia({ stopNative: false });
+    }
+  };
+
   const stopRecording = useRef(() => {
+    if (nativeRecordingActive.current) {
+      void stopNativeRecording();
+      return;
+    }
     const recorder = mediaRecorder.current;
     if (recorder?.state === "recording") {
       recorder.stop();
@@ -444,21 +535,23 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
 
   const captureDesktopStream = async (
     selectedSource: { id?: string | null },
-    cursorMode: "always" | "never",
+    cursorMode: CursorMode,
   ): Promise<MediaStream> => {
-    const captureWithLegacyDesktopConstraints = async (): Promise<MediaStream> =>
-      await (navigator.mediaDevices as any).getUserMedia({
+    const captureWithLegacyDesktopConstraints = async (): Promise<MediaStream> => {
+      const getLegacyUserMedia = navigator.mediaDevices.getUserMedia as unknown as LegacyDesktopGetUserMedia;
+      return await getLegacyUserMedia({
         audio: false,
         video: {
           mandatory: {
             chromeMediaSource: "desktop",
-            chromeMediaSourceId: selectedSource.id,
+            chromeMediaSourceId: selectedSource.id ?? undefined,
             maxFrameRate: TARGET_CAPTURE_FPS,
             cursor: cursorMode,
           },
           cursor: cursorMode,
         },
       });
+    };
 
     // Hide-native-cursor path: prefer legacy constraints first because this path is
     // currently more reliable on Electron/macOS for cursor suppression.
@@ -496,8 +589,58 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
         return;
       }
 
-      const cursorMode = recordSystemCursor ? "always" : "never";
-      const systemCursorMode: "always" | "never" = cursorMode;
+      const cursorMode: CursorMode = recordSystemCursor ? "always" : "never";
+      const systemCursorMode: CursorMode = cursorMode;
+      const platform = await window.electronAPI.getPlatform();
+      const shouldUseNativeRecorder = platform === "darwin" && !includeCamera;
+
+      if (shouldUseNativeRecorder) {
+        const nativeStart = await window.electronAPI.startNativeScreenRecording({
+          source: {
+            id: typeof selectedSource.id === "string" ? selectedSource.id : undefined,
+            display_id: selectedSource.display_id ?? undefined,
+          },
+          cursorMode,
+          frameRate: TARGET_CAPTURE_FPS,
+        });
+
+        if (!nativeStart.success) {
+          throw new Error(nativeStart.message ?? "Failed to start native ScreenCaptureKit recorder.");
+        }
+
+        const nativeWidth = Math.max(2, Math.round(nativeStart.width ?? 1920));
+        const nativeHeight = Math.max(2, Math.round(nativeStart.height ?? 1080));
+        const nativeFrameRate = Math.max(24, Math.min(MAX_CAPTURE_FPS, Math.round(nativeStart.frameRate ?? TARGET_CAPTURE_FPS)));
+
+        nativeRecordingMetadata.current = {
+          frameRate: nativeFrameRate,
+          width: nativeWidth,
+          height: nativeHeight,
+          mimeType: "video/mp4",
+          systemCursorMode,
+        };
+        nativeRecordingActive.current = true;
+
+        try {
+          const trackingResult = await window.electronAPI.startCursorTracking({
+            source: {
+              id: typeof selectedSource.id === "string" ? selectedSource.id : undefined,
+              display_id: selectedSource.display_id ?? undefined,
+            },
+            captureSize: { width: nativeWidth, height: nativeHeight },
+          });
+          cursorTrackingActive.current = Boolean(trackingResult?.success);
+        } catch (error) {
+          cursorTrackingActive.current = false;
+          console.warn("Failed to start cursor tracking for native recording.", error);
+        }
+
+        startTime.current = Date.now();
+        setRecording(true);
+        window.electronAPI?.setRecordingState(true);
+        return;
+      }
+
       const desktopStream = await captureDesktopStream(selectedSource, cursorMode);
       stream.current = desktopStream;
       if (!desktopStream) {

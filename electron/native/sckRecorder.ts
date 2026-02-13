@@ -76,12 +76,12 @@ function collectLines(stream: NodeJS.ReadableStream, onLine: (line: string) => v
 
   const onData = (chunk: Buffer | string): void => {
     buffer += String(chunk)
-    while (true) {
-      const newlineIndex = buffer.indexOf('\n')
-      if (newlineIndex === -1) break
+    let newlineIndex = buffer.indexOf('\n')
+    while (newlineIndex !== -1) {
       const line = buffer.slice(0, newlineIndex).trim()
       buffer = buffer.slice(newlineIndex + 1)
       if (line) onLine(line)
+      newlineIndex = buffer.indexOf('\n')
     }
   }
 
