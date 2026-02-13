@@ -4,6 +4,7 @@ import { computeCameraOverlayRect, type CameraOverlayShape } from "./cameraOverl
 
 type UseScreenRecorderReturn = {
   recording: boolean;
+  recordingState: "idle" | "starting" | "recording" | "stopping";
   toggleRecording: () => void;
 };
 
@@ -77,6 +78,7 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
   const captureProfile = options.captureProfile ?? "quality";
   const recordSystemCursor = options.recordSystemCursor ?? true;
   const [recording, setRecording] = useState(false);
+  const [recordingState, setRecordingPhase] = useState<"idle" | "starting" | "recording" | "stopping">("idle");
   const mediaRecorder = useRef<MediaRecorder | null>(null);
   const stream = useRef<MediaStream | null>(null);
   const cameraStream = useRef<MediaStream | null>(null);
@@ -85,6 +87,7 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
   const compositionCleanup = useRef<(() => void) | null>(null);
   const cursorTrackingActive = useRef(false);
   const nativeRecordingActive = useRef(false);
+  const transitionInFlight = useRef(false);
   const nativeRecordingMetadata = useRef<{
     frameRate: number;
     width: number;
@@ -245,6 +248,7 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
     try {
       const stopResult = await window.electronAPI.stopNativeScreenRecording();
       setRecording(false);
+      setRecordingPhase("stopping");
       window.electronAPI?.setRecordingState(false);
 
       if (!stopResult.success || !stopResult.path) {
@@ -278,22 +282,40 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
       setRecording(false);
       window.electronAPI?.setRecordingState(false);
     } finally {
+      transitionInFlight.current = false;
+      setRecording(false);
+      setRecordingPhase("idle");
+      window.electronAPI?.setRecordingState(false);
       cleanupActiveMedia({ stopNative: false });
     }
   };
 
   const stopRecording = useRef(() => {
+    if (transitionInFlight.current) {
+      return;
+    }
+
     if (nativeRecordingActive.current) {
+      transitionInFlight.current = true;
+      setRecording(false);
+      setRecordingPhase("stopping");
+      window.electronAPI?.setRecordingState(false);
       void stopNativeRecording();
       return;
     }
     const recorder = mediaRecorder.current;
     if (recorder?.state === "recording") {
-      recorder.stop();
+      transitionInFlight.current = true;
       setRecording(false);
+      setRecordingPhase("stopping");
       window.electronAPI?.setRecordingState(false);
+      recorder.stop();
       return;
     }
+    setRecording(false);
+    setRecordingPhase("idle");
+    window.electronAPI?.setRecordingState(false);
+    transitionInFlight.current = false;
     cleanupActiveMedia();
   });
 
@@ -316,6 +338,10 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
       }
 
       cleanupActiveMedia();
+      setRecording(false);
+      setRecordingPhase("idle");
+      window.electronAPI?.setRecordingState(false);
+      transitionInFlight.current = false;
     };
   }, []);
 
@@ -582,10 +608,21 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
   };
 
   const startRecording = async () => {
+    if (transitionInFlight.current || recordingState !== "idle") {
+      return;
+    }
+
+    transitionInFlight.current = true;
+    setRecordingPhase("starting");
+
     try {
       const selectedSource = await window.electronAPI.getSelectedSource();
       if (!selectedSource) {
         alert("Please select a source to record");
+        setRecording(false);
+        setRecordingPhase("idle");
+        window.electronAPI?.setRecordingState(false);
+        transitionInFlight.current = false;
         return;
       }
 
@@ -648,7 +685,9 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
 
         startTime.current = Date.now();
         setRecording(true);
+        setRecordingPhase("recording");
         window.electronAPI?.setRecordingState(true);
+        transitionInFlight.current = false;
         return;
       }
 
@@ -772,41 +811,41 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
         if (e.data && e.data.size > 0) chunks.current.push(e.data);
       };
       recorder.onstop = async () => {
-        let capturedCursorTrack:
-          | {
-              source?: "recorded" | "synthetic";
-              samples: Array<{
-                timeMs: number;
-                x: number;
-                y: number;
-                click?: boolean;
-                visible?: boolean;
-                cursorKind?: "arrow" | "ibeam";
-              }>;
-            }
-          | undefined;
-
-        if (cursorTrackingActive.current) {
-          cursorTrackingActive.current = false;
-          try {
-            const cursorResult = await window.electronAPI.stopCursorTracking();
-            capturedCursorTrack = cursorResult.track;
-          } catch (error) {
-            console.warn("Failed to retrieve cursor tracking payload.", error);
-          }
-        }
-        cleanupActiveMedia();
-        mediaRecorder.current = null;
-        if (chunks.current.length === 0) return;
-        const duration = Date.now() - startTime.current;
-        const recordedChunks = chunks.current;
-        const buggyBlob = new Blob(recordedChunks, { type: recordedMimeType });
-        // Clear chunks early to free memory immediately after blob creation
-        chunks.current = [];
-        const timestamp = Date.now();
-        const videoFileName = `recording-${timestamp}.webm`;
-
         try {
+          let capturedCursorTrack:
+            | {
+                source?: "recorded" | "synthetic";
+                samples: Array<{
+                  timeMs: number;
+                  x: number;
+                  y: number;
+                  click?: boolean;
+                  visible?: boolean;
+                  cursorKind?: "arrow" | "ibeam";
+                }>;
+              }
+            | undefined;
+
+          if (cursorTrackingActive.current) {
+            cursorTrackingActive.current = false;
+            try {
+              const cursorResult = await window.electronAPI.stopCursorTracking();
+              capturedCursorTrack = cursorResult.track;
+            } catch (error) {
+              console.warn("Failed to retrieve cursor tracking payload.", error);
+            }
+          }
+          cleanupActiveMedia();
+          mediaRecorder.current = null;
+          if (chunks.current.length === 0) return;
+          const duration = Date.now() - startTime.current;
+          const recordedChunks = chunks.current;
+          const buggyBlob = new Blob(recordedChunks, { type: recordedMimeType });
+          // Clear chunks early to free memory immediately after blob creation
+          chunks.current = [];
+          const timestamp = Date.now();
+          const videoFileName = `recording-${timestamp}.webm`;
+
           const videoBlob = await fixWebmDuration(buggyBlob, duration);
           const arrayBuffer = await videoBlob.arrayBuffer();
           const captureMetadata = {
@@ -830,11 +869,18 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
           await window.electronAPI.switchToEditor();
         } catch (error) {
           console.error('Error saving recording:', error);
+        } finally {
+          transitionInFlight.current = false;
+          setRecording(false);
+          setRecordingPhase("idle");
+          window.electronAPI?.setRecordingState(false);
         }
       };
       recorder.onerror = (event) => {
         console.error("MediaRecorder error event:", event);
+        transitionInFlight.current = false;
         setRecording(false);
+        setRecordingPhase("idle");
         window.electronAPI?.setRecordingState(false);
         if (cursorTrackingActive.current) {
           cursorTrackingActive.current = false;
@@ -847,17 +893,39 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
       startTime.current = Date.now();
       recorder.start(1000);
       setRecording(true);
+      setRecordingPhase("recording");
       window.electronAPI?.setRecordingState(true);
+      transitionInFlight.current = false;
     } catch (error) {
+      const message = error instanceof Error && error.message
+        ? error.message
+        : "Failed to start recording.";
       console.error('Failed to start recording:', error);
+      transitionInFlight.current = false;
       setRecording(false);
+      setRecordingPhase("idle");
+      window.electronAPI?.setRecordingState(false);
       cleanupActiveMedia();
+      alert(message);
     }
   };
 
   const toggleRecording = () => {
-    recording ? stopRecording.current() : startRecording();
+    if (transitionInFlight.current) {
+      return;
+    }
+
+    if (recordingState === "starting" || recordingState === "stopping") {
+      return;
+    }
+
+    if (recording || recordingState === "recording") {
+      stopRecording.current();
+      return;
+    }
+
+    void startRecording();
   };
 
-  return { recording, toggleRecording };
+  return { recording, recordingState, toggleRecording };
 }

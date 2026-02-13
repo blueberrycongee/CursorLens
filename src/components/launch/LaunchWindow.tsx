@@ -70,13 +70,15 @@ export function LaunchWindow() {
       return true;
     }
   });
-  const { recording, toggleRecording } = useScreenRecorder({
+  const { recording, recordingState, toggleRecording } = useScreenRecorder({
     includeCamera,
     cameraShape,
     cameraSizePercent,
     captureProfile,
     recordSystemCursor,
   });
+  const isTransitioning = recordingState === "starting" || recordingState === "stopping";
+  const controlsLocked = recording || isTransitioning;
   const [recordingStart, setRecordingStart] = useState<number | null>(null);
   const [elapsed, setElapsed] = useState(0);
 
@@ -248,7 +250,7 @@ export function LaunchWindow() {
           size="sm"
           className={`gap-1 min-w-0 flex-1 overflow-hidden text-white bg-transparent hover:bg-transparent px-1 justify-start text-xs ${styles.electronNoDrag}`}
           onClick={openSourceSelector}
-          disabled={recording}
+          disabled={controlsLocked}
           title={selectedSource}
         >
           <MdMonitor size={14} className="text-white" />
@@ -259,12 +261,23 @@ export function LaunchWindow() {
           variant="link"
           size="sm"
           onClick={hasSelectedSource ? toggleRecording : openSourceSelector}
+          disabled={isTransitioning}
           className={`relative z-20 gap-1 shrink-0 min-w-[96px] text-white bg-white/5 hover:bg-white/10 border border-white/10 rounded-md px-2 text-center text-xs ${styles.electronNoDrag}`}
         >
           {recording ? (
             <>
               <FaRegStopCircle size={14} className="text-red-400" />
               <span className="text-red-400">{formatTime(elapsed)}</span>
+            </>
+          ) : recordingState === "starting" ? (
+            <>
+              <BsRecordCircle size={14} className="text-amber-300 animate-pulse" />
+              <span className="text-amber-300">{t("common.loading")}</span>
+            </>
+          ) : recordingState === "stopping" ? (
+            <>
+              <FaRegStopCircle size={14} className="text-amber-300 animate-pulse" />
+              <span className="text-amber-300">{t("common.processing")}</span>
             </>
           ) : (
             <>
@@ -279,7 +292,7 @@ export function LaunchWindow() {
           size="sm"
           className={`gap-1 shrink-0 min-w-[92px] text-white bg-transparent hover:bg-transparent px-1 text-center text-xs ${styles.electronNoDrag}`}
           onClick={() => setIncludeCamera((value) => !value)}
-          disabled={recording}
+          disabled={controlsLocked}
           title={includeCamera ? t("launch.cameraEnabled") : t("launch.cameraEnable")}
         >
           <FiCamera size={14} className={includeCamera ? "text-cyan-300" : "text-white/50"} />
@@ -291,7 +304,7 @@ export function LaunchWindow() {
           size="sm"
           className={`gap-1 shrink-0 min-w-[92px] text-white bg-transparent hover:bg-transparent px-1 text-center text-xs ${styles.electronNoDrag}`}
           onClick={cycleCaptureProfile}
-          disabled={recording}
+          disabled={controlsLocked}
           title={t("launch.captureProfileLabel", { profile: captureProfileLabelMap[captureProfile] })}
         >
           <SlidersHorizontal size={13} className="text-white/80" />
@@ -303,7 +316,7 @@ export function LaunchWindow() {
           size="sm"
           className={`gap-1 shrink-0 min-w-[110px] text-white bg-transparent hover:bg-transparent px-1 text-center text-xs ${styles.electronNoDrag}`}
           onClick={() => setRecordSystemCursor((value) => !value)}
-          disabled={recording}
+          disabled={controlsLocked}
           title={recordSystemCursor ? t("launch.systemCursorShown") : t("launch.systemCursorHidden")}
         >
           <FiMousePointer size={13} className={recordSystemCursor ? "text-white/85" : "text-[#34B27B]"} />
@@ -340,7 +353,7 @@ export function LaunchWindow() {
                   size="sm"
                   className={`text-cyan-200 bg-transparent hover:bg-cyan-200/10 px-2 h-7 text-sm ${styles.electronNoDrag}`}
                   onClick={cycleCameraShape}
-                  disabled={recording}
+                  disabled={controlsLocked}
                 >
                   {cameraShapeLabelMap[cameraShape]}
                 </Button>
@@ -350,7 +363,7 @@ export function LaunchWindow() {
                     size="sm"
                     className={`text-cyan-200 bg-transparent hover:bg-cyan-200/10 px-1 h-7 text-xs ${styles.electronNoDrag}`}
                     onClick={() => setCameraSizePercent((value) => clamp(value - 2, 14, 40))}
-                    disabled={recording}
+                    disabled={controlsLocked}
                     title={t("launch.sizeDecrease")}
                   >
                     -
@@ -361,7 +374,7 @@ export function LaunchWindow() {
                     size="sm"
                     className={`text-cyan-200 bg-transparent hover:bg-cyan-200/10 px-1 h-7 text-xs ${styles.electronNoDrag}`}
                     onClick={() => setCameraSizePercent((value) => clamp(value + 2, 14, 40))}
-                    disabled={recording}
+                    disabled={controlsLocked}
                     title={t("launch.sizeIncrease")}
                   >
                     +
@@ -378,7 +391,7 @@ export function LaunchWindow() {
           size="sm"
           onClick={openVideoFile}
           className={`gap-1 shrink-0 min-w-[72px] text-white bg-transparent hover:bg-transparent px-0 text-right text-xs ${styles.electronNoDrag} ${styles.folderButton}`}
-          disabled={recording}
+          disabled={controlsLocked}
         >
           <FaFolderMinus size={14} className="text-white" />
           <span className={styles.folderText}>{t("launch.open")}</span>
