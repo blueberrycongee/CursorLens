@@ -90,7 +90,7 @@ interface SettingsPanelProps {
   onAnnotationContentChange?: (id: string, content: string) => void;
   onAnnotationTypeChange?: (id: string, type: AnnotationType) => void;
   onAnnotationStyleChange?: (id: string, style: Partial<AnnotationRegion['style']>) => void;
-  onAnnotationFigureDataChange?: (id: string, figureData: any) => void;
+  onAnnotationFigureDataChange?: (id: string, figureData: unknown) => void;
   onAnnotationDelete?: (id: string) => void;
   hasAudioTrack?: boolean;
   audioEnabled?: boolean;
@@ -781,11 +781,9 @@ export function SettingsPanel({
                         const isSelected = (() => {
                           if (!selected) return false;
                           if (selected === path) return true;
-                          try {
-                            const clean = (s: string) => s.replace(/^file:\/\//, '').replace(/^\//, '')
-                            if (clean(selected).endsWith(clean(path))) return true;
-                            if (clean(path).endsWith(clean(selected))) return true;
-                          } catch {}
+                          const clean = (s: string) => s.replace(/^file:\/\//, '').replace(/^\//, '');
+                          if (clean(selected).endsWith(clean(path))) return true;
+                          if (clean(path).endsWith(clean(selected))) return true;
                           return false;
                         })();
                         return (
@@ -967,7 +965,7 @@ export function SettingsPanel({
                 ))}
               </div>
               <div className="flex-1 bg-white/5 border border-white/5 p-0.5 grid grid-cols-3 h-7 rounded-lg">
-                {Object.entries(GIF_SIZE_PRESETS).map(([key, _preset]) => (
+                {Object.keys(GIF_SIZE_PRESETS).map((key) => (
                   <button
                     key={key}
                     onClick={() => onGifSizePresetChange?.(key as GifSizePreset)}
