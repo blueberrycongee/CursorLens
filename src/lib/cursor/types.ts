@@ -1,6 +1,7 @@
 import type { ZoomFocus, ZoomRegion } from '@/components/video-editor/types';
 
 export type CursorKind = 'arrow' | 'ibeam';
+export type CursorMovementStyle = 'rapid' | 'quick' | 'default' | 'slow' | 'custom';
 
 export interface CursorSample {
   timeMs: number;
@@ -37,6 +38,12 @@ export interface CursorStyleConfig {
   ripple: number;
   shadow: number;
   smoothingMs: number;
+  movementStyle: CursorMovementStyle;
+  autoHideStatic: boolean;
+  staticHideDelayMs: number;
+  staticHideFadeMs: number;
+  loopCursorPosition: boolean;
+  loopBlendMs: number;
   offsetX: number;
   offsetY: number;
   timeOffsetMs: number;
@@ -74,6 +81,12 @@ export const DEFAULT_CURSOR_STYLE: CursorStyleConfig = {
   ripple: 0.7,
   shadow: 0.45,
   smoothingMs: 0,
+  movementStyle: 'default',
+  autoHideStatic: false,
+  staticHideDelayMs: 1200,
+  staticHideFadeMs: 240,
+  loopCursorPosition: false,
+  loopBlendMs: 900,
   offsetX: 0,
   offsetY: 0,
   timeOffsetMs: 0,

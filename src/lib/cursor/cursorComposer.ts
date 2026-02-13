@@ -4,6 +4,7 @@ import { findDominantRegion } from '@/components/video-editor/videoPlayback/zoom
 import {
   DEFAULT_CURSOR_STYLE,
   type CursorKind,
+  type CursorMovementStyle,
   type CursorResolvedState,
   type CursorResolveParams,
   type CursorSample,
@@ -17,6 +18,12 @@ const CURSOR_GLYPH_HOTSPOT: Record<CursorKind, { x: number; y: number }> = {
   arrow: { x: -4, y: -8 },
   ibeam: { x: 0, y: 0 },
 };
+const SUPPORTED_MOVEMENT_STYLES: CursorMovementStyle[] = ['rapid', 'quick', 'default', 'slow', 'custom'];
+const POINTER_ACTIVITY_THRESHOLD = 0.0009;
+
+function toFiniteNumber(value: unknown, fallback: number): number {
+  return Number.isFinite(value) ? Number(value) : fallback;
+}
 
 function clamp01(value: number): number {
   if (!Number.isFinite(value)) return 0;
@@ -32,6 +39,14 @@ function easeOutCubic(t: number): number {
   return 1 - x * x * x;
 }
 
+function normalizeMovementStyle(value: unknown): CursorMovementStyle {
+  if (typeof value !== 'string') return DEFAULT_CURSOR_STYLE.movementStyle;
+  if (SUPPORTED_MOVEMENT_STYLES.includes(value as CursorMovementStyle)) {
+    return value as CursorMovementStyle;
+  }
+  return DEFAULT_CURSOR_STYLE.movementStyle;
+}
+
 function normalizeCursorStyle(input?: Partial<CursorStyleConfig>): CursorStyleConfig {
   const merged: CursorStyleConfig = {
     ...DEFAULT_CURSOR_STYLE,
@@ -45,6 +60,12 @@ function normalizeCursorStyle(input?: Partial<CursorStyleConfig>): CursorStyleCo
     ripple: clamp01(merged.ripple),
     shadow: clamp01(merged.shadow),
     smoothingMs: Math.max(0, Math.min(220, Math.round(merged.smoothingMs))),
+    movementStyle: normalizeMovementStyle(merged.movementStyle),
+    autoHideStatic: Boolean(merged.autoHideStatic),
+    staticHideDelayMs: Math.max(0, Math.min(8000, Math.round(toFiniteNumber(merged.staticHideDelayMs, DEFAULT_CURSOR_STYLE.staticHideDelayMs)))),
+    staticHideFadeMs: Math.max(40, Math.min(2400, Math.round(toFiniteNumber(merged.staticHideFadeMs, DEFAULT_CURSOR_STYLE.staticHideFadeMs)))),
+    loopCursorPosition: Boolean(merged.loopCursorPosition),
+    loopBlendMs: Math.max(80, Math.min(10000, Math.round(toFiniteNumber(merged.loopBlendMs, DEFAULT_CURSOR_STYLE.loopBlendMs)))),
     offsetX: Math.max(-240, Math.min(240, Number.isFinite(merged.offsetX) ? merged.offsetX : 0)),
     offsetY: Math.max(-240, Math.min(240, Number.isFinite(merged.offsetY) ? merged.offsetY : 0)),
     timeOffsetMs: Math.max(-300, Math.min(300, Number.isFinite(merged.timeOffsetMs) ? merged.timeOffsetMs : 0)),
@@ -189,6 +210,108 @@ function smoothFromTrack(
   };
 }
 
+function sampleActivityDetected(prev: CursorSample, next: CursorSample): boolean {
+  if (next.click) return true;
+  if (sampleIsVisible(prev) !== sampleIsVisible(next)) return true;
+  if (sampleCursorKind(prev) !== sampleCursorKind(next)) return true;
+
+  const deltaX = next.x - prev.x;
+  const deltaY = next.y - prev.y;
+  const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+  return distance >= POINTER_ACTIVITY_THRESHOLD;
+}
+
+function resolveStaticVisibilityFactor(
+  samples: CursorSample[],
+  timeMs: number,
+  style: CursorStyleConfig,
+): number {
+  if (!style.autoHideStatic || samples.length < 2) {
+    return 1;
+  }
+
+  let previous: CursorSample | null = null;
+  let observedSample = false;
+  let lastActivityTime = samples[0].timeMs;
+
+  for (const sample of samples) {
+    if (sample.timeMs > timeMs) break;
+    observedSample = true;
+    if (!previous) {
+      previous = sample;
+      if (sample.click) {
+        lastActivityTime = sample.timeMs;
+      }
+      continue;
+    }
+    if (sampleActivityDetected(previous, sample)) {
+      lastActivityTime = sample.timeMs;
+    }
+    previous = sample;
+  }
+
+  if (!observedSample) return 1;
+
+  const surrounding = findSurroundingSamples(samples, timeMs);
+  if (
+    surrounding &&
+    surrounding.prev.timeMs !== surrounding.next.timeMs &&
+    sampleActivityDetected(surrounding.prev, surrounding.next)
+  ) {
+    return 1;
+  }
+
+  const inactivityMs = Math.max(0, timeMs - lastActivityTime);
+  if (inactivityMs <= style.staticHideDelayMs) {
+    return 1;
+  }
+
+  const fadeProgress = clamp01((inactivityMs - style.staticHideDelayMs) / Math.max(1, style.staticHideFadeMs));
+  return 1 - easeOutCubic(fadeProgress);
+}
+
+function applyLoopCursorPosition(
+  cursor: { x: number; y: number; visible: boolean; cursorKind: CursorKind } | null,
+  samples: CursorSample[],
+  timeMs: number,
+  style: CursorStyleConfig,
+): { x: number; y: number; visible: boolean; cursorKind: CursorKind } | null {
+  if (!cursor || !style.loopCursorPosition || samples.length < 2) {
+    return cursor;
+  }
+
+  const startTime = samples[0].timeMs;
+  const endTime = samples[samples.length - 1].timeMs;
+  const totalRange = endTime - startTime;
+  if (totalRange <= 1) {
+    return cursor;
+  }
+
+  const blendMs = Math.min(totalRange, style.loopBlendMs);
+  const blendStart = endTime - blendMs;
+  if (timeMs <= blendStart) {
+    return cursor;
+  }
+
+  const blendProgress = clamp01((timeMs - blendStart) / Math.max(1, blendMs));
+  if (blendProgress <= 0) {
+    return cursor;
+  }
+
+  const startCursor = interpolateFromTrack(samples, startTime);
+  if (!startCursor) {
+    return cursor;
+  }
+
+  const easedBlend = easeOutCubic(blendProgress);
+  return {
+    x: clamp01(lerp(cursor.x, startCursor.x, easedBlend)),
+    y: clamp01(lerp(cursor.y, startCursor.y, easedBlend)),
+    visible: cursor.visible || startCursor.visible,
+    cursorKind: easedBlend >= 0.5 ? startCursor.cursorKind : cursor.cursorKind,
+  };
+}
+
 function collectClickTimes(track: CursorTrack | null | undefined, zoomRegions?: ZoomRegion[]): number[] {
   const clickTimes: number[] = [];
 
@@ -247,9 +370,10 @@ export function resolveCursorState(params: CursorResolveParams): CursorResolvedS
     .slice()
     .sort((a, b) => a.timeMs - b.timeMs);
 
-  const fromTrack = sortedSamples.length
+  const fromTrackRaw = sortedSamples.length
     ? smoothFromTrack(sortedSamples, sampleTimeMs, style.smoothingMs)
     : null;
+  const fromTrack = applyLoopCursorPosition(fromTrackRaw, sortedSamples, sampleTimeMs, style);
 
   const fallback = getFallbackFocus(params.timeMs, params.zoomRegions, params.fallbackFocus);
 
@@ -257,7 +381,11 @@ export function resolveCursorState(params: CursorResolveParams): CursorResolvedS
   const baseY = fromTrack?.y ?? fallback.cy;
 
   const fallbackVisible = Boolean(params.zoomRegions?.length);
-  const visible = fromTrack?.visible ?? fallbackVisible;
+  const staticVisibilityFactor = fromTrack
+    ? resolveStaticVisibilityFactor(sortedSamples, sampleTimeMs, style)
+    : 1;
+  const visibleFromTrack = fromTrack?.visible ?? fallbackVisible;
+  const visible = visibleFromTrack && staticVisibilityFactor > 0.001;
 
   const clickPulse = resolveClickPulse(sampleTimeMs, collectClickTimes(params.track, params.zoomRegions));
   const clickAccent = easeOutCubic(clickPulse);
@@ -268,9 +396,9 @@ export function resolveCursorState(params: CursorResolveParams): CursorResolvedS
     x: clamp01(baseX),
     y: clamp01(baseY),
     scale: style.size * (1 + clickAccent * 0.1),
-    highlightAlpha: style.highlight * (0.35 + clickAccent * 0.25),
+    highlightAlpha: style.highlight * staticVisibilityFactor * (0.35 + clickAccent * 0.25),
     rippleScale: 1 + clickAccent * 1.8,
-    rippleAlpha: style.ripple * clickPulse,
+    rippleAlpha: style.ripple * staticVisibilityFactor * clickPulse,
     cursorKind,
   };
 }

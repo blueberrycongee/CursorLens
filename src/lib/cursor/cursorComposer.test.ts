@@ -110,6 +110,82 @@ describe('cursorComposer', () => {
     expect(withOffset.x).toBeCloseTo(0.5, 3);
   });
 
+  it('auto-hides static cursor after inactivity window', () => {
+    const track: CursorTrack = {
+      source: 'recorded',
+      samples: [
+        { timeMs: 0, x: 0.42, y: 0.42, visible: true },
+        { timeMs: 120, x: 0.42, y: 0.42, visible: true },
+      ],
+    };
+
+    const hiddenState = resolveCursorState({
+      timeMs: 280,
+      track,
+      style: {
+        ...DEFAULT_CURSOR_STYLE,
+        smoothingMs: 0,
+        autoHideStatic: true,
+        staticHideDelayMs: 100,
+        staticHideFadeMs: 120,
+      },
+    });
+
+    expect(hiddenState.visible).toBe(false);
+    expect(hiddenState.highlightAlpha).toBeCloseTo(0, 3);
+  });
+
+  it('keeps cursor visible when track remains active', () => {
+    const track: CursorTrack = {
+      source: 'recorded',
+      samples: [
+        { timeMs: 0, x: 0.1, y: 0.1, visible: true },
+        { timeMs: 120, x: 0.25, y: 0.2, visible: true },
+        { timeMs: 260, x: 0.4, y: 0.35, visible: true },
+      ],
+    };
+
+    const state = resolveCursorState({
+      timeMs: 280,
+      track,
+      style: {
+        ...DEFAULT_CURSOR_STYLE,
+        smoothingMs: 0,
+        autoHideStatic: true,
+        staticHideDelayMs: 180,
+        staticHideFadeMs: 120,
+      },
+    });
+
+    expect(state.visible).toBe(true);
+    expect(state.highlightAlpha).toBeGreaterThan(0.05);
+  });
+
+  it('loops cursor back toward start near the end of the track', () => {
+    const track: CursorTrack = {
+      source: 'recorded',
+      samples: [
+        { timeMs: 0, x: 0.12, y: 0.2, visible: true, cursorKind: 'arrow' },
+        { timeMs: 1000, x: 0.9, y: 0.8, visible: true, cursorKind: 'ibeam' },
+      ],
+    };
+
+    const state = resolveCursorState({
+      timeMs: 1000,
+      track,
+      style: {
+        ...DEFAULT_CURSOR_STYLE,
+        smoothingMs: 0,
+        loopCursorPosition: true,
+        loopBlendMs: 400,
+      },
+    });
+
+    expect(state.x).toBeCloseTo(0.12, 3);
+    expect(state.y).toBeCloseTo(0.2, 3);
+    expect(state.cursorKind).toBe('arrow');
+  });
+
   it('applies cursor offset before drawing glyph', () => {
     const translateCalls: Array<{ x: number; y: number }> = [];
     const context = {
