@@ -773,7 +773,17 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
       };
       recorder.onstop = async () => {
         let capturedCursorTrack:
-          | { source?: "recorded" | "synthetic"; samples: Array<{ timeMs: number; x: number; y: number; click?: boolean; visible?: boolean }> }
+          | {
+              source?: "recorded" | "synthetic";
+              samples: Array<{
+                timeMs: number;
+                x: number;
+                y: number;
+                click?: boolean;
+                visible?: boolean;
+                cursorKind?: "arrow" | "ibeam";
+              }>;
+            }
           | undefined;
 
         if (cursorTrackingActive.current) {

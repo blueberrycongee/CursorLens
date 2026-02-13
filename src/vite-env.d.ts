@@ -11,7 +11,7 @@ interface ProcessedDesktopSource {
 
 type CursorTrackMetadata = {
   source?: 'recorded' | 'synthetic';
-  samples: Array<{ timeMs: number; x: number; y: number; click?: boolean; visible?: boolean }>;
+  samples: Array<{ timeMs: number; x: number; y: number; click?: boolean; visible?: boolean; cursorKind?: 'arrow' | 'ibeam' }>;
   space?: {
     mode?: 'source-display' | 'virtual-desktop';
     displayId?: string;

@@ -1,11 +1,14 @@
 import type { ZoomFocus, ZoomRegion } from '@/components/video-editor/types';
 
+export type CursorKind = 'arrow' | 'ibeam';
+
 export interface CursorSample {
   timeMs: number;
   x: number; // normalized 0..1 relative to original capture frame
   y: number; // normalized 0..1 relative to original capture frame
   click?: boolean;
   visible?: boolean;
+  cursorKind?: CursorKind;
 }
 
 export interface CursorTrack {
@@ -55,6 +58,7 @@ export interface CursorResolvedState {
   highlightAlpha: number;
   rippleScale: number;
   rippleAlpha: number;
+  cursorKind: CursorKind;
 }
 
 export interface ProjectedCursorPoint {

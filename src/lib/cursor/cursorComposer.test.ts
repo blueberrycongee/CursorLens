@@ -128,6 +128,7 @@ describe('cursorComposer', () => {
         highlightAlpha: 0,
         rippleScale: 1,
         rippleAlpha: 0,
+        cursorKind: 'arrow',
       },
       { ...DEFAULT_CURSOR_STYLE, offsetX: 12, offsetY: -6, shadow: 0 },
     );
@@ -172,6 +173,7 @@ describe('cursorComposer', () => {
         highlightAlpha: 0,
         rippleScale: 1,
         rippleAlpha: 0,
+        cursorKind: 'arrow',
       },
       { ...DEFAULT_CURSOR_STYLE, shadow: 0 },
       2,
@@ -209,6 +211,7 @@ describe('cursorComposer', () => {
         highlightAlpha: 0,
         rippleScale: 1,
         rippleAlpha: 0,
+        cursorKind: 'arrow',
       },
       {
         sourceCanvas,

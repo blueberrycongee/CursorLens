@@ -212,6 +212,7 @@ export function resolveCursorState(params: CursorResolveParams): CursorResolvedS
       highlightAlpha: 0,
       rippleScale: 0,
       rippleAlpha: 0,
+      cursorKind: 'arrow',
     };
   }
 
@@ -244,6 +245,7 @@ export function resolveCursorState(params: CursorResolveParams): CursorResolvedS
     highlightAlpha: style.highlight * (0.35 + clickAccent * 0.25),
     rippleScale: 1 + clickAccent * 1.8,
     rippleAlpha: style.ripple * clickPulse,
+    cursorKind: 'arrow',
   };
 }
 

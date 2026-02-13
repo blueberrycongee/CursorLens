@@ -39,7 +39,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       systemCursorMode?: 'always' | 'never';
       cursorTrack?: {
         source?: 'recorded' | 'synthetic';
-        samples: Array<{ timeMs: number; x: number; y: number; click?: boolean; visible?: boolean }>;
+        samples: Array<{ timeMs: number; x: number; y: number; click?: boolean; visible?: boolean; cursorKind?: 'arrow' | 'ibeam' }>;
       };
     },
   ) => {
@@ -99,7 +99,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     systemCursorMode?: 'always' | 'never';
     cursorTrack?: {
       source?: 'recorded' | 'synthetic';
-      samples: Array<{ timeMs: number; x: number; y: number; click?: boolean; visible?: boolean }>;
+      samples: Array<{ timeMs: number; x: number; y: number; click?: boolean; visible?: boolean; cursorKind?: 'arrow' | 'ibeam' }>;
     };
   }) => {
     return ipcRenderer.invoke('set-current-video-path', path, metadata)

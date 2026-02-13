@@ -28,6 +28,10 @@
     {
       "from": "electron/native/bin/sck-recorder",
       "to": "native/sck-recorder"
+    },
+    {
+      "from": "electron/native/bin/cursor-kind-monitor",
+      "to": "native/cursor-kind-monitor"
     }
   ],
 

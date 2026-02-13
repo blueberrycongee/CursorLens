@@ -4,6 +4,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { RECORDINGS_DIR } from '../main'
 import { startNativeMacRecorder, stopNativeMacRecorder } from '../native/sckRecorder'
+import { getNativeCursorKind, startNativeCursorKindMonitor, stopNativeCursorKindMonitor } from '../native/cursorKindMonitor'
 import { getWindowBoundsById, parseWindowIdFromSourceId } from './windowBounds'
 import {
   isPointInsideBounds,
@@ -38,6 +39,7 @@ type CurrentVideoMetadata = {
       y: number
       click?: boolean
       visible?: boolean
+      cursorKind?: 'arrow' | 'ibeam'
     }>
     space?: {
       mode?: CaptureBoundsMode
@@ -101,6 +103,7 @@ function pushCursorSample(
   tracker: CursorTrackerRuntime,
   now: number,
   point: { x: number; y: number },
+  cursorKind: 'arrow' | 'ibeam',
   click = false,
 ): void {
   const timeMs = Math.max(0, now - tracker.startedAt)
@@ -114,6 +117,7 @@ function pushCursorSample(
     y: normalized.y,
     click: click && visible,
     visible,
+    cursorKind,
   })
 
   if (click && visible) {
@@ -192,19 +196,21 @@ function sanitizeCursorTrack(input?: CurrentVideoMetadata['cursorTrack'] | null)
       const x = Number(sample.x)
       const y = Number(sample.y)
       if (!Number.isFinite(timeMs) || !Number.isFinite(x) || !Number.isFinite(y)) return null
+      const cursorKind: 'arrow' | 'ibeam' = sample.cursorKind === 'ibeam' ? 'ibeam' : 'arrow'
       return {
         timeMs: Math.max(0, Math.round(timeMs)),
         x: Math.min(1, Math.max(0, x)),
         y: Math.min(1, Math.max(0, y)),
         click: Boolean(sample.click),
         visible: sample.visible === false ? false : true,
+        cursorKind,
       }
     })
     .filter((sample): sample is NonNullable<typeof sample> => Boolean(sample))
     .sort((a, b) => a.timeMs - b.timeMs)
 
   if (samples.length === 0) return undefined
-  const normalized: CurrentVideoMetadata['cursorTrack'] = {
+  const normalized: NonNullable<CurrentVideoMetadata['cursorTrack']> = {
     source: input.source === 'synthetic' ? 'synthetic' : 'recorded',
     samples,
   }
@@ -343,6 +349,7 @@ export function registerIpcHandlers(
       globalThis.clearInterval(cursorTracker.boundsRefreshTimer)
       cursorTracker.boundsRefreshTimer = null
     }
+    stopNativeCursorKindMonitor()
     const payload = sanitizeCursorTrack({
       source: 'recorded',
       samples: cursorTracker.samples,
@@ -367,6 +374,7 @@ export function registerIpcHandlers(
 
   ipcMain.handle('cursor-tracker-start', async (_, options?: CursorTrackerStartOptions) => {
     stopCursorTracker()
+    await startNativeCursorKindMonitor()
 
     const startedAt = Date.now()
     const initialPoint = screen.getCursorScreenPoint()
@@ -431,7 +439,7 @@ export function registerIpcHandlers(
         if (!cursorTracker.lastPoint) {
           cursorTracker.lastPoint = { x: point.x, y: point.y }
           cursorTracker.lastTickAt = now
-          pushCursorSample(cursorTracker, now, point, false)
+          pushCursorSample(cursorTracker, now, point, getNativeCursorKind(), false)
           return
         }
 
@@ -460,7 +468,7 @@ export function registerIpcHandlers(
 
         const shouldStore = click || distance >= 0.2 || now - cursorTracker.lastSampleAt >= 33
         if (shouldStore) {
-          pushCursorSample(cursorTracker, now, point, click)
+          pushCursorSample(cursorTracker, now, point, getNativeCursorKind(), click)
         }
 
         cursorTracker.lastSpeed = speed
@@ -514,7 +522,7 @@ export function registerIpcHandlers(
         })()
       }, 120)
     }
-    pushCursorSample(tracker, startedAt, initialPoint, false)
+    pushCursorSample(tracker, startedAt, initialPoint, getNativeCursorKind(), false)
 
     return { success: true }
   })

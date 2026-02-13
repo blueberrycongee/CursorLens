@@ -76,17 +76,26 @@ function normalizeCursorTrack(input: unknown): CursorTrack | null {
   const samples = raw.samples
     .map((sample) => {
       if (!sample || typeof sample !== "object") return null;
-      const row = sample as { timeMs?: unknown; x?: unknown; y?: unknown; click?: unknown; visible?: unknown };
+      const row = sample as {
+        timeMs?: unknown;
+        x?: unknown;
+        y?: unknown;
+        click?: unknown;
+        visible?: unknown;
+        cursorKind?: unknown;
+      };
       const timeMs = Number(row.timeMs);
       const x = Number(row.x);
       const y = Number(row.y);
       if (!Number.isFinite(timeMs) || !Number.isFinite(x) || !Number.isFinite(y)) return null;
+      const cursorKind: "arrow" | "ibeam" = row.cursorKind === "ibeam" ? "ibeam" : "arrow";
       return {
         timeMs: Math.max(0, Math.round(timeMs)),
         x: Math.min(1, Math.max(0, x)),
         y: Math.min(1, Math.max(0, y)),
         click: Boolean(row.click),
         visible: row.visible === false ? false : true,
+        cursorKind,
       };
     })
     .filter((sample): sample is NonNullable<typeof sample> => Boolean(sample))

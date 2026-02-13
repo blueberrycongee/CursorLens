@@ -9,39 +9,60 @@ if (process.platform !== 'darwin') {
 }
 
 const projectRoot = process.cwd();
-const sourcePath = path.join(projectRoot, 'electron/native/macos/sck-recorder.swift');
-const outputPath = path.join(projectRoot, 'electron/native/bin/sck-recorder');
 
-mkdirSync(path.dirname(outputPath), { recursive: true });
-
-const args = [
-  'swiftc',
-  '-parse-as-library',
-  '-O',
-  sourcePath,
-  '-framework', 'ScreenCaptureKit',
-  '-framework', 'AVFoundation',
-  '-framework', 'CoreMedia',
-  '-framework', 'CoreVideo',
-  '-framework', 'CoreGraphics',
-  '-framework', 'Foundation',
-  '-o', outputPath,
+const helpers = [
+  {
+    label: 'ScreenCaptureKit recorder helper',
+    sourcePath: path.join(projectRoot, 'electron/native/macos/sck-recorder.swift'),
+    outputPath: path.join(projectRoot, 'electron/native/bin/sck-recorder'),
+    frameworks: [
+      'ScreenCaptureKit',
+      'AVFoundation',
+      'CoreMedia',
+      'CoreVideo',
+      'CoreGraphics',
+      'Foundation',
+    ],
+  },
+  {
+    label: 'cursor kind monitor helper',
+    sourcePath: path.join(projectRoot, 'electron/native/macos/cursor-kind-monitor.swift'),
+    outputPath: path.join(projectRoot, 'electron/native/bin/cursor-kind-monitor'),
+    frameworks: [
+      'Foundation',
+      'AppKit',
+      'CryptoKit',
+    ],
+  },
 ];
 
-console.log('[native-helper] compiling ScreenCaptureKit recorder helper...');
-const result = spawnSync('xcrun', args, {
-  cwd: projectRoot,
-  stdio: 'inherit',
-});
+for (const helper of helpers) {
+  mkdirSync(path.dirname(helper.outputPath), { recursive: true });
 
-if (result.status !== 0) {
-  process.exit(result.status ?? 1);
+  const args = [
+    'swiftc',
+    '-parse-as-library',
+    '-O',
+    helper.sourcePath,
+    ...helper.frameworks.flatMap((framework) => ['-framework', framework]),
+    '-o', helper.outputPath,
+  ];
+
+  console.log(`[native-helper] compiling ${helper.label}...`);
+  const result = spawnSync('xcrun', args, {
+    cwd: projectRoot,
+    stdio: 'inherit',
+  });
+
+  if (result.status !== 0) {
+    process.exit(result.status ?? 1);
+  }
+
+  if (!existsSync(helper.outputPath)) {
+    console.error(`[native-helper] expected output binary was not created: ${helper.outputPath}`);
+    process.exit(1);
+  }
+
+  spawnSync('chmod', ['755', helper.outputPath], { stdio: 'inherit' });
+  console.log(`[native-helper] built ${helper.outputPath}`);
 }
-
-if (!existsSync(outputPath)) {
-  console.error('[native-helper] expected output binary was not created');
-  process.exit(1);
-}
-
-spawnSync('chmod', ['755', outputPath], { stdio: 'inherit' });
-console.log(`[native-helper] built ${outputPath}`);
