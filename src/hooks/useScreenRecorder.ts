@@ -56,6 +56,19 @@ function dedupe<T>(items: T[]): T[] {
   return Array.from(new Set(items));
 }
 
+function combineVideoAndAudioStream(
+  videoStream: MediaStream,
+  microphoneStream?: MediaStream | null,
+): MediaStream {
+  const tracks: MediaStreamTrack[] = [
+    ...videoStream.getVideoTracks(),
+  ];
+  if (microphoneStream) {
+    tracks.push(...microphoneStream.getAudioTracks());
+  }
+  return new MediaStream(tracks);
+}
+
 async function pickPreferredCameraId(): Promise<string | undefined> {
   try {
     const devices = await navigator.mediaDevices.enumerateDevices();
@@ -82,6 +95,7 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
   const mediaRecorder = useRef<MediaRecorder | null>(null);
   const stream = useRef<MediaStream | null>(null);
   const cameraStream = useRef<MediaStream | null>(null);
+  const microphoneStream = useRef<MediaStream | null>(null);
   const chunks = useRef<Blob[]>([]);
   const startTime = useRef<number>(0);
   const compositionCleanup = useRef<(() => void) | null>(null);
@@ -94,6 +108,7 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
     height: number;
     mimeType: string;
     systemCursorMode: CursorMode;
+    hasMicrophoneAudio: boolean;
   } | null>(null);
 
   const profileSettings: Record<CaptureProfile, { targetFps: number; maxFps: number; bitrateScale: number; cameraCompositeFpsCap: number; maxLongEdge: number }> = {
@@ -220,6 +235,10 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
       cameraStream.current.getTracks().forEach(track => track.stop());
       cameraStream.current = null;
     }
+    if (microphoneStream.current) {
+      microphoneStream.current.getTracks().forEach(track => track.stop());
+      microphoneStream.current = null;
+    }
     if (stream.current) {
       stream.current.getTracks().forEach(track => track.stop());
       stream.current = null;
@@ -262,6 +281,7 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
         height: 1080,
         mimeType: "video/mp4",
         systemCursorMode: "always" as CursorMode,
+        hasMicrophoneAudio: false,
       };
       const metadata = stopResult.metadata ?? fallbackMetadata;
       const capturedAt = stopResult.metadata?.capturedAt ?? Date.now();
@@ -273,6 +293,7 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
         mimeType: metadata.mimeType ?? "video/mp4",
         capturedAt,
         systemCursorMode: metadata.systemCursorMode ?? fallbackMetadata.systemCursorMode,
+        hasMicrophoneAudio: metadata.hasMicrophoneAudio ?? fallbackMetadata.hasMicrophoneAudio,
         cursorTrack: capturedCursorTrack,
       });
 
@@ -607,6 +628,24 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
     return await captureWithLegacyDesktopConstraints();
   };
 
+  const captureRequiredMicrophoneStream = async (): Promise<MediaStream> => {
+    try {
+      return await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+        video: false,
+      });
+    } catch (error) {
+      console.error("Failed to acquire microphone stream for recording.", error);
+      throw new Error(
+        "Microphone access is required for recording voice. Allow CursorLens to use your microphone and try again.",
+      );
+    }
+  };
+
   const startRecording = async () => {
     if (transitionInFlight.current || recordingState !== "idle") {
       return;
@@ -640,6 +679,10 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
         switch (code) {
           case "permission_denied":
             return "Screen Recording permission is not granted. Open System Settings > Privacy & Security > Screen Recording, allow CursorLens, then relaunch the app.";
+          case "microphone_permission_denied":
+            return "Microphone permission is not granted. Open System Settings > Privacy & Security > Microphone, allow CursorLens, then relaunch the app.";
+          case "microphone_unavailable":
+            return "No available microphone input was found. Connect/enable a microphone and try again.";
           case "window_not_found":
             return "The selected window is no longer available (it may be minimized, closed, or moved to another Space). Keep the window on-screen and try again.";
           case "window_capture_denied":
@@ -668,6 +711,7 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
           await window.electronAPI.startNativeScreenRecording({
             source: sourceRef,
             cursorMode,
+            microphoneEnabled: true,
             cameraEnabled,
             cameraShape,
             cameraSizePercent,
@@ -707,6 +751,7 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
           height: nativeHeight,
           mimeType: "video/mp4",
           systemCursorMode,
+          hasMicrophoneAudio: nativeStart.hasMicrophoneAudio === true,
         };
         nativeRecordingActive.current = true;
 
@@ -780,7 +825,12 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
       );
       
       chunks.current = [];
-      let recordingStream: MediaStream = desktopStream;
+      const micStream = await captureRequiredMicrophoneStream();
+      microphoneStream.current = micStream;
+      const desktopRecordingStream = combineVideoAndAudioStream(desktopStream, micStream);
+      const hasMicrophoneAudio = micStream.getAudioTracks().length > 0;
+
+      let recordingStream: MediaStream = desktopRecordingStream;
       if (includeCamera) {
         try {
           const composition = await buildCompositedStream(
@@ -791,7 +841,7 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
             { shape: cameraShape, sizePercent: cameraSizePercent },
           );
           compositionCleanup.current = composition.cleanup;
-          recordingStream = composition.compositeStream;
+          recordingStream = combineVideoAndAudioStream(composition.compositeStream, micStream);
           width = composition.width;
           height = composition.height;
           frameRate = composition.frameRate;
@@ -814,10 +864,13 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
       } catch (error) {
         // Some machines fail MediaRecorder init for canvas capture + certain codecs.
         // Fallback to screen-only stream so recording can still start.
-        if (recordingStream !== desktopStream) {
+        if (recordingStream !== desktopRecordingStream) {
           console.warn("Failed to initialize recorder for camera composited stream, fallback to screen-only.", error);
-          cleanupActiveMedia();
-          recorder = createMediaRecorderWithFallback(desktopStream, mimeType, videoBitsPerSecond);
+          if (compositionCleanup.current) {
+            compositionCleanup.current();
+            compositionCleanup.current = null;
+          }
+          recorder = createMediaRecorderWithFallback(desktopRecordingStream, mimeType, videoBitsPerSecond);
         } else {
           throw error;
         }
@@ -893,6 +946,7 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
             mimeType: recordedMimeType,
             capturedAt: timestamp,
             systemCursorMode,
+            hasMicrophoneAudio,
             cursorTrack: capturedCursorTrack,
           };
           const videoResult = await window.electronAPI.storeRecordedVideo(arrayBuffer, videoFileName, captureMetadata);

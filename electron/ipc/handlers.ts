@@ -36,6 +36,7 @@ type CurrentVideoMetadata = {
   mimeType?: string
   capturedAt?: number
   systemCursorMode?: 'always' | 'never'
+  hasMicrophoneAudio?: boolean
   cursorTrack?: {
     source?: 'recorded' | 'synthetic'
     samples: Array<{
@@ -75,6 +76,7 @@ type CursorTrackerStartOptions = {
 type NativeRecorderStartOptions = {
   source?: CaptureSourceRef | SelectedSource | null
   cursorMode?: 'always' | 'never'
+  microphoneEnabled?: boolean
   cameraEnabled?: boolean
   cameraShape?: 'rounded' | 'square' | 'circle'
   cameraSizePercent?: number
@@ -325,6 +327,9 @@ function sanitizeVideoMetadata(metadata?: CurrentVideoMetadata | null): CurrentV
   }
   if (metadata.systemCursorMode === 'always' || metadata.systemCursorMode === 'never') {
     normalized.systemCursorMode = metadata.systemCursorMode
+  }
+  if (typeof metadata.hasMicrophoneAudio === 'boolean') {
+    normalized.hasMicrophoneAudio = metadata.hasMicrophoneAudio
   }
 
   const cursorTrack = sanitizeCursorTrack(metadata.cursorTrack)
@@ -642,6 +647,7 @@ export function registerIpcHandlers(
 
       const sourceRef = normalizeSourceRef(options?.source) ?? normalizeSourceRef(selectedSource)
       const cursorMode = options?.cursorMode === 'never' ? 'never' : 'always'
+      const microphoneEnabled = options?.microphoneEnabled !== false
       const cameraEnabled = options?.cameraEnabled === true
       const cameraShape = options?.cameraShape === 'square' || options?.cameraShape === 'circle'
         ? options.cameraShape
@@ -659,6 +665,7 @@ export function registerIpcHandlers(
         sourceId: typeof sourceRef?.id === 'string' ? sourceRef.id : undefined,
         displayId: sourceRef?.display_id ? String(sourceRef.display_id) : undefined,
         cursorMode,
+        microphoneEnabled,
         cameraEnabled,
         cameraShape,
         cameraSizePercent,
@@ -684,6 +691,7 @@ export function registerIpcHandlers(
         height: result.ready.height,
         frameRate: result.ready.frameRate,
         sourceKind: result.ready.sourceKind,
+        hasMicrophoneAudio: result.ready.hasMicrophoneAudio,
       }
     } catch (error) {
       return {

@@ -26,6 +26,7 @@ struct RecorderArguments {
     let sourceId: String?
     let displayId: String?
     let hideCursor: Bool
+    let microphoneEnabled: Bool
     let fps: Int
     let targetWidth: Int?
     let targetHeight: Int?
@@ -38,6 +39,7 @@ struct RecorderArguments {
         var sourceId: String?
         var displayId: String?
         var hideCursor = false
+        var microphoneEnabled = true
         var fps = 60
         var targetWidth: Int?
         var targetHeight: Int?
@@ -63,6 +65,10 @@ struct RecorderArguments {
             case "--hide-cursor":
                 guard let value = next else { throw RecorderError.invalidArguments("Missing --hide-cursor value") }
                 hideCursor = value == "1" || value.lowercased() == "true"
+                idx += 2
+            case "--microphone-enabled":
+                guard let value = next else { throw RecorderError.invalidArguments("Missing --microphone-enabled value") }
+                microphoneEnabled = value == "1" || value.lowercased() == "true"
                 idx += 2
             case "--fps":
                 guard let value = next, let parsed = Int(value), parsed > 0 else {
@@ -110,6 +116,7 @@ struct RecorderArguments {
             sourceId: sourceId,
             displayId: displayId,
             hideCursor: hideCursor,
+            microphoneEnabled: microphoneEnabled,
             fps: fps,
             targetWidth: targetWidth,
             targetHeight: targetHeight,
@@ -124,6 +131,8 @@ enum RecorderError: Error, CustomStringConvertible {
     case invalidArguments(String)
     case sourceNotFound(String)
     case permissionDenied(String)
+    case microphonePermissionDenied(String)
+    case microphoneUnavailable(String)
     case windowNotFound(String)
     case windowCaptureDenied(String)
     case streamStartFailed(String)
@@ -139,6 +148,10 @@ enum RecorderError: Error, CustomStringConvertible {
             return "source_not_found"
         case .permissionDenied:
             return "permission_denied"
+        case .microphonePermissionDenied:
+            return "microphone_permission_denied"
+        case .microphoneUnavailable:
+            return "microphone_unavailable"
         case .windowNotFound:
             return "window_not_found"
         case .windowCaptureDenied:
@@ -162,6 +175,10 @@ enum RecorderError: Error, CustomStringConvertible {
             return "Capture source not found: \(message)"
         case let .permissionDenied(message):
             return "Screen Recording permission denied: \(message)"
+        case let .microphonePermissionDenied(message):
+            return "Microphone permission denied: \(message)"
+        case let .microphoneUnavailable(message):
+            return "Microphone unavailable: \(message)"
         case let .windowNotFound(message):
             return "Selected window unavailable: \(message)"
         case let .windowCaptureDenied(message):
@@ -307,14 +324,63 @@ final class CameraCaptureProvider: NSObject, AVCaptureVideoDataOutputSampleBuffe
     }
 }
 
+final class MicrophoneCaptureProvider: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
+    private let session = AVCaptureSession()
+    private let outputQueue = DispatchQueue(label: "com.cursorlens.sck-recorder.microphone-output")
+    private var onSampleBuffer: ((CMSampleBuffer) -> Void)?
+
+    func start(onSampleBuffer: @escaping (CMSampleBuffer) -> Void) throws {
+        self.onSampleBuffer = onSampleBuffer
+
+        guard let device = AVCaptureDevice.default(for: .audio) else {
+            throw RecorderError.microphoneUnavailable("No microphone input device available")
+        }
+
+        let input = try AVCaptureDeviceInput(device: device)
+        let output = AVCaptureAudioDataOutput()
+        output.setSampleBufferDelegate(self, queue: outputQueue)
+
+        session.beginConfiguration()
+        guard session.canAddInput(input) else {
+            session.commitConfiguration()
+            throw RecorderError.microphoneUnavailable("Unable to attach microphone input")
+        }
+        session.addInput(input)
+
+        guard session.canAddOutput(output) else {
+            session.commitConfiguration()
+            throw RecorderError.microphoneUnavailable("Unable to attach microphone output")
+        }
+        session.addOutput(output)
+        session.commitConfiguration()
+        session.startRunning()
+    }
+
+    func stop() {
+        session.stopRunning()
+        onSampleBuffer = nil
+    }
+
+    func captureOutput(
+        _ output: AVCaptureOutput,
+        didOutput sampleBuffer: CMSampleBuffer,
+        from connection: AVCaptureConnection
+    ) {
+        guard CMSampleBufferDataIsReady(sampleBuffer) else { return }
+        onSampleBuffer?(sampleBuffer)
+    }
+}
+
 final class ScreenStreamWriter: NSObject, SCStreamOutput {
     private let writer: AVAssetWriter
     private let input: AVAssetWriterInput
+    private let audioInput: AVAssetWriterInput?
     private let adaptor: AVAssetWriterInputPixelBufferAdaptor
     private let ciContext = CIContext(options: [
         CIContextOption.cacheIntermediates: false,
     ])
     private let colorSpace = CGColorSpaceCreateDeviceRGB()
+    private let audioQueue = DispatchQueue(label: "com.cursorlens.sck-recorder.audio-writer")
 
     private let videoWidth: Int
     private let videoHeight: Int
@@ -322,6 +388,7 @@ final class ScreenStreamWriter: NSObject, SCStreamOutput {
     private let overlayRect: OverlayRect?
     private let overlayMaskImage: CIImage?
     private let overlayBorderImage: CIImage?
+    let hasMicrophoneAudio: Bool
 
     private var firstPTS: CMTime?
     private(set) var frameCount = 0
@@ -331,6 +398,7 @@ final class ScreenStreamWriter: NSObject, SCStreamOutput {
         width: Int,
         height: Int,
         fps: Int,
+        microphoneEnabled: Bool,
         cameraProvider: CameraCaptureProvider?,
         cameraShape: CameraOverlayShape,
         cameraSizePercent: Int
@@ -355,6 +423,27 @@ final class ScreenStreamWriter: NSObject, SCStreamOutput {
         }
         writer.add(input)
 
+        if microphoneEnabled {
+            let audioInput = AVAssetWriterInput(
+                mediaType: .audio,
+                outputSettings: [
+                    AVFormatIDKey: kAudioFormatMPEG4AAC,
+                    AVEncoderBitRateKey: 128_000,
+                    AVSampleRateKey: 44_100,
+                    AVNumberOfChannelsKey: 1,
+                ]
+            )
+            audioInput.expectsMediaDataInRealTime = true
+            if writer.canAdd(audioInput) {
+                writer.add(audioInput)
+                self.audioInput = audioInput
+            } else {
+                throw RecorderError.writerFailed("Unable to attach AVAssetWriter audio input")
+            }
+        } else {
+            audioInput = nil
+        }
+
         adaptor = AVAssetWriterInputPixelBufferAdaptor(
             assetWriterInput: input,
             sourcePixelBufferAttributes: [
@@ -368,6 +457,7 @@ final class ScreenStreamWriter: NSObject, SCStreamOutput {
         videoWidth = width
         videoHeight = height
         self.cameraProvider = cameraProvider
+        hasMicrophoneAudio = microphoneEnabled
 
         if cameraProvider != nil {
             let overlay = Self.computeOverlayRect(
@@ -416,6 +506,7 @@ final class ScreenStreamWriter: NSObject, SCStreamOutput {
 
     func finish() async throws {
         input.markAsFinished()
+        audioInput?.markAsFinished()
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             writer.finishWriting {
                 continuation.resume()
@@ -427,6 +518,62 @@ final class ScreenStreamWriter: NSObject, SCStreamOutput {
         if writer.status != .completed {
             throw RecorderError.writerFailed("AVAssetWriter finished with status=\(writer.status.rawValue)")
         }
+    }
+
+    func appendMicrophoneSampleBuffer(_ sampleBuffer: CMSampleBuffer) {
+        audioQueue.async { [weak self] in
+            guard let self, let audioInput else { return }
+            guard CMSampleBufferDataIsReady(sampleBuffer) else { return }
+            guard audioInput.isReadyForMoreMediaData else { return }
+            guard let firstPTS else { return }
+
+            let originalPTS = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+            let relativePTS = CMTimeSubtract(originalPTS, firstPTS)
+            guard relativePTS >= .zero else { return }
+
+            guard let shiftedSampleBuffer = self.shiftSampleBufferTiming(sampleBuffer, by: firstPTS) else { return }
+            _ = audioInput.append(shiftedSampleBuffer)
+        }
+    }
+
+    private func shiftSampleBufferTiming(_ sampleBuffer: CMSampleBuffer, by offset: CMTime) -> CMSampleBuffer? {
+        var count = 0
+        var status = CMSampleBufferGetSampleTimingInfoArray(
+            sampleBuffer,
+            entryCount: 0,
+            arrayToFill: nil,
+            entriesNeededOut: &count
+        )
+        guard status == noErr, count > 0 else { return nil }
+
+        var timingInfo = Array(repeating: CMSampleTimingInfo(), count: count)
+        status = CMSampleBufferGetSampleTimingInfoArray(
+            sampleBuffer,
+            entryCount: count,
+            arrayToFill: &timingInfo,
+            entriesNeededOut: &count
+        )
+        guard status == noErr else { return nil }
+
+        for idx in 0..<count {
+            if timingInfo[idx].presentationTimeStamp.isValid {
+                timingInfo[idx].presentationTimeStamp = CMTimeSubtract(timingInfo[idx].presentationTimeStamp, offset)
+            }
+            if timingInfo[idx].decodeTimeStamp.isValid {
+                timingInfo[idx].decodeTimeStamp = CMTimeSubtract(timingInfo[idx].decodeTimeStamp, offset)
+            }
+        }
+
+        var adjustedSampleBuffer: CMSampleBuffer?
+        status = CMSampleBufferCreateCopyWithNewTiming(
+            allocator: kCFAllocatorDefault,
+            sampleBuffer: sampleBuffer,
+            sampleTimingEntryCount: count,
+            sampleTimingArray: &timingInfo,
+            sampleBufferOut: &adjustedSampleBuffer
+        )
+        guard status == noErr else { return nil }
+        return adjustedSampleBuffer
     }
 
     private func composeFrame(screenPixelBuffer: CVPixelBuffer) -> CVPixelBuffer? {
@@ -623,14 +770,16 @@ final class SCKRecorder {
     private var stream: SCStream?
     private var writer: ScreenStreamWriter?
     private var cameraProvider: CameraCaptureProvider?
+    private var microphoneProvider: MicrophoneCaptureProvider?
     private let permissionGuidance = "Allow CursorLens in System Settings > Privacy & Security > Screen Recording, then relaunch the app."
+    private let microphonePermissionGuidance = "Allow CursorLens in System Settings > Privacy & Security > Microphone, then relaunch the app."
 
     init(args: RecorderArguments) {
         self.args = args
     }
 
     @MainActor
-    func start() async throws -> (width: Int, height: Int, sourceKind: String) {
+    func start() async throws -> (width: Int, height: Int, sourceKind: String, hasMicrophoneAudio: Bool) {
         let content: SCShareableContent
         do {
             content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
@@ -660,6 +809,7 @@ final class SCKRecorder {
                 width: resolved.width,
                 height: resolved.height,
                 fps: args.fps,
+                microphoneEnabled: args.microphoneEnabled,
                 cameraProvider: cameraProvider,
                 cameraShape: args.cameraShape,
                 cameraSizePercent: args.cameraSizePercent
@@ -667,6 +817,21 @@ final class SCKRecorder {
         } catch {
             cameraProvider?.stop()
             throw error
+        }
+
+        var microphoneProvider: MicrophoneCaptureProvider?
+        if args.microphoneEnabled {
+            try await ensureMicrophonePermission()
+            let provider = MicrophoneCaptureProvider()
+            do {
+                try provider.start { sampleBuffer in
+                    writer.appendMicrophoneSampleBuffer(sampleBuffer)
+                }
+                microphoneProvider = provider
+            } catch {
+                cameraProvider?.stop()
+                throw RecorderError.microphoneUnavailable(String(describing: error))
+            }
         }
 
         let config = SCStreamConfiguration()
@@ -685,14 +850,21 @@ final class SCKRecorder {
             try await stream.startCapture()
         } catch {
             cameraProvider?.stop()
+            microphoneProvider?.stop()
             throw mapStreamStartError(error, sourceKind: resolved.sourceKind)
         }
 
         self.writer = writer
         self.stream = stream
         self.cameraProvider = cameraProvider
+        self.microphoneProvider = microphoneProvider
 
-        return (width: resolved.width, height: resolved.height, sourceKind: resolved.sourceKind)
+        return (
+            width: resolved.width,
+            height: resolved.height,
+            sourceKind: resolved.sourceKind,
+            hasMicrophoneAudio: writer.hasMicrophoneAudio
+        )
     }
 
     func stop() async throws -> Int {
@@ -703,6 +875,8 @@ final class SCKRecorder {
         defer {
             cameraProvider?.stop()
             cameraProvider = nil
+            microphoneProvider?.stop()
+            microphoneProvider = nil
         }
 
         try await stream.stopCapture()
@@ -784,6 +958,27 @@ final class SCKRecorder {
         return .streamStartFailed("Failed to enumerate shareable content: \(localized)")
     }
 
+    private func ensureMicrophonePermission() async throws {
+        let status = AVCaptureDevice.authorizationStatus(for: .audio)
+        switch status {
+        case .authorized:
+            return
+        case .notDetermined:
+            let granted = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+                AVCaptureDevice.requestAccess(for: .audio) { approved in
+                    continuation.resume(returning: approved)
+                }
+            }
+            if !granted {
+                throw RecorderError.microphonePermissionDenied(microphonePermissionGuidance)
+            }
+        case .denied, .restricted:
+            throw RecorderError.microphonePermissionDenied(microphonePermissionGuidance)
+        @unknown default:
+            throw RecorderError.microphonePermissionDenied(microphonePermissionGuidance)
+        }
+    }
+
     private func forceEven(_ value: Int) -> Int {
         value % 2 == 0 ? value : value - 1
     }
@@ -812,7 +1007,7 @@ struct NativeRecorderMain {
             let recorder = SCKRecorder(args: args)
             let info = try await recorder.start()
 
-            print("SCK_RECORDER_READY width=\(info.width) height=\(info.height) fps=\(args.fps) source=\(info.sourceKind)")
+            print("SCK_RECORDER_READY width=\(info.width) height=\(info.height) fps=\(args.fps) source=\(info.sourceKind) mic=\(info.hasMicrophoneAudio ? 1 : 0)")
             fflush(stdout)
 
             let stopSignal = StopSignal()

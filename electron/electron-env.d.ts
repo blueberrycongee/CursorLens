@@ -51,18 +51,19 @@ interface Window {
     storeRecordedVideo: (
       videoData: ArrayBuffer,
       fileName: string,
-      metadata?: { frameRate?: number; width?: number; height?: number; mimeType?: string; capturedAt?: number; systemCursorMode?: 'always' | 'never'; cursorTrack?: CursorTrackMetadata }
+      metadata?: { frameRate?: number; width?: number; height?: number; mimeType?: string; capturedAt?: number; systemCursorMode?: 'always' | 'never'; hasMicrophoneAudio?: boolean; cursorTrack?: CursorTrackMetadata }
     ) => Promise<{
       success: boolean
       path?: string
       message?: string
-      metadata?: { frameRate?: number; width?: number; height?: number; mimeType?: string; capturedAt?: number; systemCursorMode?: 'always' | 'never'; cursorTrack?: CursorTrackMetadata }
+      metadata?: { frameRate?: number; width?: number; height?: number; mimeType?: string; capturedAt?: number; systemCursorMode?: 'always' | 'never'; hasMicrophoneAudio?: boolean; cursorTrack?: CursorTrackMetadata }
     }>
     getRecordedVideoPath: () => Promise<{ success: boolean; path?: string; message?: string }>
     setRecordingState: (recording: boolean) => Promise<void>
     startNativeScreenRecording: (options?: {
       source?: { id?: string; display_id?: string | number | null }
       cursorMode?: 'always' | 'never'
+      microphoneEnabled?: boolean
       cameraEnabled?: boolean
       cameraShape?: 'rounded' | 'square' | 'circle'
       cameraSizePercent?: number
@@ -77,6 +78,7 @@ interface Window {
       height?: number
       frameRate?: number
       sourceKind?: 'display' | 'window' | 'unknown'
+      hasMicrophoneAudio?: boolean
     }>
     stopNativeScreenRecording: () => Promise<{
       success: boolean
@@ -89,6 +91,7 @@ interface Window {
         mimeType?: string
         capturedAt?: number
         systemCursorMode?: 'always' | 'never'
+        hasMicrophoneAudio?: boolean
       }
     }>
     startCursorTracking: (options?: {
@@ -102,12 +105,12 @@ interface Window {
     openVideoFilePicker: (locale?: string) => Promise<{ success: boolean; path?: string; cancelled?: boolean }>
     setCurrentVideoPath: (
       path: string,
-      metadata?: { frameRate?: number; width?: number; height?: number; mimeType?: string; capturedAt?: number; systemCursorMode?: 'always' | 'never'; cursorTrack?: CursorTrackMetadata }
+      metadata?: { frameRate?: number; width?: number; height?: number; mimeType?: string; capturedAt?: number; systemCursorMode?: 'always' | 'never'; hasMicrophoneAudio?: boolean; cursorTrack?: CursorTrackMetadata }
     ) => Promise<{ success: boolean }>
     getCurrentVideoPath: () => Promise<{
       success: boolean
       path?: string
-      metadata?: { frameRate?: number; width?: number; height?: number; mimeType?: string; capturedAt?: number; systemCursorMode?: 'always' | 'never'; cursorTrack?: CursorTrackMetadata }
+      metadata?: { frameRate?: number; width?: number; height?: number; mimeType?: string; capturedAt?: number; systemCursorMode?: 'always' | 'never'; hasMicrophoneAudio?: boolean; cursorTrack?: CursorTrackMetadata }
     }>
     clearCurrentVideoPath: () => Promise<{ success: boolean }>
     getPlatform: () => Promise<string>

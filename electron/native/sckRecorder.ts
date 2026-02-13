@@ -10,6 +10,7 @@ export type NativeRecorderStartOptions = {
   sourceId?: string
   displayId?: string
   cursorMode: NativeCursorMode
+  microphoneEnabled?: boolean
   cameraEnabled?: boolean
   cameraShape?: 'rounded' | 'square' | 'circle'
   cameraSizePercent?: number
@@ -29,6 +30,7 @@ export type NativeRecorderStopResult = {
     mimeType: string
     capturedAt: number
     systemCursorMode: NativeCursorMode
+    hasMicrophoneAudio: boolean
   }
 }
 
@@ -37,6 +39,7 @@ type RecorderReadyInfo = {
   height: number
   frameRate: number
   sourceKind: 'display' | 'window' | 'unknown'
+  hasMicrophoneAudio: boolean
 }
 
 type RecorderHelperErrorInfo = {
@@ -79,12 +82,13 @@ function clearStaleActiveSession(): void {
 }
 
 function parseReadyLine(line: string): RecorderReadyInfo | null {
-  const match = /SCK_RECORDER_READY\s+width=(\d+)\s+height=(\d+)\s+fps=(\d+)\s+source=([a-zA-Z-]+)/.exec(line)
+  const match = /SCK_RECORDER_READY\s+width=(\d+)\s+height=(\d+)\s+fps=(\d+)\s+source=([a-zA-Z-]+)(?:\s+mic=(\d+))?/.exec(line)
   if (!match) return null
   const width = Number(match[1])
   const height = Number(match[2])
   const frameRate = Number(match[3])
   const sourceKindRaw = String(match[4])
+  const micFlagRaw = Number(match[5] ?? 0)
   if (!Number.isFinite(width) || !Number.isFinite(height) || !Number.isFinite(frameRate)) {
     return null
   }
@@ -100,6 +104,7 @@ function parseReadyLine(line: string): RecorderReadyInfo | null {
     height: Math.max(2, Math.round(height)),
     frameRate: Math.max(1, Math.round(frameRate)),
     sourceKind,
+    hasMicrophoneAudio: micFlagRaw === 1,
   }
 }
 
@@ -244,6 +249,7 @@ export async function startNativeMacRecorder(options: NativeRecorderStartOptions
     const args = [
       '--output', options.outputPath,
       '--hide-cursor', options.cursorMode === 'never' ? '1' : '0',
+      '--microphone-enabled', options.microphoneEnabled === false ? '0' : '1',
       '--fps', String(Math.max(1, Math.min(120, Math.round(options.frameRate || 60)))),
     ]
 
@@ -422,6 +428,7 @@ export async function stopNativeMacRecorder(): Promise<NativeRecorderStopResult>
       mimeType: 'video/mp4',
       capturedAt: Date.now(),
       systemCursorMode: session.cursorMode,
+      hasMicrophoneAudio: session.ready.hasMicrophoneAudio,
     },
   }
 }

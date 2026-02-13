@@ -37,6 +37,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       mimeType?: string;
       capturedAt?: number;
       systemCursorMode?: 'always' | 'never';
+      hasMicrophoneAudio?: boolean;
       cursorTrack?: {
         source?: 'recorded' | 'synthetic';
         samples: Array<{ timeMs: number; x: number; y: number; click?: boolean; visible?: boolean; cursorKind?: 'arrow' | 'ibeam' }>;
@@ -55,6 +56,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   startNativeScreenRecording: (options?: {
     source?: { id?: string; display_id?: string | number | null }
     cursorMode?: 'always' | 'never'
+    microphoneEnabled?: boolean
     cameraEnabled?: boolean
     cameraShape?: 'rounded' | 'square' | 'circle'
     cameraSizePercent?: number
@@ -97,6 +99,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     mimeType?: string;
     capturedAt?: number;
     systemCursorMode?: 'always' | 'never';
+    hasMicrophoneAudio?: boolean;
     cursorTrack?: {
       source?: 'recorded' | 'synthetic';
       samples: Array<{ timeMs: number; x: number; y: number; click?: boolean; visible?: boolean; cursorKind?: 'arrow' | 'ibeam' }>;

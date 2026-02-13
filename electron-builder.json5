@@ -36,6 +36,10 @@
   ],
 
   "mac": {
+    "extendInfo": {
+      "NSCameraUsageDescription": "Openscreen needs camera access to render camera overlays while recording.",
+      "NSMicrophoneUsageDescription": "Openscreen needs microphone access to record your voice during screen capture."
+    },
     "target": [
       {
         "target": "dmg",
