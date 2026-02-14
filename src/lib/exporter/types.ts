@@ -26,6 +26,7 @@ export interface ExportResult {
   success: boolean;
   blob?: Blob;
   error?: string;
+  warnings?: string[];
 }
 
 export interface VideoFrameData {

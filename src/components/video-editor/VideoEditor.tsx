@@ -862,6 +862,15 @@ export default function VideoEditor() {
     exportCancelledRef.current = false;
 
     let shouldResumePlayback = false;
+    const emittedWarningKeys = new Set<string>();
+    const notifyExportWarnings = (warnings?: string[]) => {
+      if (!warnings?.length) return;
+      for (const warningKey of warnings) {
+        if (!warningKey || emittedWarningKeys.has(warningKey)) continue;
+        emittedWarningKeys.add(warningKey);
+        toast.warning(t(warningKey));
+      }
+    };
 
     try {
       if (isPlaying) {
@@ -915,6 +924,7 @@ export default function VideoEditor() {
         if (cancelled) {
           toast.info(t('editor.exportCancelled'));
         } else if (result.success && result.blob) {
+          notifyExportWarnings(result.warnings);
           const arrayBuffer = await result.blob.arrayBuffer();
           const timestamp = Date.now();
           const fileName = `export-${timestamp}.gif`;
@@ -1014,6 +1024,8 @@ export default function VideoEditor() {
             aborted = true;
             break;
           }
+
+          notifyExportWarnings(result.warnings);
 
           const arrayBuffer = await result.blob.arrayBuffer();
           const ratioSuffix = ratiosToExport.length > 1 ? `-${currentRatio.replace(':', 'x')}` : '';

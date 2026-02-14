@@ -133,6 +133,8 @@ describe("videoExporter seek helpers", () => {
       currentTime: 0,
       playbackRate: 1,
       paused: true,
+      muted: false,
+      volume: 0.7,
       ended: false,
       pause() {
         pauseCalls += 1;
@@ -168,5 +170,7 @@ describe("videoExporter seek helpers", () => {
     expect(playCalls).toBe(1);
     expect(pauseCalls).toBeLessThanOrEqual(3);
     expect(seekCalls).toBeLessThan(10);
+    expect(video.muted).toBe(false);
+    expect(video.volume).toBeCloseTo(0.7);
   });
 });

@@ -42,7 +42,8 @@ export class VideoMuxer {
     // Create audio source if needed
     if (this.hasAudio) {
       this.audioSource = new AudioBufferSource({
-        codec: 'opus',
+        // MP4 container requires an ISO BMFF-compatible audio codec.
+        codec: 'aac',
         bitrate: 128_000,
       });
       this.output.addAudioTrack(this.audioSource);

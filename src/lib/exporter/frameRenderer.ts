@@ -45,6 +45,10 @@ interface AnimationState {
   lastTimeMs: number | null;
 }
 
+interface FrameRenderOptions {
+  effectTimeMs?: number;
+}
+
 // Renders video frames with all effects (background, zoom, crop, blur, shadow) to an offscreen canvas for export.
 
 export class FrameRenderer {
@@ -300,7 +304,11 @@ export class FrameRenderer {
     }
   }
 
-  async renderFrame(videoSource: HTMLVideoElement | VideoFrame, timestamp: number): Promise<void> {
+  async renderFrame(
+    videoSource: HTMLVideoElement | VideoFrame,
+    timestamp: number,
+    options: FrameRenderOptions = {},
+  ): Promise<void> {
     if (!this.app || !this.videoContainer || !this.cameraContainer) {
       throw new Error('Renderer not initialized');
     }
@@ -311,12 +319,13 @@ export class FrameRenderer {
     // Apply layout
     this.updateLayout();
 
-    const timeMs = this.currentVideoTime * 1000;
+    const sampledTimeMs = this.currentVideoTime * 1000;
+    const effectTimeMs = Number.isFinite(options.effectTimeMs) ? Number(options.effectTimeMs) : sampledTimeMs;
     const TICKS_PER_FRAME = 1;
     
     let maxMotionIntensity = 0;
     for (let i = 0; i < TICKS_PER_FRAME; i++) {
-      const motionIntensity = this.updateAnimationState(timeMs);
+      const motionIntensity = this.updateAnimationState(effectTimeMs);
       maxMotionIntensity = Math.max(maxMotionIntensity, motionIntensity);
     }
     
@@ -341,7 +350,7 @@ export class FrameRenderer {
     this.compositeWithShadows();
 
     // Render cursor after video compositing so visual hierarchy is consistent with preview.
-    this.renderCursorLayer(timeMs);
+    this.renderCursorLayer(effectTimeMs);
 
     // Render annotations on top if present
     if (this.config.annotationRegions && this.config.annotationRegions.length > 0 && this.compositeCtx) {
@@ -357,7 +366,7 @@ export class FrameRenderer {
         this.config.annotationRegions,
         this.config.width,
         this.config.height,
-        timeMs,
+        effectTimeMs,
         scaleFactor
       );
     }

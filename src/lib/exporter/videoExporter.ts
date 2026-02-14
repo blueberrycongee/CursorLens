@@ -36,6 +36,7 @@ type TimeRangeMs = {
 
 const DEFAULT_AUDIO_GAIN = 1;
 const MAX_AUDIO_GAIN = 2;
+const EXPORT_WARNING_AUDIO_TRACK_UNAVAILABLE = 'editor.exportWarningAudioTrackUnavailable';
 
 export function hasRecordedCursorSamples(track?: CursorTrack | null): boolean {
   if (!track?.samples?.length) return false;
@@ -188,6 +189,7 @@ export class VideoExporter {
   private sourceDurationMs = 0;
   private sourceAudioInput: Input | null = null;
   private sourceAudioTrack: InputAudioTrack | null = null;
+  private readonly warnings = new Set<string>();
 
   constructor(config: VideoExporterConfig) {
     const audioGain = clampAudioGain(config.audioGain);
@@ -200,7 +202,7 @@ export class VideoExporter {
   }
 
   private getEffectiveDuration(totalDuration: number): number {
-    const totalDurationMs = Math.max(0, Math.round(totalDuration * 1000));
+    const totalDurationMs = Math.max(0, totalDuration * 1000);
     if (totalDurationMs <= 0) {
       return 0;
     }
@@ -273,13 +275,12 @@ export class VideoExporter {
     try {
       const input = await this.openSourceInputFromUrl();
       const audioTrack = await input.getPrimaryAudioTrack();
-      if (!audioTrack) {
-        input.dispose();
-        return false;
+      if (audioTrack) {
+        this.sourceAudioInput = input;
+        this.sourceAudioTrack = audioTrack;
+        return true;
       }
-      this.sourceAudioInput = input;
-      this.sourceAudioTrack = audioTrack;
-      return true;
+      input.dispose();
     } catch (urlError) {
       console.warn('[VideoExporter] Unable to read source audio via UrlSource. Retrying with BlobSource.', urlError);
     }
@@ -287,18 +288,28 @@ export class VideoExporter {
     try {
       const input = await this.openSourceInputFromBlob();
       const audioTrack = await input.getPrimaryAudioTrack();
-      if (!audioTrack) {
-        input.dispose();
-        return false;
+      if (audioTrack) {
+        this.sourceAudioInput = input;
+        this.sourceAudioTrack = audioTrack;
+        return true;
       }
-      this.sourceAudioInput = input;
-      this.sourceAudioTrack = audioTrack;
-      return true;
+      input.dispose();
+      return false;
     } catch (blobError) {
       console.warn('[VideoExporter] Audio track extraction failed; continuing with video-only export.', blobError);
       this.disposeSourceAudioInput();
       return false;
     }
+  }
+
+  private addWarning(warningKey: string): void {
+    if (!warningKey) return;
+    this.warnings.add(warningKey);
+  }
+
+  private getWarnings(): string[] | undefined {
+    if (this.warnings.size === 0) return undefined;
+    return Array.from(this.warnings);
   }
 
   private createAudioSlice(
@@ -402,11 +413,15 @@ export class VideoExporter {
       this.maxObservedTimingDriftMs = 0;
       this.samplingMode = 'seek-only';
       this.sourceDurationMs = 0;
+      this.warnings.clear();
 
       this.decoder = new VideoFileDecoder();
       const videoInfo = await this.decoder.loadVideo(this.config.videoUrl);
-      this.sourceDurationMs = Math.max(0, Math.round(videoInfo.duration * 1000));
+      this.sourceDurationMs = Math.max(0, videoInfo.duration * 1000);
       const hasSourceAudio = await this.resolveSourceAudioTrack();
+      if (this.config.audioEnabled && !hasSourceAudio) {
+        this.addWarning(EXPORT_WARNING_AUDIO_TRACK_UNAVAILABLE);
+      }
 
       this.renderer = new FrameRenderer({
         width: this.config.width,
@@ -514,7 +529,7 @@ export class VideoExporter {
         maxObservedTimingDriftMs: Number(this.maxObservedTimingDriftMs.toFixed(2)),
       });
 
-      return { success: true, blob };
+      return { success: true, blob, warnings: this.getWarnings() };
     } catch (error) {
       console.error('Export error:', error);
       return {
@@ -601,12 +616,15 @@ export class VideoExporter {
     videoElement: HTMLVideoElement,
     frameIndex: number,
     totalFrames: number,
-    frameTimeMs: number,
+    sampledFrameTimeMs: number,
+    effectTimeMs = sampledFrameTimeMs,
   ): Promise<void> {
     const timestamp = frameIndexToTimestampUs(frameIndex, this.config.frameRate);
     const duration = frameDurationUs(frameIndex, this.config.frameRate);
 
-    await this.renderer!.renderFrame(videoElement, Math.round(frameTimeMs * 1000));
+    await this.renderer!.renderFrame(videoElement, Math.round(sampledFrameTimeMs * 1000), {
+      effectTimeMs,
+    });
 
     const canvas = this.renderer!.getCanvas();
 
@@ -686,7 +704,13 @@ export class VideoExporter {
         this.maxObservedTimingDriftMs,
         Math.abs(sampledFrameTimeMs - targetSourceTimeMs),
       );
-      await this.renderAndEncodeFrame(videoElement, frameIndex, totalFrames, sampledFrameTimeMs);
+      await this.renderAndEncodeFrame(
+        videoElement,
+        frameIndex,
+        totalFrames,
+        sampledFrameTimeMs,
+        targetSourceTimeMs,
+      );
       frameIndex++;
     }
 
@@ -701,72 +725,86 @@ export class VideoExporter {
     let staleTicks = 0;
     let previousMediaTime = -1;
 
+    const previousMuted = videoElement.muted;
+    const previousVolume = videoElement.volume;
     videoElement.pause();
     videoElement.currentTime = 0;
     videoElement.playbackRate = playbackRate;
+    videoElement.muted = true;
+    videoElement.volume = 0;
     await this.waitForVideoFrame(videoElement, 500);
 
     try {
-      await videoElement.play();
-    } catch (error) {
-      console.warn('[VideoExporter] Unable to enter playback sampling mode, using seek mode instead.', error);
-      videoElement.playbackRate = 1;
-      return frameIndex;
-    }
+      try {
+        await videoElement.play();
+      } catch (error) {
+        console.warn('[VideoExporter] Unable to enter playback sampling mode, using seek mode instead.', error);
+        return frameIndex;
+      }
 
-    while (frameIndex < totalFrames && !this.cancelled) {
-      await this.waitForVideoFrame(videoElement, this.PLAYBACK_WAIT_TIMEOUT_MS);
-      const mediaTime = videoElement.currentTime;
-
-      let renderedInTick = 0;
       while (frameIndex < totalFrames && !this.cancelled) {
-        const sourceTimeMs = this.getSourceTimeMsForFrame(frameIndex);
-        const sourceTimeSeconds = sourceTimeMs / 1000;
-        if (sourceTimeSeconds > mediaTime + tolerance) {
+        await this.waitForVideoFrame(videoElement, this.PLAYBACK_WAIT_TIMEOUT_MS);
+        const mediaTime = videoElement.currentTime;
+
+        let renderedInTick = 0;
+        while (frameIndex < totalFrames && !this.cancelled) {
+          const sourceTimeMs = this.getSourceTimeMsForFrame(frameIndex);
+          const sourceTimeSeconds = sourceTimeMs / 1000;
+          if (sourceTimeSeconds > mediaTime + tolerance) {
+            break;
+          }
+          const sampledFrameTimeMs = Math.max(0, mediaTime * 1000);
+          this.maxObservedTimingDriftMs = Math.max(
+            this.maxObservedTimingDriftMs,
+            Math.abs(sampledFrameTimeMs - sourceTimeMs),
+          );
+          await this.renderAndEncodeFrame(
+            videoElement,
+            frameIndex,
+            totalFrames,
+            sampledFrameTimeMs,
+            sourceTimeMs,
+          );
+          frameIndex++;
+          renderedInTick++;
+        }
+
+        if (frameIndex >= totalFrames || this.cancelled) {
           break;
         }
-        const sampledFrameTimeMs = Math.max(0, mediaTime * 1000);
-        this.maxObservedTimingDriftMs = Math.max(
-          this.maxObservedTimingDriftMs,
-          Math.abs(sampledFrameTimeMs - sourceTimeMs),
-        );
-        await this.renderAndEncodeFrame(videoElement, frameIndex, totalFrames, sampledFrameTimeMs);
-        frameIndex++;
-        renderedInTick++;
+
+        const nextSourceTimeSeconds = this.getSourceTimeMsForFrame(frameIndex) / 1000;
+        const drift = nextSourceTimeSeconds - mediaTime;
+
+        if (!Number.isFinite(mediaTime) || drift > seekThreshold) {
+          await this.seekVideoTo(videoElement, nextSourceTimeSeconds);
+        }
+
+        if (Math.abs(mediaTime - previousMediaTime) < tolerance * 0.5 && renderedInTick === 0) {
+          staleTicks += 1;
+        } else {
+          staleTicks = 0;
+        }
+
+        if (staleTicks >= 3) {
+          await this.seekVideoTo(videoElement, nextSourceTimeSeconds);
+          staleTicks = 0;
+        }
+        previousMediaTime = mediaTime;
+
+        if (videoElement.ended && renderedInTick === 0) {
+          console.warn('[VideoExporter] Playback ended before all frames were sampled.');
+          break;
+        }
       }
 
-      if (frameIndex >= totalFrames || this.cancelled) {
-        break;
-      }
-
-      const nextSourceTimeSeconds = this.getSourceTimeMsForFrame(frameIndex) / 1000;
-      const drift = nextSourceTimeSeconds - mediaTime;
-
-      if (!Number.isFinite(mediaTime) || drift > seekThreshold) {
-        await this.seekVideoTo(videoElement, nextSourceTimeSeconds);
-      }
-
-      if (Math.abs(mediaTime - previousMediaTime) < tolerance * 0.5 && renderedInTick === 0) {
-        staleTicks += 1;
-      } else {
-        staleTicks = 0;
-      }
-
-      if (staleTicks >= 3) {
-        await this.seekVideoTo(videoElement, nextSourceTimeSeconds);
-        staleTicks = 0;
-      }
-      previousMediaTime = mediaTime;
-
-      if (videoElement.ended && renderedInTick === 0) {
-        console.warn('[VideoExporter] Playback ended before all frames were sampled.');
-        break;
-      }
+      return frameIndex;
+    } finally {
+      videoElement.pause();
+      videoElement.playbackRate = 1;
+      videoElement.muted = previousMuted;
+      videoElement.volume = previousVolume;
     }
-
-    videoElement.pause();
-    videoElement.playbackRate = 1;
-    return frameIndex;
   }
 
   private enqueueMuxOperation(task: () => Promise<void>): void {
@@ -965,5 +1003,6 @@ export class VideoExporter {
     this.videoDescription = undefined;
     this.videoColorSpace = undefined;
     this.sourceDurationMs = 0;
+    this.warnings.clear();
   }
 }
