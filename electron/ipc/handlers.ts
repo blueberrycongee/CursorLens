@@ -3,6 +3,7 @@ import { ipcMain, desktopCapturer, BrowserWindow, shell, app, dialog, screen } f
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { RECORDINGS_DIR } from '../main'
+import { scheduleRecordingsCleanup } from '../recordingsCleanup'
 import {
   forceTerminateNativeMacRecorder,
   isNativeMacRecorderActive,
@@ -595,6 +596,11 @@ export function registerIpcHandlers(
       if (currentVideoMetadata?.cursorTrack) {
         await writeCursorTrackSidecar(videoPath, currentVideoMetadata.cursorTrack)
       }
+      scheduleRecordingsCleanup({
+        recordingsDir: RECORDINGS_DIR,
+        excludePaths: [videoPath],
+        reason: 'post-recording',
+      })
       return {
         success: true,
         path: videoPath,
@@ -706,6 +712,13 @@ export function registerIpcHandlers(
       const result = await stopNativeMacRecorder()
       const sourceName = selectedSource?.name || 'Screen'
       onRecordingStateChange?.(false, sourceName)
+      if (result.success && result.path) {
+        scheduleRecordingsCleanup({
+          recordingsDir: RECORDINGS_DIR,
+          excludePaths: [result.path],
+          reason: 'post-native-recording',
+        })
+      }
       return result
     } catch (error) {
       return {

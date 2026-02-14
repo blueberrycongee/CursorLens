@@ -4,6 +4,7 @@ import path from 'node:path'
 import fs from 'node:fs/promises'
 import { createHudOverlayWindow, createEditorWindow, createSourceSelectorWindow } from './windows'
 import { registerIpcHandlers } from './ipc/handlers'
+import { scheduleRecordingsCleanup } from './recordingsCleanup'
 
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -234,6 +235,10 @@ app.whenReady().then(async () => {
     updateTrayMenu()
   // Ensure recordings directory exists
   await ensureRecordingsDir()
+  scheduleRecordingsCleanup({
+    recordingsDir: RECORDINGS_DIR,
+    reason: 'startup',
+  })
 
   ipcRuntime = registerIpcHandlers(
     createEditorWindowWrapper,
