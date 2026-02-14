@@ -2,10 +2,11 @@ import type { ExportConfig, ExportProgress, ExportResult } from './types';
 import { VideoFileDecoder } from './videoDecoder';
 import { FrameRenderer } from './frameRenderer';
 import { VideoMuxer } from './muxer';
-import type { ZoomRegion, CropRegion, TrimRegion, AnnotationRegion } from '@/components/video-editor/types';
+import type { ZoomRegion, CropRegion, TrimRegion, AnnotationRegion, AudioEditRegion } from '@/components/video-editor/types';
 import type { SubtitleCue } from '@/lib/analysis/types';
 import { frameDurationUs, frameIndexToTimestampUs, normalizeFrameRate } from './frameClock';
 import type { CursorStyleConfig, CursorTrack } from '@/lib/cursor';
+import { getAudioEditGainMultiplierAtTime, normalizeAudioEditRegions } from '@/lib/audio/audioEditRegions';
 import { ALL_FORMATS, AudioBufferSink, BlobSource, Input, UrlSource, type InputAudioTrack } from 'mediabunny';
 
 interface VideoExporterConfig extends ExportConfig {
@@ -23,6 +24,7 @@ interface VideoExporterConfig extends ExportConfig {
   cropRegion: CropRegion;
   annotationRegions?: AnnotationRegion[];
   subtitleCues?: SubtitleCue[];
+  audioEditRegions?: AudioEditRegion[];
   previewWidth?: number;
   previewHeight?: number;
   cursorTrack?: CursorTrack | null;
@@ -33,6 +35,12 @@ interface VideoExporterConfig extends ExportConfig {
 type TimeRangeMs = {
   startMs: number;
   endMs: number;
+};
+
+type AudioGainSegment = {
+  startMs: number;
+  endMs: number;
+  gain: number;
 };
 
 const DEFAULT_AUDIO_GAIN = 1;
@@ -95,6 +103,54 @@ export async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, lab
 export function clampAudioGain(value: number | undefined): number {
   if (!Number.isFinite(value)) return DEFAULT_AUDIO_GAIN;
   return Math.max(0, Math.min(MAX_AUDIO_GAIN, value as number));
+}
+
+export function buildAudioGainSegments(
+  rangeStartMs: number,
+  rangeEndMs: number,
+  baseGain: number,
+  audioEditRegions: AudioEditRegion[] | undefined,
+): AudioGainSegment[] {
+  const safeStart = Math.max(0, Math.min(rangeStartMs, rangeEndMs));
+  const safeEnd = Math.max(safeStart, Math.max(rangeStartMs, rangeEndMs));
+  if (safeEnd <= safeStart) {
+    return [];
+  }
+
+  const normalizedBaseGain = clampAudioGain(baseGain);
+  if (!audioEditRegions?.length) {
+    return [{ startMs: safeStart, endMs: safeEnd, gain: normalizedBaseGain }];
+  }
+
+  const boundaries = new Set<number>([safeStart, safeEnd]);
+  for (const region of audioEditRegions) {
+    if (region.endMs <= safeStart || region.startMs >= safeEnd) {
+      continue;
+    }
+    boundaries.add(Math.max(safeStart, region.startMs));
+    boundaries.add(Math.min(safeEnd, region.endMs));
+  }
+
+  const sortedBoundaries = Array.from(boundaries).sort((left, right) => left - right);
+  const segments: AudioGainSegment[] = [];
+
+  for (let index = 0; index < sortedBoundaries.length - 1; index += 1) {
+    const segmentStartMs = sortedBoundaries[index];
+    const segmentEndMs = sortedBoundaries[index + 1];
+    if (segmentEndMs <= segmentStartMs) {
+      continue;
+    }
+
+    const midpointMs = segmentStartMs + (segmentEndMs - segmentStartMs) / 2;
+    const regionMultiplier = getAudioEditGainMultiplierAtTime(midpointMs, audioEditRegions);
+    segments.push({
+      startMs: segmentStartMs,
+      endMs: segmentEndMs,
+      gain: clampAudioGain(normalizedBaseGain * regionMultiplier),
+    });
+  }
+
+  return segments;
 }
 
 export function normalizeTrimRanges(trimRegions: TrimRegion[] | undefined, totalDurationMs: number): TimeRangeMs[] {
@@ -189,6 +245,7 @@ export class VideoExporter {
   private maxObservedTimingDriftMs = 0;
   private sourceDurationMs = 0;
   private sourceTrimRanges: TimeRangeMs[] = [];
+  private sourceAudioEditRegions: AudioEditRegion[] = [];
   private sourceAudioInput: Input | null = null;
   private sourceAudioTrack: InputAudioTrack | null = null;
   private readonly warnings = new Set<string>();
@@ -365,7 +422,7 @@ export class VideoExporter {
       return;
     }
 
-    const gain = clampAudioGain(this.config.audioGain);
+    const baseGain = clampAudioGain(this.config.audioGain);
     const keptRanges = buildKeptRanges(this.sourceDurationMs, this.config.trimRegions);
     if (keptRanges.length === 0) {
       return;
@@ -397,16 +454,25 @@ export class VideoExporter {
           continue;
         }
 
+        const gainSegments = buildAudioGainSegments(
+          clipStartMs,
+          clipEndMs,
+          baseGain,
+          this.sourceAudioEditRegions,
+        );
         const sampleRate = sourceBuffer.sampleRate;
-        const startFrame = Math.floor(((clipStartMs - bufferStartMs) / 1000) * sampleRate);
-        const endFrame = Math.ceil(((clipEndMs - bufferStartMs) / 1000) * sampleRate);
-        const slice = this.createAudioSlice(sourceBuffer, startFrame, endFrame, gain);
 
-        if (!slice) {
-          continue;
+        for (const segment of gainSegments) {
+          const startFrame = Math.floor(((segment.startMs - bufferStartMs) / 1000) * sampleRate);
+          const endFrame = Math.ceil(((segment.endMs - bufferStartMs) / 1000) * sampleRate);
+          const slice = this.createAudioSlice(sourceBuffer, startFrame, endFrame, segment.gain);
+
+          if (!slice) {
+            continue;
+          }
+
+          await this.muxer.addAudioBuffer(slice);
         }
-
-        await this.muxer.addAudioBuffer(slice);
       }
     }
   }
@@ -424,12 +490,14 @@ export class VideoExporter {
       this.maxObservedTimingDriftMs = 0;
       this.samplingMode = 'seek-only';
       this.sourceDurationMs = 0;
+      this.sourceAudioEditRegions = [];
       this.warnings.clear();
 
       this.decoder = new VideoFileDecoder();
       const videoInfo = await this.decoder.loadVideo(this.config.videoUrl);
       this.sourceDurationMs = Math.max(0, videoInfo.duration * 1000);
       this.sourceTrimRanges = normalizeTrimRanges(this.config.trimRegions, this.sourceDurationMs);
+      this.sourceAudioEditRegions = normalizeAudioEditRegions(this.config.audioEditRegions, this.sourceDurationMs);
       const hasSourceAudio = await this.resolveSourceAudioTrack();
       if (this.config.audioEnabled && !hasSourceAudio) {
         this.addWarning(EXPORT_WARNING_AUDIO_TRACK_UNAVAILABLE);

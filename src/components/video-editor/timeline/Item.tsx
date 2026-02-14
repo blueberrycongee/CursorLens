@@ -1,7 +1,7 @@
 import { useItem } from "dnd-timeline";
 import type { Span } from "dnd-timeline";
 import { cn } from "@/lib/utils";
-import { ZoomIn, Scissors, MessageSquare, Captions } from "lucide-react";
+import { ZoomIn, Scissors, MessageSquare, Captions, VolumeX } from "lucide-react";
 import glassStyles from "./ItemGlass.module.css";
 import { useI18n } from "@/i18n";
 
@@ -13,7 +13,7 @@ interface ItemProps {
   isSelected?: boolean;
   onSelect?: () => void;
   zoomDepth?: number;
-  variant?: 'zoom' | 'trim' | 'annotation' | 'subtitle';
+  variant?: 'zoom' | 'trim' | 'annotation' | 'subtitle' | 'audio-edit';
   editable?: boolean;
 }
 
@@ -48,11 +48,14 @@ export default function Item({
   const isZoom = variant === 'zoom';
   const isTrim = variant === 'trim';
   const isSubtitle = variant === 'subtitle';
+  const isAudioEdit = variant === 'audio-edit';
   
   const glassClass = isZoom 
     ? glassStyles.glassGreen 
     : isTrim 
     ? glassStyles.glassRed 
+    : isAudioEdit
+    ? glassStyles.glassRed
     : isSubtitle
     ? glassStyles.glassBlue
     : glassStyles.glassYellow;
@@ -61,6 +64,8 @@ export default function Item({
     ? '#21916A' 
     : isTrim 
     ? '#ef4444' 
+    : isAudioEdit
+    ? '#ef4444'
     : isSubtitle
     ? '#2E6EE6'
     : '#B4A046';
@@ -131,6 +136,13 @@ export default function Item({
                 <Captions className="w-3.5 h-3.5" />
                 <span className="text-[11px] font-semibold tracking-tight">
                   {children}
+                </span>
+              </>
+            ) : isAudioEdit ? (
+              <>
+                <VolumeX className="w-3.5 h-3.5" />
+                <span className="text-[11px] font-semibold tracking-tight">
+                  {children || t("timeline.audioMutedSegment")}
                 </span>
               </>
             ) : (

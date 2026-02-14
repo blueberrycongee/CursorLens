@@ -9,7 +9,7 @@ import Row from "./Row";
 import Item from "./Item";
 import KeyframeMarkers from "./KeyframeMarkers";
 import type { Range, Span } from "dnd-timeline";
-import type { ZoomRegion, TrimRegion, AnnotationRegion } from "../types";
+import type { ZoomRegion, TrimRegion, AnnotationRegion, AudioEditRegion } from "../types";
 import type { SubtitleCue } from "@/lib/analysis/types";
 import { v4 as uuidv4 } from 'uuid';
 import {
@@ -59,6 +59,7 @@ interface TimelineEditorProps {
   hasAudioTrack?: boolean;
   audioEnabled?: boolean;
   audioGain?: number;
+  audioEditRegions?: AudioEditRegion[];
 }
 
 interface TimelineScaleConfig {
@@ -75,7 +76,7 @@ interface TimelineRenderItem {
   span: Span;
   label: string;
   zoomDepth?: number;
-  variant: 'zoom' | 'trim' | 'annotation' | 'subtitle';
+  variant: 'zoom' | 'trim' | 'annotation' | 'subtitle' | 'audio-edit';
 }
 
 const SCALE_CANDIDATES = [
@@ -449,6 +450,7 @@ function Timeline({
   const trimItems = items.filter(item => item.rowId === TRIM_ROW_ID);
   const annotationItems = items.filter(item => item.rowId === ANNOTATION_ROW_ID);
   const subtitleItems = items.filter(item => item.rowId === SUBTITLE_ROW_ID);
+  const audioEditItems = items.filter(item => item.rowId === AUDIO_ROW_ID);
 
   return (
     <div
@@ -533,7 +535,7 @@ function Timeline({
       </Row>
 
       <Row id={AUDIO_ROW_ID}>
-        <div className="h-10 w-full px-2 flex items-center">
+        <div className="h-10 w-full px-2 flex items-center pointer-events-none">
           <div
             className={cn(
               "w-full h-8 rounded-lg border px-3 flex items-center justify-between",
@@ -547,11 +549,26 @@ function Timeline({
               {!hasAudioTrack
                 ? t("timeline.audioUnavailable")
                 : audioEnabled
-                ? `${Math.round(audioGain * 100)}%`
+                ? audioEditItems.length > 0
+                  ? `${Math.round(audioGain * 100)}% · ${t("timeline.audioAutoEdits", { count: audioEditItems.length })}`
+                  : `${Math.round(audioGain * 100)}%`
                 : t("timeline.audioMuted")}
             </span>
           </div>
         </div>
+        {audioEditItems.map((item) => (
+          <Item
+            id={item.id}
+            key={item.id}
+            rowId={item.rowId}
+            span={item.span}
+            isSelected={false}
+            variant="audio-edit"
+            editable={false}
+          >
+            {item.label}
+          </Item>
+        ))}
       </Row>
     </div>
   );
@@ -585,6 +602,7 @@ export default function TimelineEditor({
   hasAudioTrack = true,
   audioEnabled = true,
   audioGain = 1,
+  audioEditRegions = [],
 }: TimelineEditorProps) {
   const { t } = useI18n();
   const totalMs = useMemo(() => Math.max(0, Math.round(videoDuration * 1000)), [videoDuration]);
@@ -914,8 +932,16 @@ export default function TimelineEditor({
       variant: 'subtitle',
     }));
 
-    return [...zooms, ...trims, ...annotations, ...subtitles];
-  }, [zoomRegions, trimRegions, annotationRegions, subtitleCues, t]);
+    const audioEdits: TimelineRenderItem[] = audioEditRegions.map((region, index) => ({
+      id: region.id || `audio-edit-${index + 1}`,
+      rowId: AUDIO_ROW_ID,
+      span: { start: region.startMs, end: region.endMs },
+      label: t("timeline.audioMutedSegment"),
+      variant: 'audio-edit',
+    }));
+
+    return [...zooms, ...trims, ...annotations, ...subtitles, ...audioEdits];
+  }, [zoomRegions, trimRegions, annotationRegions, subtitleCues, audioEditRegions, t]);
 
   const handleItemSpanChange = useCallback((id: string, span: Span) => {
     // Check if it's a zoom or trim item

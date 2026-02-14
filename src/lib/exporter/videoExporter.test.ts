@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildAudioGainSegments,
   buildKeptRanges,
   clampAudioGain,
   VideoExporter,
@@ -41,6 +42,41 @@ describe("videoExporter seek helpers", () => {
       { startMs: 0, endMs: 100 },
       { startMs: 300, endMs: 500 },
       { startMs: 600, endMs: 1000 },
+    ]);
+  });
+
+  it("builds per-range audio gain segments from rough-cut edits", () => {
+    const segments = buildAudioGainSegments(
+      50,
+      260,
+      1,
+      [
+        { id: "a", startMs: 100, endMs: 200, mode: "mute", gain: 0 },
+        { id: "b", startMs: 150, endMs: 250, mode: "duck", gain: 0.5 },
+      ],
+    );
+
+    expect(segments).toEqual([
+      { startMs: 50, endMs: 100, gain: 1 },
+      { startMs: 100, endMs: 150, gain: 0 },
+      { startMs: 150, endMs: 200, gain: 0 },
+      { startMs: 200, endMs: 250, gain: 0.5 },
+      { startMs: 250, endMs: 260, gain: 1 },
+    ]);
+  });
+
+  it("applies region multiplier on top of base gain", () => {
+    const segments = buildAudioGainSegments(
+      0,
+      1000,
+      0.8,
+      [{ id: "d1", startMs: 100, endMs: 400, mode: "duck", gain: 0.5 }],
+    );
+
+    expect(segments).toEqual([
+      { startMs: 0, endMs: 100, gain: 0.8 },
+      { startMs: 100, endMs: 400, gain: 0.4 },
+      { startMs: 400, endMs: 1000, gain: 0.8 },
     ]);
   });
 

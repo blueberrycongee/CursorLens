@@ -24,6 +24,7 @@ import {
   type ZoomFocus,
   type ZoomRegion,
   type TrimRegion,
+  type AudioEditRegion,
   type AnnotationRegion,
   type CropRegion,
   type FigureData,
@@ -50,7 +51,7 @@ import { generateAutoZoomDrafts } from "@/lib/autoEdit/screenStudioAutoZoom";
 import type { RoughCutSuggestion, SubtitleCue } from "@/lib/analysis/types";
 import { normalizeSubtitleCues } from "@/lib/analysis/subtitleTrack";
 import { normalizeRoughCutSuggestions } from "@/lib/analysis/roughCutEngine";
-import { applyRoughCutSuggestionsToTrimRegions } from "@/lib/analysis/roughCutApply";
+import { applyRoughCutSuggestionsToAudioEdits } from "@/lib/analysis/roughCutApply";
 
 const WALLPAPER_COUNT = 18;
 const WALLPAPER_PATHS = Array.from({ length: WALLPAPER_COUNT }, (_, i) => `/wallpapers/wallpaper${i + 1}.jpg`);
@@ -205,6 +206,7 @@ export default function VideoEditor() {
   const [zoomRegions, setZoomRegions] = useState<ZoomRegion[]>([]);
   const [selectedZoomId, setSelectedZoomId] = useState<string | null>(null);
   const [trimRegions, setTrimRegions] = useState<TrimRegion[]>([]);
+  const [audioEditRegions, setAudioEditRegions] = useState<AudioEditRegion[]>([]);
   const [selectedTrimId, setSelectedTrimId] = useState<string | null>(null);
   const [annotationRegions, setAnnotationRegions] = useState<AnnotationRegion[]>([]);
   const [selectedAnnotationId, setSelectedAnnotationId] = useState<string | null>(null);
@@ -344,27 +346,6 @@ export default function VideoEditor() {
     }
     loadVideo();
   }, [t]);
-
-  useEffect(() => {
-    let rafId: number | null = null;
-    const applyAudioState = () => {
-      const video = videoPlaybackRef.current?.video;
-      if (!video) {
-        rafId = window.requestAnimationFrame(applyAudioState);
-        return;
-      }
-
-      video.muted = !sourceHasAudio || !audioEnabled;
-      video.volume = sourceHasAudio ? Math.max(0, Math.min(audioGain, 1)) : 0;
-    };
-
-    applyAudioState();
-    return () => {
-      if (rafId !== null) {
-        window.cancelAnimationFrame(rafId);
-      }
-    };
-  }, [audioEnabled, audioGain, sourceHasAudio, videoPath]);
 
   // Initialize default wallpaper with resolved asset path
   useEffect(() => {
@@ -967,27 +948,20 @@ export default function VideoEditor() {
       return;
     }
 
-    const nextTrimRegions = applyRoughCutSuggestionsToTrimRegions(
-      trimRegions,
+    const nextAudioEditRegions = applyRoughCutSuggestionsToAudioEdits(
+      audioEditRegions,
       roughCutSuggestions,
       Math.max(0, Math.round(duration * 1000)),
     );
-    setTrimRegions(nextTrimRegions);
-    setSelectedTrimId(nextTrimRegions[0]?.id ?? null);
+    setAudioEditRegions(nextAudioEditRegions);
     setSelectedZoomId(null);
+    setSelectedTrimId(null);
     setSelectedAnnotationId(null);
-
-    const maxTrimNumber = nextTrimRegions.reduce((max, region) => {
-      const parsed = Number(region.id.replace(/^trim-/, ''));
-      if (!Number.isFinite(parsed)) return max;
-      return Math.max(max, parsed);
-    }, 0);
-    nextTrimIdRef.current = Math.max(nextTrimIdRef.current, maxTrimNumber + 1);
 
     toast.success(t('editor.analysisApplyRoughCutSuccess', {
       count: roughCutSuggestions.length,
     }));
-  }, [duration, roughCutSuggestions, t, trimRegions]);
+  }, [audioEditRegions, duration, roughCutSuggestions, t]);
 
   const handleExport = useCallback(async (settings: ExportSettings) => {
     if (!videoPath) {
@@ -1157,6 +1131,7 @@ export default function VideoEditor() {
             previewHeight,
             cursorTrack,
             cursorStyle,
+            audioEditRegions,
             audioEnabled: sourceHasAudio && audioEnabled,
             audioGain,
             onProgress: (progress: ExportProgress) => {
@@ -1232,7 +1207,7 @@ export default function VideoEditor() {
       setShowExportDialog(false);
       setExportProgress(null);
     }
-  }, [videoPath, wallpaper, zoomRegions, trimRegions, shadowIntensity, showBlur, motionBlurEnabled, borderRadius, padding, activeCropRegion, cropRegionsByAspect, sourceAspectRatio, annotationRegions, subtitleCues, isPlaying, normalizedExportAspectRatios, exportQuality, locale, sourceFrameRate, sourceHasAudio, audioEnabled, audioGain, cursorTrack, cursorStyle, t]);
+  }, [videoPath, wallpaper, zoomRegions, trimRegions, shadowIntensity, showBlur, motionBlurEnabled, borderRadius, padding, activeCropRegion, cropRegionsByAspect, sourceAspectRatio, annotationRegions, subtitleCues, isPlaying, normalizedExportAspectRatios, exportQuality, locale, sourceFrameRate, sourceHasAudio, audioEnabled, audioGain, audioEditRegions, cursorTrack, cursorStyle, t]);
 
   const handleOpenExportDialog = useCallback(() => {
     if (!videoPath) {
@@ -1346,6 +1321,10 @@ export default function VideoEditor() {
                       subtitleCues={subtitleCues}
                       cursorTrack={cursorTrack}
                       cursorStyle={cursorStyle}
+                      hasAudioTrack={sourceHasAudio}
+                      audioEnabled={audioEnabled}
+                      audioGain={audioGain}
+                      audioEditRegions={audioEditRegions}
                       onVideoDimensionsChange={setSourceVideoDimensions}
                     />
                     {showAspectCropOverlay ? (
@@ -1409,6 +1388,7 @@ export default function VideoEditor() {
               hasAudioTrack={sourceHasAudio}
               audioEnabled={audioEnabled}
               audioGain={audioGain}
+              audioEditRegions={audioEditRegions}
             />
               </div>
             </Panel>

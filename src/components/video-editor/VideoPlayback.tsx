@@ -2,7 +2,7 @@ import type React from "react";
 import { useEffect, useRef, useImperativeHandle, forwardRef, useState, useMemo, useCallback } from "react";
 import { getAssetPath } from "@/lib/assetPath";
 import { Application, Container, Sprite, Graphics, BlurFilter, Texture, VideoSource } from 'pixi.js';
-import { ZOOM_DEPTH_SCALES, type ZoomRegion, type ZoomFocus, type ZoomDepth, type TrimRegion, type AnnotationRegion } from "./types";
+import { ZOOM_DEPTH_SCALES, type ZoomRegion, type ZoomFocus, type ZoomDepth, type TrimRegion, type AnnotationRegion, type AudioEditRegion } from "./types";
 import { DEFAULT_FOCUS, MIN_DELTA, resolveAdaptiveSmoothingAlpha } from "./videoPlayback/constants";
 import { clamp01 } from "./videoPlayback/mathUtils";
 import { findDominantRegion } from "./videoPlayback/zoomRegionUtils";
@@ -17,6 +17,7 @@ import { getRenderableAnnotations } from "@/lib/annotations/renderOrder";
 import { getPreviewBackgroundFilter } from "@/lib/rendering/backgroundBlur";
 import type { SubtitleCue } from "@/lib/analysis/types";
 import { findSubtitleCueAtTime, normalizeSubtitleCues } from "@/lib/analysis/subtitleTrack";
+import { resolvePreviewAudioState } from "@/lib/audio/audioEditRegions";
 import {
   DEFAULT_CURSOR_STYLE,
   drawCompositedCursor,
@@ -57,6 +58,10 @@ interface VideoPlaybackProps {
   preferredFps?: number;
   cursorTrack?: CursorTrack | null;
   cursorStyle?: Partial<CursorStyleConfig>;
+  hasAudioTrack?: boolean;
+  audioEnabled?: boolean;
+  audioGain?: number;
+  audioEditRegions?: AudioEditRegion[];
   onVideoDimensionsChange?: (dimensions: { width: number; height: number }) => void;
 }
 
@@ -101,6 +106,10 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
   preferredFps = 60,
   cursorTrack = null,
   cursorStyle,
+  hasAudioTrack = true,
+  audioEnabled = true,
+  audioGain = 1,
+  audioEditRegions = [],
   onVideoDimensionsChange,
 }, ref) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -373,6 +382,24 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
   useEffect(() => {
     cropRegionRef.current = cropRegion;
   }, [cropRegion]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    const nextState = resolvePreviewAudioState({
+      hasAudioTrack,
+      audioEnabled,
+      baseGain: audioGain,
+      timeMs: Math.max(0, Math.round(currentTime * 1000)),
+      regions: audioEditRegions,
+    });
+
+    video.muted = nextState.muted;
+    if (Math.abs(video.volume - nextState.volume) > 0.0005) {
+      video.volume = nextState.volume;
+    }
+  }, [hasAudioTrack, audioEnabled, audioGain, currentTime, audioEditRegions, videoPath]);
 
   useEffect(() => {
     preferredFpsRef.current = preferredFps;
