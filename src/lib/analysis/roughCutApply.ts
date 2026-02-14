@@ -1,5 +1,6 @@
-import type { TrimRegion } from '@/components/video-editor/types';
+import type { AudioEditRegion, TrimRegion } from '@/components/video-editor/types';
 import type { RoughCutSuggestion } from './types';
+import { normalizeAudioEditRegions } from '@/lib/audio/audioEditRegions';
 
 function normalizeTrimRegion(region: TrimRegion, durationMs: number): TrimRegion | null {
   const startMs = Math.max(0, Math.round(Number(region.startMs)));
@@ -70,4 +71,42 @@ export function applyRoughCutSuggestionsToTrimRegions(
   const normalizedSuggested = normalizeSuggestions(suggestions, totalDurationMs);
 
   return mergeTrimRegions([...normalizedExisting, ...normalizedSuggested]);
+}
+
+function normalizeSuggestionToAudioEdit(
+  suggestion: RoughCutSuggestion,
+  index: number,
+  durationMs: number,
+): AudioEditRegion | null {
+  const maxDurationMs = Math.max(0, Math.round(durationMs))
+  const startMs = Math.max(0, Math.min(maxDurationMs, Math.round(Number(suggestion.startMs))))
+  const endMs = Math.max(0, Math.min(maxDurationMs, Math.round(Number(suggestion.endMs))))
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return null
+  if (endMs <= startMs) return null
+
+  return {
+    id: `audio-edit-auto-${index + 1}`,
+    startMs,
+    endMs,
+    mode: 'mute',
+    gain: 0,
+    source: 'rough-cut',
+    reason: suggestion.reason,
+  }
+}
+
+export function applyRoughCutSuggestionsToAudioEdits(
+  existingRegions: AudioEditRegion[],
+  suggestions: RoughCutSuggestion[],
+  durationMs: number,
+): AudioEditRegion[] {
+  if (!suggestions.length) {
+    return normalizeAudioEditRegions(existingRegions, durationMs)
+  }
+
+  const suggestedEdits = suggestions
+    .map((suggestion, index) => normalizeSuggestionToAudioEdit(suggestion, index, durationMs))
+    .filter((region): region is AudioEditRegion => Boolean(region))
+
+  return normalizeAudioEditRegions([...existingRegions, ...suggestedEdits], durationMs)
 }

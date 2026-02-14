@@ -19,6 +19,18 @@ export interface TrimRegion {
   endMs: number;
 }
 
+export type AudioEditMode = 'mute' | 'duck';
+
+export interface AudioEditRegion {
+  id: string;
+  startMs: number;
+  endMs: number;
+  mode: AudioEditMode;
+  gain: number;
+  source?: 'rough-cut' | 'manual';
+  reason?: 'silence' | 'filler';
+}
+
 export type AnnotationType = 'text' | 'image' | 'figure';
 
 export type ArrowDirection = 'up' | 'down' | 'left' | 'right' | 'up-right' | 'up-left' | 'down-right' | 'down-left';
