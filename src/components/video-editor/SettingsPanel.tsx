@@ -1072,7 +1072,7 @@ export function SettingsPanel({
           <button
             type="button"
             onClick={() => {
-              window.electronAPI?.openExternalUrl('https://github.com/blueberrycongee/CursorLens/issues/new/choose');
+              window.electronAPI?.openExternalUrl('https://github.com/blueberrycongee/CursorLens/issues');
             }}
             className="flex-1 flex items-center justify-center gap-1.5 text-[10px] text-slate-500 hover:text-slate-300 py-1.5 transition-colors"
           >
