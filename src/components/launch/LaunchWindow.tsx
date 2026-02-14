@@ -729,9 +729,9 @@ export function LaunchWindow() {
   };
 
   return (
-    <div className="w-full h-full flex items-end pb-2 bg-transparent overflow-hidden pointer-events-none">
+    <div className="w-full h-full flex items-end justify-center pb-2 bg-transparent overflow-hidden pointer-events-none">
       <div
-        className={`w-full mx-auto flex items-center gap-2 px-3 py-2 pointer-events-auto ${styles.electronDrag}`}
+        className={`inline-flex max-w-[calc(100%-12px)] items-center gap-2 px-3 py-2 pointer-events-auto ${styles.electronDrag}`}
         style={{
           borderRadius: 16,
           background: 'linear-gradient(135deg, rgba(30,30,40,0.92) 0%, rgba(20,20,30,0.85) 100%)',
