@@ -17,6 +17,7 @@ import {
   normalizePointToBounds,
   resolveCursorBoundsForSource,
   type CaptureBounds,
+  type CaptureBoundsResolution,
   type CaptureBoundsMode,
   type CaptureSourceRef,
 } from '../../src/lib/cursor/captureSpace'
@@ -164,6 +165,49 @@ function normalizeCaptureSize(input?: CursorTrackerStartOptions['captureSize']):
     return undefined
   }
   return { width, height }
+}
+
+function resolveWindowCaptureFallbackBounds(args: {
+  displays: Electron.Display[]
+  initialResolution: CaptureBoundsResolution
+  captureSize?: { width: number; height: number }
+  point: { x: number; y: number }
+}): { bounds: CaptureBounds; mode: CaptureBoundsMode; displayId?: string } {
+  const matchedDisplay = args.initialResolution.displayId
+    ? args.displays.find((display) => String(display.id) === args.initialResolution.displayId)
+    : undefined
+  const nearestDisplay = screen.getDisplayNearestPoint(args.point)
+  const displayForScale = matchedDisplay ?? nearestDisplay
+  const displayBounds = displayForScale?.bounds ?? args.initialResolution.bounds
+
+  if (!args.captureSize) {
+    return {
+      bounds: {
+        x: displayBounds.x,
+        y: displayBounds.y,
+        width: Math.max(1, displayBounds.width),
+        height: Math.max(1, displayBounds.height),
+      },
+      mode: 'source-display',
+      displayId: displayForScale ? String(displayForScale.id) : args.initialResolution.displayId,
+    }
+  }
+
+  const scaleFactor = Math.max(1, Number(displayForScale?.scaleFactor) || 1)
+  const width = Math.max(1, args.captureSize.width / scaleFactor)
+  const height = Math.max(1, args.captureSize.height / scaleFactor)
+  const normalizedOnDisplay = normalizePointToBounds(args.point, displayBounds)
+
+  return {
+    bounds: {
+      x: args.point.x - normalizedOnDisplay.x * width,
+      y: args.point.y - normalizedOnDisplay.y * height,
+      width,
+      height,
+    },
+    mode: 'source-display',
+    displayId: displayForScale ? String(displayForScale.id) : args.initialResolution.displayId,
+  }
 }
 
 function resolveCursorSidecarPath(videoPath: string): string {
@@ -412,6 +456,7 @@ export function registerIpcHandlers(
     let captureMode = initialResolution.mode
     let captureDisplayId = initialResolution.displayId
     let hasNativeWindowBounds = false
+    let usingWindowBoundsFallback = false
 
     if (windowId) {
       const nativeWindowBounds = await getWindowBoundsById(windowId)
@@ -427,23 +472,20 @@ export function registerIpcHandlers(
       }
     }
 
-    if (windowId && !hasNativeWindowBounds && captureSize) {
-      const displayForScale = displayObjects.find((display) => String(display.id) === initialResolution.displayId)
-        ?? screen.getDisplayNearestPoint(initialPoint)
-      const displayBounds = displayForScale?.bounds ?? initialResolution.bounds
-      const scaleFactor = Math.max(1, Number(displayForScale?.scaleFactor) || 1)
-      const width = Math.max(1, captureSize.width / scaleFactor)
-      const height = Math.max(1, captureSize.height / scaleFactor)
-      const normalizedOnDisplay = normalizePointToBounds(initialPoint, displayBounds)
-
-      captureBounds = {
-        x: initialPoint.x - normalizedOnDisplay.x * width,
-        y: initialPoint.y - normalizedOnDisplay.y * height,
-        width,
-        height,
-      }
-      captureMode = 'source-display'
-      captureDisplayId = displayForScale ? String(displayForScale.id) : initialResolution.displayId
+    if (windowId && !hasNativeWindowBounds) {
+      const fallback = resolveWindowCaptureFallbackBounds({
+        displays: displayObjects,
+        initialResolution,
+        captureSize,
+        point: initialPoint,
+      })
+      captureBounds = fallback.bounds
+      captureMode = fallback.mode
+      captureDisplayId = fallback.displayId
+      usingWindowBoundsFallback = true
+      console.warn(
+        'Native window bounds are unavailable for cursor tracking; using fallback bounds mapping for this recording.',
+      )
     }
 
     const tracker: CursorTrackerRuntime = {
@@ -522,7 +564,30 @@ export function registerIpcHandlers(
           tracker.refreshingBounds = true
           try {
             const nextBounds = await getWindowBoundsById(tracker.windowId)
-            if (!nextBounds || !cursorTracker || cursorTracker !== tracker) return
+            if (!cursorTracker || cursorTracker !== tracker) return
+
+            if (!nextBounds) {
+              const point = screen.getCursorScreenPoint()
+              const displaySnapshot = screen.getAllDisplays()
+              const fallbackResolution = resolveCursorBoundsForSource({
+                displays: displaySnapshot.map((display) => ({
+                  id: display.id,
+                  bounds: display.bounds,
+                })),
+                source: tracker.sourceRef,
+                pointHint: point,
+              })
+              const fallback = resolveWindowCaptureFallbackBounds({
+                displays: displaySnapshot,
+                initialResolution: fallbackResolution,
+                captureSize: tracker.captureSize,
+                point,
+              })
+              tracker.bounds = fallback.bounds
+              tracker.boundsMode = fallback.mode
+              tracker.displayId = fallback.displayId
+              return
+            }
 
             tracker.bounds = nextBounds
             tracker.boundsMode = 'source-display'
@@ -541,7 +606,13 @@ export function registerIpcHandlers(
     }
     pushCursorSample(tracker, startedAt, initialPoint, getNativeCursorKind(), false)
 
-    return { success: true }
+    return {
+      success: true,
+      warningCode: usingWindowBoundsFallback ? 'window_bounds_fallback' : undefined,
+      warningMessage: usingWindowBoundsFallback
+        ? 'Window capture is using fallback bounds mapping. Cursor alignment may be less accurate.'
+        : undefined,
+    }
   })
 
   ipcMain.handle('cursor-tracker-stop', () => {

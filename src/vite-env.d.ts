@@ -91,7 +91,7 @@ interface Window {
     startCursorTracking: (options?: {
       source?: { id?: string; display_id?: string | number | null }
       captureSize?: { width?: number; height?: number }
-    }) => Promise<{ success: boolean }>
+    }) => Promise<{ success: boolean; warningCode?: string; warningMessage?: string }>
     stopCursorTracking: () => Promise<{ success: boolean; track?: CursorTrackMetadata }>
     onStopRecordingFromTray: (callback: () => void) => () => void
     setStopRecordingShortcut: (accelerator: string) => Promise<{ success: boolean; accelerator: string; message?: string }>

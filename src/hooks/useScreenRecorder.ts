@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { fixWebmDuration } from "@fix-webm-duration/fix";
+import { toast } from "sonner";
 import { computeCameraOverlayRect, type CameraOverlayShape } from "./cameraOverlay";
 
 type UseScreenRecorderReturn = {
@@ -761,6 +762,10 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
             captureSize: { width: nativeWidth, height: nativeHeight },
           });
           cursorTrackingActive.current = Boolean(trackingResult?.success);
+          if (trackingResult?.warningMessage) {
+            console.warn("Cursor tracking warning:", trackingResult.warningCode, trackingResult.warningMessage);
+            toast.warning(trackingResult.warningMessage);
+          }
         } catch (error) {
           cursorTrackingActive.current = false;
           console.warn("Failed to start cursor tracking for native recording.", error);
@@ -892,6 +897,10 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
               captureSize: { width, height },
             });
             cursorTrackingActive.current = Boolean(trackingResult?.success);
+            if (trackingResult?.warningMessage) {
+              console.warn("Cursor tracking warning:", trackingResult.warningCode, trackingResult.warningMessage);
+              toast.warning(trackingResult.warningMessage);
+            }
           } catch (error) {
             cursorTrackingActive.current = false;
             console.warn("Failed to start cursor tracking, falling back to synthetic cursor behavior.", error);
