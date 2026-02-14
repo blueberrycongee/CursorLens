@@ -217,6 +217,7 @@ export default function VideoEditor() {
   const [cursorTrack, setCursorTrack] = useState<CursorTrack | null>(null);
   const [cursorStyle, setCursorStyle] = useState<CursorStyleConfig>(DEFAULT_CURSOR_STYLE);
   const [hideCapturedSystemCursor, setHideCapturedSystemCursor] = useState(readLastSystemCursorHiddenPreference);
+  const [systemCursorMode, setSystemCursorMode] = useState<'always' | 'never' | undefined>(undefined);
 
   const videoPlaybackRef = useRef<VideoPlaybackRef>(null);
   const nextZoomIdRef = useRef(1);
@@ -275,6 +276,7 @@ export default function VideoEditor() {
             setAudioEnabled(true);
           }
           const parsedMode = parseSystemCursorMode(metadataWithCursor?.systemCursorMode);
+          setSystemCursorMode(parsedMode);
           if (parsedMode) {
             setHideCapturedSystemCursor(parsedMode === 'never');
           } else {
@@ -299,6 +301,30 @@ export default function VideoEditor() {
       // ignore localStorage errors
     }
   }, [hideCapturedSystemCursor]);
+
+  const hasCursorTrackSamples = Boolean(cursorTrack?.samples?.length);
+  const canHideCapturedSystemCursor = systemCursorMode !== "never" && hasCursorTrackSamples;
+  const hideCapturedSystemCursorHint = systemCursorMode === "never"
+    ? t("editor.hideCapturedCursorNotNeeded")
+    : t("editor.hideCapturedCursorUnavailable");
+
+  useEffect(() => {
+    if (systemCursorMode === "never") {
+      setHideCapturedSystemCursor(true);
+      return;
+    }
+    if (!hasCursorTrackSamples && hideCapturedSystemCursor) {
+      setHideCapturedSystemCursor(false);
+    }
+  }, [hasCursorTrackSamples, hideCapturedSystemCursor, systemCursorMode]);
+
+  const handleHideCapturedSystemCursorChange = useCallback((hidden: boolean) => {
+    if (hidden && !canHideCapturedSystemCursor) {
+      toast.info(hideCapturedSystemCursorHint);
+      return;
+    }
+    setHideCapturedSystemCursor(hidden);
+  }, [canHideCapturedSystemCursor, hideCapturedSystemCursorHint]);
 
   useEffect(() => {
     let rafId: number | null = null;
@@ -1177,7 +1203,9 @@ export default function VideoEditor() {
           cursorStyle={cursorStyle}
           onCursorStyleChange={setCursorStyle}
           hideCapturedSystemCursor={hideCapturedSystemCursor}
-          onHideCapturedSystemCursorChange={setHideCapturedSystemCursor}
+          onHideCapturedSystemCursorChange={handleHideCapturedSystemCursorChange}
+          canHideCapturedSystemCursor={canHideCapturedSystemCursor}
+          hideCapturedSystemCursorHint={hideCapturedSystemCursorHint}
           onAutoEdit={handleAutoEdit}
           autoEditDisabled={!cursorTrack?.samples?.length || !Number.isFinite(duration) || duration <= 0}
         />

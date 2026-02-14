@@ -79,6 +79,8 @@ const messages: Record<Locale, Record<string, string>> = {
     "editor.exportError": "Export failed: {{message}}",
     "editor.autoEditApplied": "Auto edit applied: {{count}} zoom regions",
     "editor.autoEditUnavailable": "No cursor interaction detected for auto edit",
+    "editor.hideCapturedCursorUnavailable": "This recording is missing cursor tracking data, so original cursor hiding is unavailable.",
+    "editor.hideCapturedCursorNotNeeded": "This recording was captured with system cursor hidden. No original cursor needs to be removed.",
 
     "settings.zoomLevel": "Zoom Level",
     "settings.selectZoomToAdjust": "Select a zoom region to adjust",
@@ -353,6 +355,8 @@ const messages: Record<Locale, Record<string, string>> = {
     "editor.exportError": "导出失败：{{message}}",
     "editor.autoEditApplied": "已应用自动剪辑：{{count}} 个缩放片段",
     "editor.autoEditUnavailable": "未检测到可用于自动剪辑的光标交互",
+    "editor.hideCapturedCursorUnavailable": "该录制缺少光标轨迹数据，无法在后期隐藏原始光标。",
+    "editor.hideCapturedCursorNotNeeded": "该录制在采集时已隐藏系统光标，无需再隐藏原始光标。",
 
     "settings.zoomLevel": "缩放级别",
     "settings.selectZoomToAdjust": "请选择一个缩放片段后再调整",
