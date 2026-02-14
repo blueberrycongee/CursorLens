@@ -239,7 +239,7 @@ export function SettingsPanel({
   const [selectedColor, setSelectedColor] = useState('#ADADAD');
   const [gradient, setGradient] = useState<string>(GRADIENTS[0]);
   const [showCropDropdown, setShowCropDropdown] = useState(false);
-  const activeExportAspectRatios = exportAspectRatios.length > 0 ? exportAspectRatios : [aspectRatio];
+  const activeExportAspectRatios = exportAspectRatios;
 
   const zoomEnabled = Boolean(selectedZoomDepth);
   const trimEnabled = Boolean(selectedTrimId);
@@ -260,9 +260,6 @@ export function SettingsPanel({
     onPreviewAspectRatioChange?.(ratio);
     if (!onExportAspectRatiosChange) return;
     const currentlySelected = activeExportAspectRatios.includes(ratio);
-    if (currentlySelected && activeExportAspectRatios.length === 1) {
-      return;
-    }
 
     const nextSelection = new Set(activeExportAspectRatios);
     if (currentlySelected) {
@@ -272,7 +269,6 @@ export function SettingsPanel({
     }
 
     const ordered = ASPECT_RATIOS.filter((candidate) => nextSelection.has(candidate));
-    if (ordered.length === 0) return;
     onExportAspectRatiosChange(ordered);
   };
 
@@ -1044,19 +1040,16 @@ export function SettingsPanel({
               <div className="grid grid-cols-4 gap-1">
                 {ASPECT_RATIOS.map((ratio) => {
                   const isSelected = activeExportAspectRatios.includes(ratio);
-                  const isLocked = isSelected && activeExportAspectRatios.length === 1;
                   return (
                     <button
                       key={ratio}
                       type="button"
                       onClick={() => toggleExportAspectRatio(ratio)}
-                      disabled={isLocked}
                       className={cn(
                         "h-6 rounded-md border text-[10px] font-medium transition-all",
                         isSelected
                           ? "border-[#34B27B]/70 bg-[#34B27B]/20 text-white"
                           : "border-white/10 text-slate-400 hover:border-[#34B27B]/50 hover:text-slate-200",
-                        isLocked && "cursor-not-allowed opacity-70"
                       )}
                     >
                       {ratio}

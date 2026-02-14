@@ -74,10 +74,9 @@ function resolvePreviewFrameRate(sourceFrameRate?: number): number {
   return normalized;
 }
 
-function normalizeSelectedAspectRatios(selected: AspectRatio[], fallback: AspectRatio): AspectRatio[] {
+function normalizeSelectedAspectRatios(selected: AspectRatio[]): AspectRatio[] {
   const selectedSet = new Set(selected);
-  const ordered = ASPECT_RATIOS.filter((ratio) => selectedSet.has(ratio));
-  return ordered.length > 0 ? ordered : [fallback];
+  return ASPECT_RATIOS.filter((ratio) => selectedSet.has(ratio));
 }
 
 function resolveAspectCropRegion(
@@ -268,8 +267,8 @@ export default function VideoEditor() {
     return fallback;
   }, [sourceVideoDimensions]);
   const normalizedExportAspectRatios = useMemo(
-    () => normalizeSelectedAspectRatios(exportAspectRatios, aspectRatio),
-    [exportAspectRatios, aspectRatio],
+    () => normalizeSelectedAspectRatios(exportAspectRatios),
+    [exportAspectRatios],
   );
   const activeCropRegion = useMemo(
     () => resolveAspectCropRegion(cropRegionsByAspect, aspectRatio, sourceAspectRatio),
@@ -1099,6 +1098,10 @@ export default function VideoEditor() {
       } else {
         const quality = settings.quality || exportQuality;
         const ratiosToExport = normalizedExportAspectRatios;
+        if (ratiosToExport.length === 0) {
+          toast.error(t('editor.exportAspectRatioRequired'));
+          return;
+        }
 
         let exportDirectoryPath: string | null = null;
         if (ratiosToExport.length > 1) {
@@ -1254,6 +1257,10 @@ export default function VideoEditor() {
       toast.error(t('editor.videoNotReady'));
       return;
     }
+    if (exportFormat === 'mp4' && normalizedExportAspectRatios.length === 0) {
+      toast.error(t('editor.exportAspectRatioRequired'));
+      return;
+    }
 
     // Build export settings from current state
     const sourceWidth = video.videoWidth || 1920;
@@ -1277,7 +1284,7 @@ export default function VideoEditor() {
 
     // Start export immediately
     handleExport(settings);
-  }, [videoPath, exportFormat, exportQuality, gifFrameRate, gifLoop, gifSizePreset, handleExport, t]);
+  }, [videoPath, exportFormat, exportQuality, gifFrameRate, gifLoop, gifSizePreset, handleExport, normalizedExportAspectRatios.length, t]);
 
   const handleCancelExport = useCallback(() => {
     if (exporterRef.current) {
