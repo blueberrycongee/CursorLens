@@ -45,6 +45,10 @@ import { getAssetPath } from "@/lib/assetPath";
 import { useI18n } from "@/i18n";
 import { DEFAULT_CURSOR_STYLE, type CursorStyleConfig, type CursorTrack } from "@/lib/cursor";
 import { generateAutoZoomDrafts } from "@/lib/autoEdit/screenStudioAutoZoom";
+import type { RoughCutSuggestion, SubtitleCue } from "@/lib/analysis/types";
+import { normalizeSubtitleCues } from "@/lib/analysis/subtitleTrack";
+import { normalizeRoughCutSuggestions } from "@/lib/analysis/roughCutEngine";
+import { applyRoughCutSuggestionsToTrimRegions } from "@/lib/analysis/roughCutApply";
 
 const WALLPAPER_COUNT = 18;
 const WALLPAPER_PATHS = Array.from({ length: WALLPAPER_COUNT }, (_, i) => `/wallpapers/wallpaper${i + 1}.jpg`);
@@ -62,6 +66,18 @@ function normalizeSelectedAspectRatios(selected: AspectRatio[], fallback: Aspect
   const selectedSet = new Set(selected);
   const ordered = ASPECT_RATIOS.filter((ratio) => selectedSet.has(ratio));
   return ordered.length > 0 ? ordered : [fallback];
+}
+
+function fromFileUrl(input: string): string {
+  if (!input) return input;
+  if (!input.startsWith('file://')) return input;
+
+  try {
+    const parsed = new URL(input);
+    return decodeURIComponent(parsed.pathname || '');
+  } catch {
+    return input.replace(/^file:\/\//, '');
+  }
 }
 
 function normalizeCursorTrack(input: unknown): CursorTrack | null {
@@ -155,6 +171,7 @@ function normalizeCursorTrack(input: unknown): CursorTrack | null {
 export default function VideoEditor() {
   const { t, locale } = useI18n();
   const [videoPath, setVideoPath] = useState<string | null>(null);
+  const [videoFilePath, setVideoFilePath] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -195,6 +212,11 @@ export default function VideoEditor() {
   const [audioGain, setAudioGain] = useState(1);
   const [cursorTrack, setCursorTrack] = useState<CursorTrack | null>(null);
   const [cursorStyle, setCursorStyle] = useState<CursorStyleConfig>(DEFAULT_CURSOR_STYLE);
+  const [subtitleCues, setSubtitleCues] = useState<SubtitleCue[]>([]);
+  const [roughCutSuggestions, setRoughCutSuggestions] = useState<RoughCutSuggestion[]>([]);
+  const [analysisJobId, setAnalysisJobId] = useState<string | null>(null);
+  const [analysisInProgress, setAnalysisInProgress] = useState(false);
+  const analysisPollingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const videoPlaybackRef = useRef<VideoPlaybackRef>(null);
   const nextZoomIdRef = useRef(1);
@@ -238,6 +260,7 @@ export default function VideoEditor() {
         if (result.success && result.path) {
           const videoUrl = toFileUrl(result.path);
           setVideoPath(videoUrl);
+          setVideoFilePath(result.path);
           setSourceFrameRate(
             Number.isFinite(result.metadata?.frameRate) ? result.metadata?.frameRate : undefined,
           );
@@ -254,6 +277,7 @@ export default function VideoEditor() {
             setAudioEnabled(true);
           }
         } else {
+          setVideoFilePath(null);
           setError(t('editor.noVideo'));
         }
       } catch (err) {
@@ -689,6 +713,212 @@ export default function VideoEditor() {
     applyAutoZoomEdits({ silent: true });
   }, [applyAutoZoomEdits, cursorTrack, duration, loading, zoomRegions.length]);
 
+  const stopAnalysisPolling = useCallback(() => {
+    if (analysisPollingTimerRef.current) {
+      clearInterval(analysisPollingTimerRef.current);
+      analysisPollingTimerRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      stopAnalysisPolling();
+    };
+  }, [stopAnalysisPolling]);
+
+  const applyAnalysis = useCallback((analysis?: VideoAnalysisMetadata) => {
+    if (!analysis) {
+      setSubtitleCues([]);
+      setRoughCutSuggestions([]);
+      return;
+    }
+
+    const normalizedCues = normalizeSubtitleCues(Array.isArray(analysis.subtitleCues) ? analysis.subtitleCues : []);
+    const transcriptWords = Array.isArray(analysis.transcript?.words) ? analysis.transcript.words : [];
+    const fallbackDurationMs = transcriptWords.length > 0
+      ? Math.max(0, Math.round(transcriptWords[transcriptWords.length - 1].endMs))
+      : 0;
+    const normalizedSuggestions = normalizeRoughCutSuggestions(
+      Array.isArray(analysis.roughCutSuggestions) ? analysis.roughCutSuggestions : [],
+      Math.max(fallbackDurationMs, Math.round(duration * 1000)),
+    );
+    setSubtitleCues(normalizedCues);
+    setRoughCutSuggestions(normalizedSuggestions);
+  }, [duration]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!videoFilePath) {
+      applyAnalysis(undefined);
+      return;
+    }
+
+    applyAnalysis(undefined);
+    void (async () => {
+      try {
+        const result = await window.electronAPI.getCurrentVideoAnalysis(videoFilePath);
+        if (cancelled || !result.success) return;
+        applyAnalysis(result.analysis);
+      } catch (error) {
+        console.warn('Failed to load cached analysis sidecar:', error);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [applyAnalysis, videoFilePath]);
+
+  useEffect(() => {
+    stopAnalysisPolling();
+    setAnalysisInProgress(false);
+    setAnalysisJobId(null);
+  }, [stopAnalysisPolling, videoFilePath]);
+
+  const handleGenerateSubtitles = useCallback(async () => {
+    if (analysisInProgress) {
+      return;
+    }
+
+    const targetPath = (videoFilePath || fromFileUrl(videoPath || '')).trim();
+    if (!targetPath) {
+      toast.error(t('editor.noVideoLoaded'));
+      return;
+    }
+
+    const video = videoPlaybackRef.current?.video;
+    const sourceWidth = video?.videoWidth || 1920;
+
+    try {
+      const result = await window.electronAPI.startVideoAnalysis({
+        videoPath: targetPath,
+        locale: locale === 'zh-CN' ? 'zh-CN' : 'en-US',
+        durationMs: Math.max(0, Math.round(duration * 1000)),
+        videoWidth: sourceWidth,
+        subtitleWidthRatio: 0.82,
+      });
+
+      if (!result.success || !result.jobId) {
+        toast.error(t('editor.analysisStartFailed'), {
+          description: result.message,
+        });
+        return;
+      }
+
+      stopAnalysisPolling();
+      setAnalysisInProgress(true);
+      setAnalysisJobId(result.jobId);
+      toast.info(t('editor.analysisRunning'));
+    } catch (error) {
+      toast.error(t('editor.analysisStartFailed'), {
+        description: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }, [analysisInProgress, duration, locale, stopAnalysisPolling, t, videoFilePath, videoPath]);
+
+  useEffect(() => {
+    if (!analysisJobId) {
+      return;
+    }
+
+    let cancelled = false;
+    let polling = false;
+
+    const finishWithError = (message?: string) => {
+      if (cancelled) return;
+      stopAnalysisPolling();
+      setAnalysisInProgress(false);
+      setAnalysisJobId(null);
+      toast.error(t('editor.analysisStartFailed'), {
+        description: message || t('error.unexpected'),
+      });
+    };
+
+    const pollOnce = async () => {
+      if (polling || cancelled) return;
+      polling = true;
+      try {
+        const statusResult = await window.electronAPI.getVideoAnalysisStatus(analysisJobId);
+        if (!statusResult.success || !statusResult.status) {
+          finishWithError(statusResult.message);
+          return;
+        }
+
+        const jobStatus = statusResult.status.status;
+        if (jobStatus === 'failed') {
+          finishWithError(statusResult.status.error || statusResult.message);
+          return;
+        }
+
+        if (jobStatus !== 'completed') {
+          return;
+        }
+
+        const result = await window.electronAPI.getVideoAnalysisResult(analysisJobId);
+        if (!result.success || !result.result) {
+          finishWithError(result.message);
+          return;
+        }
+
+        stopAnalysisPolling();
+        setAnalysisInProgress(false);
+        setAnalysisJobId(null);
+        applyAnalysis(result.result);
+
+        toast.success(t('editor.analysisCompleted'));
+        if (!result.result.subtitleCues?.length) {
+          toast.info(t('editor.analysisNoSubtitles'));
+        }
+        if (!result.result.roughCutSuggestions?.length) {
+          toast.info(t('editor.analysisNoSuggestions'));
+        }
+      } catch (error) {
+        finishWithError(error instanceof Error ? error.message : String(error));
+      } finally {
+        polling = false;
+      }
+    };
+
+    void pollOnce();
+    analysisPollingTimerRef.current = setInterval(() => {
+      void pollOnce();
+    }, 900);
+
+    return () => {
+      cancelled = true;
+      stopAnalysisPolling();
+    };
+  }, [analysisJobId, applyAnalysis, stopAnalysisPolling, t]);
+
+  const handleApplyRoughCut = useCallback(() => {
+    if (!roughCutSuggestions.length) {
+      toast.info(t('editor.analysisNoSuggestions'));
+      return;
+    }
+
+    const nextTrimRegions = applyRoughCutSuggestionsToTrimRegions(
+      trimRegions,
+      roughCutSuggestions,
+      Math.max(0, Math.round(duration * 1000)),
+    );
+    setTrimRegions(nextTrimRegions);
+    setSelectedTrimId(nextTrimRegions[0]?.id ?? null);
+    setSelectedZoomId(null);
+    setSelectedAnnotationId(null);
+
+    const maxTrimNumber = nextTrimRegions.reduce((max, region) => {
+      const parsed = Number(region.id.replace(/^trim-/, ''));
+      if (!Number.isFinite(parsed)) return max;
+      return Math.max(max, parsed);
+    }, 0);
+    nextTrimIdRef.current = Math.max(nextTrimIdRef.current, maxTrimNumber + 1);
+
+    toast.success(t('editor.analysisApplyRoughCutSuccess', {
+      count: roughCutSuggestions.length,
+    }));
+  }, [duration, roughCutSuggestions, t, trimRegions]);
+
   const handleExport = useCallback(async (settings: ExportSettings) => {
     if (!videoPath) {
       toast.error(t('editor.noVideoLoaded'));
@@ -752,6 +982,7 @@ export default function VideoEditor() {
           videoPadding: padding,
           cropRegion,
           annotationRegions,
+          subtitleCues,
           previewWidth,
           previewHeight,
           cursorTrack,
@@ -851,6 +1082,7 @@ export default function VideoEditor() {
             padding,
             cropRegion,
             annotationRegions,
+            subtitleCues,
             previewWidth,
             previewHeight,
             cursorTrack,
@@ -930,7 +1162,7 @@ export default function VideoEditor() {
       setShowExportDialog(false);
       setExportProgress(null);
     }
-  }, [videoPath, wallpaper, zoomRegions, trimRegions, shadowIntensity, showBlur, motionBlurEnabled, borderRadius, padding, cropRegion, annotationRegions, isPlaying, exportAspectRatios, aspectRatio, exportQuality, locale, sourceFrameRate, sourceHasAudio, audioEnabled, audioGain, cursorTrack, cursorStyle, t]);
+  }, [videoPath, wallpaper, zoomRegions, trimRegions, shadowIntensity, showBlur, motionBlurEnabled, borderRadius, padding, cropRegion, annotationRegions, subtitleCues, isPlaying, exportAspectRatios, aspectRatio, exportQuality, locale, sourceFrameRate, sourceHasAudio, audioEnabled, audioGain, cursorTrack, cursorStyle, t]);
 
   const handleOpenExportDialog = useCallback(() => {
     if (!videoPath) {
@@ -1041,6 +1273,7 @@ export default function VideoEditor() {
                       onSelectAnnotation={handleSelectAnnotation}
                       onAnnotationPositionChange={handleAnnotationPositionChange}
                       onAnnotationSizeChange={handleAnnotationSizeChange}
+                      subtitleCues={subtitleCues}
                       cursorTrack={cursorTrack}
                       cursorStyle={cursorStyle}
                     />
@@ -1090,6 +1323,7 @@ export default function VideoEditor() {
               onAnnotationDelete={handleAnnotationDelete}
               selectedAnnotationId={selectedAnnotationId}
               onSelectAnnotation={handleSelectAnnotation}
+              subtitleCues={subtitleCues}
               aspectRatio={aspectRatio}
               onAspectRatioChange={setAspectRatio}
               hasAudioTrack={sourceHasAudio}
@@ -1160,6 +1394,11 @@ export default function VideoEditor() {
           onCursorStyleChange={setCursorStyle}
           onAutoEdit={handleAutoEdit}
           autoEditDisabled={!cursorTrack?.samples?.length || !Number.isFinite(duration) || duration <= 0}
+          onGenerateSubtitles={handleGenerateSubtitles}
+          onApplyRoughCut={handleApplyRoughCut}
+          analysisRunning={analysisInProgress}
+          subtitleCueCount={subtitleCues.length}
+          roughCutSuggestionCount={roughCutSuggestions.length}
         />
       </div>
       <ExportDialog

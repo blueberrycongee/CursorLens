@@ -15,6 +15,8 @@ import { type AspectRatio, formatAspectRatioForCSS } from "@/utils/aspectRatioUt
 import { AnnotationOverlay } from "./AnnotationOverlay";
 import { getRenderableAnnotations } from "@/lib/annotations/renderOrder";
 import { getPreviewBackgroundFilter } from "@/lib/rendering/backgroundBlur";
+import type { SubtitleCue } from "@/lib/analysis/types";
+import { findSubtitleCueAtTime, normalizeSubtitleCues } from "@/lib/analysis/subtitleTrack";
 import {
   DEFAULT_CURSOR_STYLE,
   drawCompositedCursor,
@@ -51,6 +53,7 @@ interface VideoPlaybackProps {
   onSelectAnnotation?: (id: string | null) => void;
   onAnnotationPositionChange?: (id: string, position: { x: number; y: number }) => void;
   onAnnotationSizeChange?: (id: string, size: { width: number; height: number }) => void;
+  subtitleCues?: SubtitleCue[];
   preferredFps?: number;
   cursorTrack?: CursorTrack | null;
   cursorStyle?: Partial<CursorStyleConfig>;
@@ -93,6 +96,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
   onSelectAnnotation,
   onAnnotationPositionChange,
   onAnnotationSizeChange,
+  subtitleCues = [],
   preferredFps = 60,
   cursorTrack = null,
   cursorStyle,
@@ -232,6 +236,12 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
     if (!selectedZoomId) return null;
     return zoomRegions.find((region) => region.id === selectedZoomId) ?? null;
   }, [zoomRegions, selectedZoomId]);
+
+  const normalizedSubtitleCues = useMemo(() => normalizeSubtitleCues(subtitleCues), [subtitleCues]);
+  const activeSubtitleCue = useMemo(
+    () => findSubtitleCueAtTime(normalizedSubtitleCues, Math.round(currentTime * 1000)),
+    [normalizedSubtitleCues, currentTime],
+  );
 
   useImperativeHandle(ref, () => ({
     video: videoRef.current,
@@ -995,6 +1005,15 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
               />
             ));
           })()}
+          {activeSubtitleCue ? (
+            <div className="absolute left-1/2 bottom-[6%] -translate-x-1/2 z-40 pointer-events-none max-w-[82%]">
+              <div className="px-3 py-1.5 rounded-xl bg-black/70 backdrop-blur-[2px] border border-white/10 shadow-lg">
+                <p className="text-white text-base leading-tight font-semibold text-center whitespace-pre-wrap break-words">
+                  {activeSubtitleCue.text}
+                </p>
+              </div>
+            </div>
+          ) : null}
         </div>
       )}
       <video

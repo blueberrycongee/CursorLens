@@ -10,6 +10,7 @@ import Item from "./Item";
 import KeyframeMarkers from "./KeyframeMarkers";
 import type { Range, Span } from "dnd-timeline";
 import type { ZoomRegion, TrimRegion, AnnotationRegion } from "../types";
+import type { SubtitleCue } from "@/lib/analysis/types";
 import { v4 as uuidv4 } from 'uuid';
 import {
   DropdownMenu,
@@ -25,6 +26,7 @@ import { useI18n } from "@/i18n";
 const ZOOM_ROW_ID = "row-zoom";
 const TRIM_ROW_ID = "row-trim";
 const ANNOTATION_ROW_ID = "row-annotation";
+const SUBTITLE_ROW_ID = "row-subtitle";
 const AUDIO_ROW_ID = "row-audio";
 const FALLBACK_RANGE_MS = 1000;
 const TARGET_MARKER_COUNT = 12;
@@ -51,6 +53,7 @@ interface TimelineEditorProps {
   onAnnotationDelete?: (id: string) => void;
   selectedAnnotationId?: string | null;
   onSelectAnnotation?: (id: string | null) => void;
+  subtitleCues?: SubtitleCue[];
   aspectRatio: AspectRatio;
   onAspectRatioChange: (aspectRatio: AspectRatio) => void;
   hasAudioTrack?: boolean;
@@ -72,7 +75,7 @@ interface TimelineRenderItem {
   span: Span;
   label: string;
   zoomDepth?: number;
-  variant: 'zoom' | 'trim' | 'annotation';
+  variant: 'zoom' | 'trim' | 'annotation' | 'subtitle';
 }
 
 const SCALE_CANDIDATES = [
@@ -445,6 +448,7 @@ function Timeline({
   const zoomItems = items.filter(item => item.rowId === ZOOM_ROW_ID);
   const trimItems = items.filter(item => item.rowId === TRIM_ROW_ID);
   const annotationItems = items.filter(item => item.rowId === ANNOTATION_ROW_ID);
+  const subtitleItems = items.filter(item => item.rowId === SUBTITLE_ROW_ID);
 
   return (
     <div
@@ -512,6 +516,22 @@ function Timeline({
         ))}
       </Row>
 
+      <Row id={SUBTITLE_ROW_ID}>
+        {subtitleItems.map((item) => (
+          <Item
+            id={item.id}
+            key={item.id}
+            rowId={item.rowId}
+            span={item.span}
+            isSelected={false}
+            variant="subtitle"
+            editable={false}
+          >
+            {item.label}
+          </Item>
+        ))}
+      </Row>
+
       <Row id={AUDIO_ROW_ID}>
         <div className="h-10 w-full px-2 flex items-center">
           <div
@@ -559,6 +579,7 @@ export default function TimelineEditor({
   onAnnotationDelete,
   selectedAnnotationId,
   onSelectAnnotation,
+  subtitleCues = [],
   aspectRatio,
   onAspectRatioChange,
   hasAudioTrack = true,
@@ -885,8 +906,16 @@ export default function TimelineEditor({
       };
     });
 
-    return [...zooms, ...trims, ...annotations];
-  }, [zoomRegions, trimRegions, annotationRegions, t]);
+    const subtitles: TimelineRenderItem[] = subtitleCues.map((cue, index) => ({
+      id: cue.id || `subtitle-${index + 1}`,
+      rowId: SUBTITLE_ROW_ID,
+      span: { start: cue.startMs, end: cue.endMs },
+      label: cue.text.length > 28 ? `${cue.text.slice(0, 28)}...` : cue.text,
+      variant: 'subtitle',
+    }));
+
+    return [...zooms, ...trims, ...annotations, ...subtitles];
+  }, [zoomRegions, trimRegions, annotationRegions, subtitleCues, t]);
 
   const handleItemSpanChange = useCallback((id: string, span: Span) => {
     // Check if it's a zoom or trim item

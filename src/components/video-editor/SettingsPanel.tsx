@@ -7,7 +7,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { useState } from "react";
 import Block from '@uiw/react-color-block';
-import { Trash2, Download, Crop, X, Bug, Upload, Star, Film, Image, Sparkles, Palette } from "lucide-react";
+import { Trash2, Download, Crop, X, Bug, Upload, Star, Film, Image, Sparkles, Palette, Captions, Scissors } from "lucide-react";
 import { toast } from "sonner";
 import type { ZoomDepth, CropRegion, AnnotationRegion, AnnotationType, FigureData } from "./types";
 import { CropControl } from "./CropControl";
@@ -105,6 +105,11 @@ interface SettingsPanelProps {
   onCursorStyleChange?: (style: CursorStyleConfig) => void;
   onAutoEdit?: () => void;
   autoEditDisabled?: boolean;
+  onGenerateSubtitles?: () => void;
+  onApplyRoughCut?: () => void;
+  analysisRunning?: boolean;
+  subtitleCueCount?: number;
+  roughCutSuggestionCount?: number;
 }
 
 export default SettingsPanel;
@@ -182,6 +187,11 @@ export function SettingsPanel({
   onCursorStyleChange,
   onAutoEdit,
   autoEditDisabled = false,
+  onGenerateSubtitles,
+  onApplyRoughCut,
+  analysisRunning = false,
+  subtitleCueCount = 0,
+  roughCutSuggestionCount = 0,
 }: SettingsPanelProps) {
   const { t } = useI18n();
   const [wallpaperPaths, setWallpaperPaths] = useState<string[]>([]);
@@ -415,6 +425,32 @@ export function SettingsPanel({
             <Sparkles className="w-3 h-3 text-[#34B27B]" />
             {t("settings.autoEdit")}
           </Button>
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            <Button
+              onClick={() => onGenerateSubtitles?.()}
+              variant="outline"
+              size="sm"
+              disabled={analysisRunning}
+              className="gap-1.5 bg-white/5 text-slate-200 border border-white/10 hover:bg-white/10 hover:border-white/20 hover:text-white transition-all h-8 text-[10px] disabled:opacity-50"
+            >
+              <Captions className="w-3 h-3 text-[#34B27B]" />
+              {t("settings.generateSubtitles")}
+            </Button>
+            <Button
+              onClick={() => onApplyRoughCut?.()}
+              variant="outline"
+              size="sm"
+              disabled={analysisRunning || roughCutSuggestionCount <= 0}
+              className="gap-1.5 bg-white/5 text-slate-200 border border-white/10 hover:bg-white/10 hover:border-white/20 hover:text-white transition-all h-8 text-[10px] disabled:opacity-50"
+            >
+              <Scissors className="w-3 h-3 text-[#34B27B]" />
+              {t("settings.applyRoughCut")}
+            </Button>
+          </div>
+          <div className="mt-1 flex items-center justify-between text-[10px] text-slate-500 px-1">
+            <span>{t("timeline.subtitle")}: {subtitleCueCount}</span>
+            <span>{t("settings.applyRoughCut")}: {roughCutSuggestionCount}</span>
+          </div>
         </div>
 
         {trimEnabled && (
