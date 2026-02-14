@@ -101,6 +101,8 @@ interface SettingsPanelProps {
   onCursorStyleChange?: (style: CursorStyleConfig) => void;
   hideCapturedSystemCursor?: boolean;
   onHideCapturedSystemCursorChange?: (hidden: boolean) => void;
+  onAutoEdit?: () => void;
+  autoEditDisabled?: boolean;
 }
 
 export default SettingsPanel;
@@ -176,6 +178,8 @@ export function SettingsPanel({
   onCursorStyleChange,
   hideCapturedSystemCursor = false,
   onHideCapturedSystemCursorChange,
+  onAutoEdit,
+  autoEditDisabled = false,
 }: SettingsPanelProps) {
   const { t } = useI18n();
   const [wallpaperPaths, setWallpaperPaths] = useState<string[]>([]);
@@ -361,6 +365,16 @@ export function SettingsPanel({
               {t("settings.deleteZoom")}
             </Button>
           )}
+          <Button
+            onClick={() => onAutoEdit?.()}
+            variant="outline"
+            size="sm"
+            disabled={autoEditDisabled}
+            className="mt-2 w-full gap-2 bg-white/5 text-slate-200 border border-white/10 hover:bg-white/10 hover:border-white/20 hover:text-white transition-all h-8 text-xs disabled:opacity-50"
+          >
+            <Sparkles className="w-3 h-3 text-[#34B27B]" />
+            {t("settings.autoEdit")}
+          </Button>
         </div>
 
         {trimEnabled && (

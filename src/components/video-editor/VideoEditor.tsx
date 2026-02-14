@@ -33,6 +33,7 @@ import { type AspectRatio, getAspectRatioValue } from "@/utils/aspectRatioUtils"
 import { getAssetPath } from "@/lib/assetPath";
 import { useI18n } from "@/i18n";
 import { DEFAULT_CURSOR_STYLE, type CursorStyleConfig, type CursorTrack } from "@/lib/cursor";
+import { generateAutoZoomDrafts } from "@/lib/autoEdit/screenStudioAutoZoom";
 
 const WALLPAPER_COUNT = 18;
 const WALLPAPER_PATHS = Array.from({ length: WALLPAPER_COUNT }, (_, i) => `/wallpapers/wallpaper${i + 1}.jpg`);
@@ -223,6 +224,7 @@ export default function VideoEditor() {
   const nextAnnotationIdRef = useRef(1);
   const nextAnnotationZIndexRef = useRef(1); // Track z-index for stacking order
   const exporterRef = useRef<VideoExporter | null>(null);
+  const autoEditInitializedRef = useRef(false);
 
   // Helper to convert file path to proper file:// URL
   const toFileUrl = (filePath: string): string => {
@@ -466,6 +468,52 @@ export default function VideoEditor() {
     }
   }, [selectedZoomId]);
 
+  const applyAutoZoomEdits = useCallback((options?: { silent?: boolean }) => {
+    const durationMs = Math.round(duration * 1000);
+    if (!Number.isFinite(durationMs) || durationMs < 200 || !cursorTrack?.samples?.length) {
+      if (!options?.silent) {
+        toast.info(t("editor.autoEditUnavailable"));
+      }
+      return 0;
+    }
+
+    const drafts = generateAutoZoomDrafts(cursorTrack, {
+      durationMs,
+      maxRegions: 64,
+    });
+
+    if (drafts.length === 0) {
+      if (!options?.silent) {
+        toast.info(t("editor.autoEditUnavailable"));
+      }
+      return 0;
+    }
+
+    const generatedZoomRegions: ZoomRegion[] = drafts.map((draft) => ({
+      id: `zoom-${nextZoomIdRef.current++}`,
+      startMs: draft.startMs,
+      endMs: draft.endMs,
+      depth: draft.depth,
+      focus: clampFocusToDepth(draft.focus, draft.depth),
+    }));
+
+    setZoomRegions(generatedZoomRegions);
+    setSelectedZoomId(generatedZoomRegions[0]?.id ?? null);
+    setSelectedTrimId(null);
+    setSelectedAnnotationId(null);
+
+    if (!options?.silent) {
+      toast.success(t("editor.autoEditApplied", { count: generatedZoomRegions.length }));
+    }
+
+    return generatedZoomRegions.length;
+  }, [cursorTrack, duration, t]);
+
+  const handleAutoEdit = useCallback(() => {
+    autoEditInitializedRef.current = true;
+    applyAutoZoomEdits();
+  }, [applyAutoZoomEdits]);
+
   const handleTrimDelete = useCallback((id: string) => {
     setTrimRegions((prev) => prev.filter((region) => region.id !== id));
     if (selectedTrimId === id) {
@@ -647,6 +695,23 @@ export default function VideoEditor() {
       setSelectedAnnotationId(null);
     }
   }, [selectedAnnotationId, annotationRegions]);
+
+  useEffect(() => {
+    if (loading) return;
+    if (autoEditInitializedRef.current) return;
+    if (zoomRegions.length > 0) {
+      autoEditInitializedRef.current = true;
+      return;
+    }
+    if (!cursorTrack?.samples?.length) {
+      autoEditInitializedRef.current = true;
+      return;
+    }
+    if (!Number.isFinite(duration) || duration <= 0) return;
+
+    autoEditInitializedRef.current = true;
+    applyAutoZoomEdits({ silent: true });
+  }, [applyAutoZoomEdits, cursorTrack, duration, loading, zoomRegions.length]);
 
   const handleExport = useCallback(async (settings: ExportSettings) => {
     if (!videoPath) {
@@ -1113,6 +1178,8 @@ export default function VideoEditor() {
           onCursorStyleChange={setCursorStyle}
           hideCapturedSystemCursor={hideCapturedSystemCursor}
           onHideCapturedSystemCursorChange={setHideCapturedSystemCursor}
+          onAutoEdit={handleAutoEdit}
+          autoEditDisabled={!cursorTrack?.samples?.length || !Number.isFinite(duration) || duration <= 0}
         />
       </div>
 
