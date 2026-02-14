@@ -81,6 +81,7 @@ interface SettingsPanelProps {
   onExportFormatChange?: (format: ExportFormat) => void;
   exportAspectRatios?: AspectRatio[];
   onExportAspectRatiosChange?: (ratios: AspectRatio[]) => void;
+  onPreviewAspectRatioChange?: (ratio: AspectRatio) => void;
   gifFrameRate?: GifFrameRate;
   onGifFrameRateChange?: (rate: GifFrameRate) => void;
   gifLoop?: boolean;
@@ -163,6 +164,7 @@ export function SettingsPanel({
   onExportFormatChange,
   exportAspectRatios = [],
   onExportAspectRatiosChange,
+  onPreviewAspectRatioChange,
   gifFrameRate = 15,
   onGifFrameRateChange,
   gifLoop = true,
@@ -255,6 +257,7 @@ export function SettingsPanel({
   };
 
   const toggleExportAspectRatio = (ratio: AspectRatio) => {
+    onPreviewAspectRatioChange?.(ratio);
     if (!onExportAspectRatiosChange) return;
     const currentlySelected = activeExportAspectRatios.includes(ratio);
     if (currentlySelected && activeExportAspectRatios.length === 1) {

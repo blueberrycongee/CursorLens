@@ -1,10 +1,11 @@
 
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 
 import VideoPlayback, { VideoPlaybackRef } from "./VideoPlayback";
+import { PreviewAspectCropOverlay } from "./PreviewAspectCropOverlay";
 import PlaybackControls from "./PlaybackControls";
 import TimelineEditor from "./timeline/TimelineEditor";
 import { SettingsPanel } from "./SettingsPanel";
@@ -44,6 +45,7 @@ import { ASPECT_RATIOS, type AspectRatio, getAspectRatioValue } from "@/utils/as
 import { getAssetPath } from "@/lib/assetPath";
 import { useI18n } from "@/i18n";
 import { DEFAULT_CURSOR_STYLE, type CursorStyleConfig, type CursorTrack } from "@/lib/cursor";
+import { cropRegionEquals, getCenteredAspectCropRegion, normalizeAspectCropRegion } from "@/lib/crop/aspectCrop";
 import { generateAutoZoomDrafts } from "@/lib/autoEdit/screenStudioAutoZoom";
 import type { RoughCutSuggestion, SubtitleCue } from "@/lib/analysis/types";
 import { normalizeSubtitleCues } from "@/lib/analysis/subtitleTrack";
@@ -66,6 +68,19 @@ function normalizeSelectedAspectRatios(selected: AspectRatio[], fallback: Aspect
   const selectedSet = new Set(selected);
   const ordered = ASPECT_RATIOS.filter((ratio) => selectedSet.has(ratio));
   return ordered.length > 0 ? ordered : [fallback];
+}
+
+function resolveAspectCropRegion(
+  regionsByAspect: Partial<Record<AspectRatio, CropRegion>>,
+  ratio: AspectRatio,
+  sourceAspectRatio: number,
+): CropRegion {
+  const targetAspectRatio = getAspectRatioValue(ratio);
+  const region = regionsByAspect[ratio];
+  if (!region) {
+    return getCenteredAspectCropRegion(sourceAspectRatio, targetAspectRatio);
+  }
+  return normalizeAspectCropRegion(region, sourceAspectRatio, targetAspectRatio);
 }
 
 function fromFileUrl(input: string): string {
@@ -183,7 +198,10 @@ export default function VideoEditor() {
   const [motionBlurEnabled, setMotionBlurEnabled] = useState(false);
   const [borderRadius, setBorderRadius] = useState(0);
   const [padding, setPadding] = useState(50);
-  const [cropRegion, setCropRegion] = useState<CropRegion>(DEFAULT_CROP_REGION);
+  const [sourceVideoDimensions, setSourceVideoDimensions] = useState<{ width: number; height: number } | null>(null);
+  const [cropRegionsByAspect, setCropRegionsByAspect] = useState<Partial<Record<AspectRatio, CropRegion>>>({
+    '16:9': DEFAULT_CROP_REGION,
+  });
   const [zoomRegions, setZoomRegions] = useState<ZoomRegion[]>([]);
   const [selectedZoomId, setSelectedZoomId] = useState<string | null>(null);
   const [trimRegions, setTrimRegions] = useState<TrimRegion[]>([]);
@@ -227,6 +245,44 @@ export default function VideoEditor() {
   const exportCancelledRef = useRef(false);
   const previousAspectRatioRef = useRef<AspectRatio>('16:9');
   const autoEditInitializedRef = useRef(false);
+  const sourceAspectRatio = useMemo(() => {
+    const fallback = 16 / 9;
+    if (sourceVideoDimensions && sourceVideoDimensions.width > 0 && sourceVideoDimensions.height > 0) {
+      return sourceVideoDimensions.width / sourceVideoDimensions.height;
+    }
+    const video = videoPlaybackRef.current?.video;
+    if (video && video.videoWidth > 0 && video.videoHeight > 0) {
+      return video.videoWidth / video.videoHeight;
+    }
+    return fallback;
+  }, [sourceVideoDimensions]);
+  const normalizedExportAspectRatios = useMemo(
+    () => normalizeSelectedAspectRatios(exportAspectRatios, aspectRatio),
+    [exportAspectRatios, aspectRatio],
+  );
+  const activeCropRegion = useMemo(
+    () => resolveAspectCropRegion(cropRegionsByAspect, aspectRatio, sourceAspectRatio),
+    [aspectRatio, cropRegionsByAspect, sourceAspectRatio],
+  );
+  const showAspectCropOverlay = exportFormat === "mp4" && normalizedExportAspectRatios.includes(aspectRatio);
+
+  const setCropRegionForAspect = useCallback((ratio: AspectRatio, region: CropRegion) => {
+    setCropRegionsByAspect((previous) => {
+      const normalized = normalizeAspectCropRegion(region, sourceAspectRatio, getAspectRatioValue(ratio));
+      const existing = previous[ratio];
+      if (existing && cropRegionEquals(existing, normalized)) {
+        return previous;
+      }
+      return {
+        ...previous,
+        [ratio]: normalized,
+      };
+    });
+  }, [sourceAspectRatio]);
+
+  const handleActiveCropRegionChange = useCallback((region: CropRegion) => {
+    setCropRegionForAspect(aspectRatio, region);
+  }, [aspectRatio, setCropRegionForAspect]);
 
   // Helper to convert file path to proper file:// URL
   const toFileUrl = (filePath: string): string => {
@@ -697,6 +753,20 @@ export default function VideoEditor() {
   }, [aspectRatio]);
 
   useEffect(() => {
+    setCropRegionsByAspect((previous) => {
+      const normalized = resolveAspectCropRegion(previous, aspectRatio, sourceAspectRatio);
+      const existing = previous[aspectRatio];
+      if (existing && cropRegionEquals(existing, normalized)) {
+        return previous;
+      }
+      return {
+        ...previous,
+        [aspectRatio]: normalized,
+      };
+    });
+  }, [aspectRatio, sourceAspectRatio]);
+
+  useEffect(() => {
     if (loading) return;
     if (autoEditInitializedRef.current) return;
     if (zoomRegions.length > 0) {
@@ -980,7 +1050,7 @@ export default function VideoEditor() {
           borderRadius,
           padding,
           videoPadding: padding,
-          cropRegion,
+          cropRegion: activeCropRegion,
           annotationRegions,
           subtitleCues,
           previewWidth,
@@ -1021,7 +1091,7 @@ export default function VideoEditor() {
         }
       } else {
         const quality = settings.quality || exportQuality;
-        const ratiosToExport = normalizeSelectedAspectRatios(exportAspectRatios, aspectRatio);
+        const ratiosToExport = normalizedExportAspectRatios;
 
         let exportDirectoryPath: string | null = null;
         if (ratiosToExport.length > 1) {
@@ -1080,7 +1150,7 @@ export default function VideoEditor() {
             motionBlurEnabled,
             borderRadius,
             padding,
-            cropRegion,
+            cropRegion: resolveAspectCropRegion(cropRegionsByAspect, currentRatio, sourceAspectRatio),
             annotationRegions,
             subtitleCues,
             previewWidth,
@@ -1162,7 +1232,7 @@ export default function VideoEditor() {
       setShowExportDialog(false);
       setExportProgress(null);
     }
-  }, [videoPath, wallpaper, zoomRegions, trimRegions, shadowIntensity, showBlur, motionBlurEnabled, borderRadius, padding, cropRegion, annotationRegions, subtitleCues, isPlaying, exportAspectRatios, aspectRatio, exportQuality, locale, sourceFrameRate, sourceHasAudio, audioEnabled, audioGain, cursorTrack, cursorStyle, t]);
+  }, [videoPath, wallpaper, zoomRegions, trimRegions, shadowIntensity, showBlur, motionBlurEnabled, borderRadius, padding, activeCropRegion, cropRegionsByAspect, sourceAspectRatio, annotationRegions, subtitleCues, isPlaying, normalizedExportAspectRatios, exportQuality, locale, sourceFrameRate, sourceHasAudio, audioEnabled, audioGain, cursorTrack, cursorStyle, t]);
 
   const handleOpenExportDialog = useCallback(() => {
     if (!videoPath) {
@@ -1266,7 +1336,7 @@ export default function VideoEditor() {
                       motionBlurEnabled={motionBlurEnabled}
                       borderRadius={borderRadius}
                       padding={padding}
-                      cropRegion={cropRegion}
+                      cropRegion={DEFAULT_CROP_REGION}
                       trimRegions={trimRegions}
                       annotationRegions={annotationRegions}
                       selectedAnnotationId={selectedAnnotationId}
@@ -1276,7 +1346,17 @@ export default function VideoEditor() {
                       subtitleCues={subtitleCues}
                       cursorTrack={cursorTrack}
                       cursorStyle={cursorStyle}
+                      onVideoDimensionsChange={setSourceVideoDimensions}
                     />
+                    {showAspectCropOverlay ? (
+                      <PreviewAspectCropOverlay
+                        cropRegion={activeCropRegion}
+                        onCropChange={handleActiveCropRegionChange}
+                        sourceAspectRatio={sourceAspectRatio}
+                        targetAspectRatio={getAspectRatioValue(aspectRatio)}
+                        positionHint={t("editor.cropOverlayDragHint")}
+                      />
+                    ) : null}
                   </div>
                 </div>
                 {/* Playback controls */}
@@ -1355,8 +1435,8 @@ export default function VideoEditor() {
           onBorderRadiusChange={setBorderRadius}
           padding={padding}
           onPaddingChange={setPadding}
-          cropRegion={cropRegion}
-          onCropChange={setCropRegion}
+          cropRegion={activeCropRegion}
+          onCropChange={handleActiveCropRegionChange}
           aspectRatio={aspectRatio}
           videoElement={videoPlaybackRef.current?.video || null}
           exportQuality={exportQuality}
@@ -1365,6 +1445,7 @@ export default function VideoEditor() {
           onExportFormatChange={setExportFormat}
           exportAspectRatios={exportAspectRatios}
           onExportAspectRatiosChange={setExportAspectRatios}
+          onPreviewAspectRatioChange={setAspectRatio}
           gifFrameRate={gifFrameRate}
           onGifFrameRateChange={setGifFrameRate}
           gifLoop={gifLoop}

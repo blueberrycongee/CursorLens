@@ -57,6 +57,7 @@ interface VideoPlaybackProps {
   preferredFps?: number;
   cursorTrack?: CursorTrack | null;
   cursorStyle?: Partial<CursorStyleConfig>;
+  onVideoDimensionsChange?: (dimensions: { width: number; height: number }) => void;
 }
 
 export interface VideoPlaybackRef {
@@ -100,6 +101,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
   preferredFps = 60,
   cursorTrack = null,
   cursorStyle,
+  onVideoDimensionsChange,
 }, ref) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -328,7 +330,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
     try {
       event.currentTarget.releasePointerCapture(event.pointerId);
     } catch {
-      
+      // no-op
     }
   };
 
@@ -850,6 +852,12 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
   const handleLoadedMetadata = (e: React.SyntheticEvent<HTMLVideoElement, Event>) => {
     const video = e.currentTarget;
     onDurationChange(video.duration);
+    if (video.videoWidth > 0 && video.videoHeight > 0) {
+      onVideoDimensionsChange?.({
+        width: video.videoWidth,
+        height: video.videoHeight,
+      });
+    }
     video.currentTime = 0;
     video.pause();
     allowPlaybackRef.current = false;
