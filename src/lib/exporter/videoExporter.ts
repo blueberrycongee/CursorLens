@@ -3,6 +3,7 @@ import { VideoFileDecoder } from './videoDecoder';
 import { FrameRenderer } from './frameRenderer';
 import { VideoMuxer } from './muxer';
 import type { ZoomRegion, CropRegion, TrimRegion, AnnotationRegion } from '@/components/video-editor/types';
+import type { SubtitleCue } from '@/lib/analysis/types';
 import { frameDurationUs, frameIndexToTimestampUs, normalizeFrameRate } from './frameClock';
 import type { CursorStyleConfig, CursorTrack } from '@/lib/cursor';
 import { ALL_FORMATS, AudioBufferSink, BlobSource, Input, UrlSource, type InputAudioTrack } from 'mediabunny';
@@ -21,6 +22,7 @@ interface VideoExporterConfig extends ExportConfig {
   videoPadding?: number;
   cropRegion: CropRegion;
   annotationRegions?: AnnotationRegion[];
+  subtitleCues?: SubtitleCue[];
   previewWidth?: number;
   previewHeight?: number;
   cursorTrack?: CursorTrack | null;
@@ -448,6 +450,7 @@ export class VideoExporter {
         videoWidth: videoInfo.width,
         videoHeight: videoInfo.height,
         annotationRegions: this.config.annotationRegions,
+        subtitleCues: this.config.subtitleCues,
         previewWidth: this.config.previewWidth,
         previewHeight: this.config.previewHeight,
         cursorTrack: this.config.cursorTrack,

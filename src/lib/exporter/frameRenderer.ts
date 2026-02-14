@@ -7,6 +7,9 @@ import { DEFAULT_FOCUS, MIN_DELTA, resolveAdaptiveSmoothingAlpha } from '@/compo
 import { clampFocusToStage as clampFocusToStageUtil } from '@/components/video-editor/videoPlayback/focusUtils';
 import { renderAnnotations } from './annotationRenderer';
 import { getExportBackgroundFilter } from '@/lib/rendering/backgroundBlur';
+import type { SubtitleCue } from '@/lib/analysis/types';
+import { findSubtitleCueAtTime, normalizeSubtitleCues } from '@/lib/analysis/subtitleTrack';
+import { buildSubtitleLines } from '@/lib/rendering/subtitleLayout';
 import {
   drawCompositedCursor,
   projectCursorToViewport,
@@ -30,6 +33,7 @@ interface FrameRenderConfig {
   videoWidth: number;
   videoHeight: number;
   annotationRegions?: AnnotationRegion[];
+  subtitleCues?: SubtitleCue[];
   previewWidth?: number;
   previewHeight?: number;
   cursorTrack?: CursorTrack | null;
@@ -66,9 +70,11 @@ export class FrameRenderer {
   private layoutCache: any = null;
   private currentVideoTime = 0;
   private currentVideoSource: HTMLVideoElement | VideoFrame | null = null;
+  private subtitleCues: SubtitleCue[];
 
   constructor(config: FrameRenderConfig) {
     this.config = config;
+    this.subtitleCues = normalizeSubtitleCues(config.subtitleCues ?? []);
     this.animationState = {
       scale: 1,
       focusX: DEFAULT_FOCUS.cx,
@@ -354,6 +360,9 @@ export class FrameRenderer {
     // Render cursor after video compositing so visual hierarchy is consistent with preview.
     this.renderCursorLayer(effectTimeMs);
 
+    // Render subtitle captions above cursor/video but below annotations.
+    this.renderSubtitleLayer(effectTimeMs);
+
     // Render annotations on top if present
     if (this.config.annotationRegions && this.config.annotationRegions.length > 0 && this.compositeCtx) {
       // Calculate scale factor based on export vs preview dimensions
@@ -372,6 +381,81 @@ export class FrameRenderer {
         scaleFactor
       );
     }
+  }
+
+  private renderSubtitleLayer(timeMs: number): void {
+    if (!this.compositeCtx || this.subtitleCues.length === 0) {
+      return;
+    }
+
+    const cue = findSubtitleCueAtTime(this.subtitleCues, timeMs);
+    if (!cue || !cue.text.trim()) {
+      return;
+    }
+
+    const ctx = this.compositeCtx;
+    const width = this.config.width;
+    const height = this.config.height;
+    const fontSize = Math.max(16, Math.min(52, Math.round(height * 0.032)));
+    const maxCharsPerLine = Math.max(8, Math.round((width * 0.82) / 38));
+    const lines = buildSubtitleLines(cue.text, maxCharsPerLine, 2);
+    if (lines.length === 0) {
+      return;
+    }
+
+    const fontFamily = `-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Microsoft YaHei",sans-serif`;
+    const lineHeight = Math.round(fontSize * 1.28);
+    const horizontalPadding = Math.round(fontSize * 0.72);
+    const verticalPadding = Math.round(fontSize * 0.42);
+    const bottomMargin = Math.round(height * 0.06);
+    const radius = Math.max(8, Math.round(fontSize * 0.45));
+
+    ctx.save();
+    ctx.font = `700 ${fontSize}px ${fontFamily}`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    const textWidth = lines.reduce((max, line) => Math.max(max, ctx.measureText(line).width), 0);
+    const boxWidth = Math.min(width * 0.9, textWidth + horizontalPadding * 2);
+    const boxHeight = lines.length * lineHeight + verticalPadding * 2;
+    const boxX = (width - boxWidth) / 2;
+    const boxY = height - bottomMargin - boxHeight;
+
+    this.drawRoundedRect(ctx, boxX, boxY, boxWidth, boxHeight, radius);
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.72)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    ctx.fillStyle = '#FFFFFF';
+    lines.forEach((line, index) => {
+      const y = boxY + verticalPadding + lineHeight * (index + 0.5);
+      ctx.fillText(line, width / 2, y);
+    });
+    ctx.restore();
+  }
+
+  private drawRoundedRect(
+    ctx: CanvasRenderingContext2D,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    radius: number,
+  ): void {
+    const safeRadius = Math.max(0, Math.min(radius, Math.min(width, height) / 2));
+    ctx.beginPath();
+    ctx.moveTo(x + safeRadius, y);
+    ctx.lineTo(x + width - safeRadius, y);
+    ctx.arcTo(x + width, y, x + width, y + safeRadius, safeRadius);
+    ctx.lineTo(x + width, y + height - safeRadius);
+    ctx.arcTo(x + width, y + height, x + width - safeRadius, y + height, safeRadius);
+    ctx.lineTo(x + safeRadius, y + height);
+    ctx.arcTo(x, y + height, x, y + height - safeRadius, safeRadius);
+    ctx.lineTo(x, y + safeRadius);
+    ctx.arcTo(x, y, x + safeRadius, y, safeRadius);
+    ctx.closePath();
   }
 
   private renderCursorLayer(timeMs: number): void {
