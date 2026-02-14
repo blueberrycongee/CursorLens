@@ -187,6 +187,7 @@ export class VideoExporter {
   private samplingMode: 'playback' | 'seek-only' = 'seek-only';
   private maxObservedTimingDriftMs = 0;
   private sourceDurationMs = 0;
+  private sourceTrimRanges: TimeRangeMs[] = [];
   private sourceAudioInput: Input | null = null;
   private sourceAudioTrack: InputAudioTrack | null = null;
   private readonly warnings = new Set<string>();
@@ -201,13 +202,24 @@ export class VideoExporter {
     };
   }
 
+  private getSourceTrimRanges(totalDurationMs: number): TimeRangeMs[] {
+    if (
+      this.sourceDurationMs > 0
+      && Math.abs(totalDurationMs - this.sourceDurationMs) < 0.5
+    ) {
+      return this.sourceTrimRanges;
+    }
+
+    return normalizeTrimRanges(this.config.trimRegions, totalDurationMs);
+  }
+
   private getEffectiveDuration(totalDuration: number): number {
     const totalDurationMs = Math.max(0, totalDuration * 1000);
     if (totalDurationMs <= 0) {
       return 0;
     }
 
-    const trimRanges = normalizeTrimRanges(this.config.trimRegions, totalDurationMs);
+    const trimRanges = this.getSourceTrimRanges(totalDurationMs);
     const trimmedMs = trimRanges.reduce((sum, region) => sum + (region.endMs - region.startMs), 0);
     return Math.max(0, (totalDurationMs - trimmedMs) / 1000);
   }
@@ -217,11 +229,9 @@ export class VideoExporter {
       return Math.max(0, effectiveTimeMs);
     }
 
-    const sortedTrims = normalizeTrimRanges(this.config.trimRegions, this.sourceDurationMs);
-
     let sourceTimeMs = effectiveTimeMs;
 
-    for (const trim of sortedTrims) {
+    for (const trim of this.sourceTrimRanges) {
       if (sourceTimeMs < trim.startMs) {
         break;
       }
@@ -418,6 +428,7 @@ export class VideoExporter {
       this.decoder = new VideoFileDecoder();
       const videoInfo = await this.decoder.loadVideo(this.config.videoUrl);
       this.sourceDurationMs = Math.max(0, videoInfo.duration * 1000);
+      this.sourceTrimRanges = normalizeTrimRanges(this.config.trimRegions, this.sourceDurationMs);
       const hasSourceAudio = await this.resolveSourceAudioTrack();
       if (this.config.audioEnabled && !hasSourceAudio) {
         this.addWarning(EXPORT_WARNING_AUDIO_TRACK_UNAVAILABLE);
@@ -1003,6 +1014,7 @@ export class VideoExporter {
     this.videoDescription = undefined;
     this.videoColorSpace = undefined;
     this.sourceDurationMs = 0;
+    this.sourceTrimRanges = [];
     this.warnings.clear();
   }
 }

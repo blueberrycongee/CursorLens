@@ -74,6 +74,7 @@ export class GifExporter {
   private renderer: FrameRenderer | null = null;
   private gif: GIF | null = null;
   private cancelled = false;
+  private sourceTrimRanges: TrimRegion[] = [];
 
   constructor(config: GifExporterConfig) {
     this.config = config;
@@ -94,13 +95,9 @@ export class GifExporter {
    * Map effective time (excluding trims) to source time (including trims)
    */
   private mapEffectiveToSourceTime(effectiveTimeMs: number): number {
-    const trimRegions = this.config.trimRegions || [];
-    // Sort trim regions by start time
-    const sortedTrims = [...trimRegions].sort((a, b) => a.startMs - b.startMs);
-
     let sourceTimeMs = effectiveTimeMs;
 
-    for (const trim of sortedTrims) {
+    for (const trim of this.sourceTrimRanges) {
       // If the source time hasn't reached this trim region yet, we're done
       if (sourceTimeMs < trim.startMs) {
         break;
@@ -122,6 +119,7 @@ export class GifExporter {
       // Initialize decoder and load video
       this.decoder = new VideoFileDecoder();
       const videoInfo = await this.decoder.loadVideo(this.config.videoUrl);
+      this.sourceTrimRanges = [...(this.config.trimRegions || [])].sort((a, b) => a.startMs - b.startMs);
 
       // Initialize frame renderer
       this.renderer = new FrameRenderer({
@@ -322,5 +320,6 @@ export class GifExporter {
     }
 
     this.gif = null;
+    this.sourceTrimRanges = [];
   }
 }

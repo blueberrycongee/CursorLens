@@ -317,8 +317,12 @@ export class FrameRenderer {
     this.currentVideoTime = timestamp / 1000000;
     this.updateVideoSpriteSource(videoSource);
 
-    // Apply layout
-    this.updateLayout();
+    if (!this.layoutCache) {
+      this.updateLayout();
+    }
+    if (!this.layoutCache) {
+      throw new Error('Frame layout is unavailable');
+    }
 
     const sampledTimeMs = this.currentVideoTime * 1000;
     const effectTimeMs = Number.isFinite(options.effectTimeMs) ? Number(options.effectTimeMs) : sampledTimeMs;
