@@ -846,7 +846,7 @@ export function LaunchWindow() {
             sideOffset={8}
             align="center"
             collisionPadding={12}
-            className={`w-[310px] bg-[#11131a] border border-white/20 text-white p-2.5 ${styles.electronNoDrag}`}
+            className={`w-[360px] bg-[#11131a] border border-white/20 text-white p-2.5 ${styles.electronNoDrag}`}
           >
             <div className="flex items-center justify-between gap-2 mb-2">
               <span className="text-[11px] text-white/80">{t("launch.captureSettingsTitle")}</span>
