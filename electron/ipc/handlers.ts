@@ -104,6 +104,38 @@ const SOURCE_PERMISSION_GUIDANCE =
   'Screen Recording permission is not granted. Open System Settings > Privacy & Security > Screen & System Audio, allow CursorLens, then relaunch the app.'
 const SCREEN_CAPTURE_SETTINGS_URL = 'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture'
 
+type CapturePermissionStatus = 'granted' | 'denied' | 'restricted' | 'not-determined' | 'unknown' | 'manual-check'
+type CapturePermissionKey = 'screen' | 'camera' | 'microphone' | 'accessibility' | 'input-monitoring'
+type PermissionSettingsTarget = 'screen-capture' | 'camera' | 'microphone' | 'accessibility' | 'input-monitoring'
+
+type CapturePermissionItem = {
+  key: CapturePermissionKey
+  status: CapturePermissionStatus
+  requiredForRecording: boolean
+  canOpenSettings: boolean
+  settingsTarget?: PermissionSettingsTarget
+}
+
+type CapturePermissionSnapshot = {
+  platform: NodeJS.Platform
+  checkedAtMs: number
+  canOpenSystemSettings: boolean
+  items: CapturePermissionItem[]
+}
+
+const CAMERA_SETTINGS_URL = 'x-apple.systempreferences:com.apple.preference.security?Privacy_Camera'
+const MICROPHONE_SETTINGS_URL = 'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone'
+const ACCESSIBILITY_SETTINGS_URL = 'x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility'
+const INPUT_MONITORING_SETTINGS_URL = 'x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent'
+
+const PERMISSION_SETTINGS_URLS: Record<PermissionSettingsTarget, string> = {
+  'screen-capture': SCREEN_CAPTURE_SETTINGS_URL,
+  camera: CAMERA_SETTINGS_URL,
+  microphone: MICROPHONE_SETTINGS_URL,
+  accessibility: ACCESSIBILITY_SETTINGS_URL,
+  'input-monitoring': INPUT_MONITORING_SETTINGS_URL,
+}
+
 type ScreenCaptureAccessStatus = 'granted' | 'denied' | 'restricted' | 'not-determined' | 'unknown'
 
 function normalizeScreenCaptureAccessStatus(input: unknown): ScreenCaptureAccessStatus {
@@ -135,6 +167,120 @@ function getScreenCaptureAccessStatus(): ScreenCaptureAccessStatus {
 
 function isScreenCaptureAccessBlocked(status: ScreenCaptureAccessStatus): boolean {
   return status === 'denied' || status === 'restricted'
+}
+
+function getMediaPermissionStatus(mediaType: 'camera' | 'microphone'): CapturePermissionStatus {
+  if (process.platform !== 'darwin') {
+    return 'granted'
+  }
+  try {
+    return normalizeScreenCaptureAccessStatus(systemPreferences.getMediaAccessStatus(mediaType))
+  } catch {
+    return 'unknown'
+  }
+}
+
+function getAccessibilityPermissionStatus(): CapturePermissionStatus {
+  if (process.platform !== 'darwin') {
+    return 'granted'
+  }
+  try {
+    return systemPreferences.isTrustedAccessibilityClient(false) ? 'granted' : 'denied'
+  } catch {
+    return 'unknown'
+  }
+}
+
+function getCapturePermissionSnapshot(): CapturePermissionSnapshot {
+  const checkedAtMs = Date.now()
+  const canOpenSystemSettings = process.platform === 'darwin'
+  if (process.platform !== 'darwin') {
+    return {
+      platform: process.platform,
+      checkedAtMs,
+      canOpenSystemSettings: false,
+      items: [
+        {
+          key: 'screen',
+          status: 'granted',
+          requiredForRecording: true,
+          canOpenSettings: false,
+          settingsTarget: 'screen-capture',
+        },
+        {
+          key: 'camera',
+          status: 'granted',
+          requiredForRecording: false,
+          canOpenSettings: false,
+          settingsTarget: 'camera',
+        },
+        {
+          key: 'microphone',
+          status: 'granted',
+          requiredForRecording: false,
+          canOpenSettings: false,
+          settingsTarget: 'microphone',
+        },
+        {
+          key: 'accessibility',
+          status: 'granted',
+          requiredForRecording: false,
+          canOpenSettings: false,
+          settingsTarget: 'accessibility',
+        },
+        {
+          key: 'input-monitoring',
+          status: 'granted',
+          requiredForRecording: false,
+          canOpenSettings: false,
+          settingsTarget: 'input-monitoring',
+        },
+      ],
+    }
+  }
+
+  return {
+    platform: process.platform,
+    checkedAtMs,
+    canOpenSystemSettings,
+    items: [
+      {
+        key: 'screen',
+        status: getScreenCaptureAccessStatus(),
+        requiredForRecording: true,
+        canOpenSettings: canOpenSystemSettings,
+        settingsTarget: 'screen-capture',
+      },
+      {
+        key: 'camera',
+        status: getMediaPermissionStatus('camera'),
+        requiredForRecording: false,
+        canOpenSettings: canOpenSystemSettings,
+        settingsTarget: 'camera',
+      },
+      {
+        key: 'microphone',
+        status: getMediaPermissionStatus('microphone'),
+        requiredForRecording: false,
+        canOpenSettings: canOpenSystemSettings,
+        settingsTarget: 'microphone',
+      },
+      {
+        key: 'accessibility',
+        status: getAccessibilityPermissionStatus(),
+        requiredForRecording: false,
+        canOpenSettings: canOpenSystemSettings,
+        settingsTarget: 'accessibility',
+      },
+      {
+        key: 'input-monitoring',
+        status: 'manual-check',
+        requiredForRecording: false,
+        canOpenSettings: canOpenSystemSettings,
+        settingsTarget: 'input-monitoring',
+      },
+    ],
+  }
 }
 
 function normalizeGetSourcesOptions(input?: Partial<Electron.SourcesOptions>): Electron.SourcesOptions {
@@ -542,8 +688,10 @@ function sanitizeVideoMetadata(metadata?: CurrentVideoMetadata | null): CurrentV
 export function registerIpcHandlers(
   createEditorWindow: () => void,
   createSourceSelectorWindow: () => BrowserWindow,
+  createPermissionCheckerWindow: () => BrowserWindow,
   getMainWindow: () => BrowserWindow | null,
   getSourceSelectorWindow: () => BrowserWindow | null,
+  getPermissionCheckerWindow: () => BrowserWindow | null,
   onRecordingStateChange?: (recording: boolean, sourceName: string) => void,
   onSourceSelectionChange?: (source: SelectedSource | null) => void,
 ) {
@@ -804,12 +952,23 @@ export function registerIpcHandlers(
     }
   })
 
-  ipcMain.handle('open-screen-capture-settings', async () => {
+  ipcMain.handle('get-capture-permission-snapshot', () => {
+    return getCapturePermissionSnapshot()
+  })
+
+  ipcMain.handle('open-permission-settings', async (_, target: PermissionSettingsTarget | string) => {
     if (process.platform !== 'darwin') {
-      return { success: false, message: 'Opening Screen Capture settings is only supported on macOS.' }
+      return { success: false, message: 'Opening Privacy settings is only supported on macOS.' }
     }
+
+    const normalizedTarget = typeof target === 'string' ? target.trim() : ''
+    const url = PERMISSION_SETTINGS_URLS[normalizedTarget as PermissionSettingsTarget]
+    if (!url) {
+      return { success: false, message: `Unknown permission settings target: ${String(target)}` }
+    }
+
     try {
-      await shell.openExternal(SCREEN_CAPTURE_SETTINGS_URL)
+      await shell.openExternal(url)
       return { success: true }
     } catch (error) {
       return {
@@ -817,6 +976,31 @@ export function registerIpcHandlers(
         message: error instanceof Error ? error.message : String(error),
       }
     }
+  })
+
+  ipcMain.handle('open-screen-capture-settings', async () => {
+    if (process.platform !== 'darwin') {
+      return { success: false, message: 'Opening Screen Capture settings is only supported on macOS.' }
+    }
+    try {
+      await shell.openExternal(PERMISSION_SETTINGS_URLS['screen-capture'])
+      return { success: true }
+    } catch (error) {
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : String(error),
+      }
+    }
+  })
+
+  ipcMain.handle('open-permission-checker', () => {
+    const permissionWindow = getPermissionCheckerWindow()
+    if (permissionWindow) {
+      permissionWindow.focus()
+      return { success: true }
+    }
+    createPermissionCheckerWindow()
+    return { success: true }
   })
 
   ipcMain.handle('select-source', (_, source) => {

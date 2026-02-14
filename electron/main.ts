@@ -2,7 +2,13 @@ import { app, BrowserWindow, Tray, Menu, nativeImage, session, desktopCapturer, 
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import fs from 'node:fs/promises'
-import { createHudOverlayWindow, createEditorWindow, createSourceSelectorWindow } from './windows'
+import {
+  createHudOverlayWindow,
+  createEditorWindow,
+  createSourceSelectorWindow,
+  createPermissionCheckerWindow,
+  getPermissionCheckerWindow,
+} from './windows'
 import { registerIpcHandlers } from './ipc/handlers'
 import { scheduleRecordingsCleanup } from './recordingsCleanup'
 import { buildIssueReportUrl } from '../src/lib/supportLinks'
@@ -44,6 +50,7 @@ process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL ? path.join(process.env.APP_ROOT, 
 // Window references
 let mainWindow: BrowserWindow | null = null
 let sourceSelectorWindow: BrowserWindow | null = null
+let permissionCheckerWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let selectedSourceName = ''
 let selectedDesktopSourceId: string | null = null
@@ -307,6 +314,14 @@ function createSourceSelectorWindowWrapper() {
   return sourceSelectorWindow
 }
 
+function createPermissionCheckerWindowWrapper() {
+  permissionCheckerWindow = createPermissionCheckerWindow()
+  permissionCheckerWindow.on('closed', () => {
+    permissionCheckerWindow = null
+  })
+  return permissionCheckerWindow
+}
+
 // On macOS, applications and their menu bar stay active until the user quits
 // explicitly with Cmd + Q.
 app.on('window-all-closed', () => {
@@ -428,8 +443,10 @@ app.whenReady().then(async () => {
   ipcRuntime = registerIpcHandlers(
     createEditorWindowWrapper,
     createSourceSelectorWindowWrapper,
+    createPermissionCheckerWindowWrapper,
     () => mainWindow,
     () => sourceSelectorWindow,
+    () => permissionCheckerWindow || getPermissionCheckerWindow(),
     (recording: boolean, sourceName: string) => {
       recordingActive = recording
       selectedSourceName = sourceName

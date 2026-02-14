@@ -10,6 +10,7 @@ const VITE_DEV_SERVER_URL = process.env['VITE_DEV_SERVER_URL']
 const RENDERER_DIST = path.join(APP_ROOT, 'dist')
 
 let hudOverlayWindow: BrowserWindow | null = null;
+let permissionCheckerWindow: BrowserWindow | null = null;
 
 ipcMain.on('hud-overlay-hide', () => {
   if (hudOverlayWindow && !hudOverlayWindow.isDestroyed()) {
@@ -150,6 +151,53 @@ export function createSourceSelectorWindow(): BrowserWindow {
   } else {
     win.loadFile(path.join(RENDERER_DIST, 'index.html'), { 
       query: { windowType: 'source-selector' } 
+    })
+  }
+
+  return win
+}
+
+export function getPermissionCheckerWindow(): BrowserWindow | null {
+  if (permissionCheckerWindow && !permissionCheckerWindow.isDestroyed()) {
+    return permissionCheckerWindow
+  }
+  permissionCheckerWindow = null
+  return null
+}
+
+export function createPermissionCheckerWindow(): BrowserWindow {
+  const { width, height } = screen.getPrimaryDisplay().workAreaSize
+  const win = new BrowserWindow({
+    width: Math.min(980, Math.max(840, width - 80)),
+    height: Math.min(760, Math.max(620, height - 120)),
+    minWidth: 840,
+    minHeight: 620,
+    x: Math.round((width - Math.min(980, Math.max(840, width - 80))) / 2),
+    y: Math.round((height - Math.min(760, Math.max(620, height - 120))) / 2),
+    title: 'CursorLens Permission Check',
+    frame: true,
+    resizable: true,
+    alwaysOnTop: true,
+    backgroundColor: '#0b1020',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.mjs'),
+      nodeIntegration: false,
+      contextIsolation: true,
+    },
+  })
+
+  permissionCheckerWindow = win
+  win.on('closed', () => {
+    if (permissionCheckerWindow === win) {
+      permissionCheckerWindow = null
+    }
+  })
+
+  if (VITE_DEV_SERVER_URL) {
+    win.loadURL(VITE_DEV_SERVER_URL + '?windowType=permission-checker')
+  } else {
+    win.loadFile(path.join(RENDERER_DIST, 'index.html'), {
+      query: { windowType: 'permission-checker' },
     })
   }
 

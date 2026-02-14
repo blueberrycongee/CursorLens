@@ -76,6 +76,41 @@ type VideoAnalysisMetadata = {
   roughCutSuggestions: RoughCutSuggestionMetadata[]
 }
 
+type CapturePermissionStatus =
+  | 'granted'
+  | 'denied'
+  | 'restricted'
+  | 'not-determined'
+  | 'unknown'
+  | 'manual-check'
+
+type CapturePermissionKey =
+  | 'screen'
+  | 'camera'
+  | 'microphone'
+  | 'accessibility'
+  | 'input-monitoring'
+
+type PermissionSettingsTarget =
+  | 'screen-capture'
+  | 'camera'
+  | 'microphone'
+  | 'accessibility'
+  | 'input-monitoring'
+
+type CapturePermissionSnapshot = {
+  platform: string
+  checkedAtMs: number
+  canOpenSystemSettings: boolean
+  items: Array<{
+    key: CapturePermissionKey
+    status: CapturePermissionStatus
+    requiredForRecording: boolean
+    canOpenSettings: boolean
+    settingsTarget?: PermissionSettingsTarget
+  }>
+}
+
 // Used in Renderer process, expose in `preload.ts`
 interface Window {
   electronAPI: {
@@ -84,7 +119,10 @@ interface Window {
       status: 'granted' | 'denied' | 'restricted' | 'not-determined' | 'unknown'
       canOpenSystemSettings: boolean
     }>
+    getCapturePermissionSnapshot: () => Promise<CapturePermissionSnapshot>
     openScreenCaptureSettings: () => Promise<{ success: boolean; message?: string }>
+    openPermissionSettings: (target: PermissionSettingsTarget) => Promise<{ success: boolean; message?: string }>
+    openPermissionChecker: () => Promise<{ success: boolean }>
     switchToEditor: () => Promise<void>
     openSourceSelector: () => Promise<void>
     selectSource: (source: any) => Promise<any>
