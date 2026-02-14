@@ -62,6 +62,30 @@ async function writeAnalysisSidecar(videoPath: string, analysis: VideoAnalysisRe
   await fs.writeFile(sidecarPath, payload, 'utf-8');
 }
 
+function formatTranscriptionFailure(args: {
+  code?: string;
+  message?: string;
+}): string {
+  const code = String(args.code || '').trim();
+  const message = String(args.message || '').trim();
+  switch (code) {
+    case 'speech_permission_denied':
+      return 'Speech recognition permission denied. Open System Settings > Privacy & Security > Speech Recognition, allow CursorLens, then retry.';
+    case 'recognizer_unavailable':
+      return 'Speech recognizer is currently unavailable. Please retry later.';
+    case 'transcription_timeout':
+      return message || 'Speech transcription timed out. Please retry.';
+    case 'no_speech_detected':
+      return 'No speech was detected in this recording.';
+    case 'transcription_failed':
+    case 'audio_export_failed':
+    case 'transcriber_execution_failed':
+      return message || `Transcription failed (${code || 'unknown'}).`;
+    default:
+      return message || 'Automatic transcription failed.';
+  }
+}
+
 export class VideoAnalysisService {
   private queue = new AnalysisJobQueue<StartVideoAnalysisInput, VideoAnalysisResult>();
 
@@ -79,10 +103,14 @@ export class VideoAnalysisService {
       const transcription = await transcribeVideoFile({
         inputPath: jobInput.videoPath,
         locale: jobInput.locale,
+        durationMs: jobInput.durationMs,
       });
 
       if (!transcription.success || !transcription.words?.length) {
-        throw new Error(transcription.message || 'No transcript words were generated.');
+        throw new Error(formatTranscriptionFailure({
+          code: transcription.code,
+          message: transcription.message,
+        }));
       }
 
       const pipelineConfig: BuildVideoAnalysisInput = {

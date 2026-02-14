@@ -30,10 +30,20 @@ struct ErrorResult: Codable {
     let message: String
 }
 
-func parseArguments() throws -> (input: String, output: String, locale: String) {
+struct ParsedArguments {
+    let input: String
+    let output: String
+    let locale: String
+    let startMs: Int?
+    let durationMs: Int?
+}
+
+func parseArguments() throws -> ParsedArguments {
     var input: String?
     var output: String?
     var locale = "en-US"
+    var startMs: Int?
+    var durationMs: Int?
 
     var index = 1
     while index < CommandLine.arguments.count {
@@ -48,6 +58,26 @@ func parseArguments() throws -> (input: String, output: String, locale: String) 
         case "--locale":
             index += 1
             if index < CommandLine.arguments.count { locale = CommandLine.arguments[index] }
+        case "--start-ms":
+            index += 1
+            if index < CommandLine.arguments.count {
+                let parsed = Int(CommandLine.arguments[index])
+                if let parsed {
+                    startMs = parsed
+                } else {
+                    throw TranscriberError.invalidArguments("Invalid --start-ms")
+                }
+            }
+        case "--duration-ms":
+            index += 1
+            if index < CommandLine.arguments.count {
+                let parsed = Int(CommandLine.arguments[index])
+                if let parsed {
+                    durationMs = parsed
+                } else {
+                    throw TranscriberError.invalidArguments("Invalid --duration-ms")
+                }
+            }
         default:
             break
         }
@@ -62,7 +92,21 @@ func parseArguments() throws -> (input: String, output: String, locale: String) 
         throw TranscriberError.invalidArguments("Missing --output")
     }
 
-    return (input, output, locale)
+    if let startMs, startMs < 0 {
+        throw TranscriberError.invalidArguments("--start-ms must be >= 0")
+    }
+
+    if let durationMs, durationMs <= 0 {
+        throw TranscriberError.invalidArguments("--duration-ms must be > 0")
+    }
+
+    return ParsedArguments(
+        input: input,
+        output: output,
+        locale: locale,
+        startMs: startMs,
+        durationMs: durationMs
+    )
 }
 
 func writeJSON<T: Encodable>(_ value: T, to outputPath: String) throws {
@@ -86,7 +130,12 @@ func requestSpeechAuthorization() async -> SFSpeechRecognizerAuthorizationStatus
     }
 }
 
-func exportAudioTrack(from inputURL: URL, to outputURL: URL) async throws {
+func exportAudioTrack(
+    from inputURL: URL,
+    to outputURL: URL,
+    startMs: Int?,
+    durationMs: Int?
+) async throws {
     let asset = AVURLAsset(url: inputURL)
 
     guard let exportSession = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetAppleM4A) else {
@@ -96,6 +145,35 @@ func exportAudioTrack(from inputURL: URL, to outputURL: URL) async throws {
     try? FileManager.default.removeItem(at: outputURL)
     exportSession.outputURL = outputURL
     exportSession.outputFileType = .m4a
+
+    if startMs != nil || durationMs != nil {
+        let totalDurationSeconds = CMTimeGetSeconds(asset.duration)
+        guard totalDurationSeconds.isFinite, totalDurationSeconds > 0 else {
+            throw TranscriberError.exportFailed("Unable to read media duration for segmented transcription")
+        }
+
+        let startSeconds = max(0, Double(startMs ?? 0) / 1000)
+        if startSeconds >= totalDurationSeconds {
+            throw TranscriberError.invalidArguments("Segment start exceeds media duration")
+        }
+
+        let availableSeconds = max(0, totalDurationSeconds - startSeconds)
+        let durationSeconds: Double
+        if let durationMs {
+            durationSeconds = min(max(0, Double(durationMs) / 1000), availableSeconds)
+        } else {
+            durationSeconds = availableSeconds
+        }
+
+        if durationSeconds <= 0 {
+            throw TranscriberError.invalidArguments("Segment duration resolves to 0")
+        }
+
+        exportSession.timeRange = CMTimeRange(
+            start: CMTime(seconds: startSeconds, preferredTimescale: 600),
+            duration: CMTime(seconds: durationSeconds, preferredTimescale: 600)
+        )
+    }
 
     try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
         exportSession.exportAsynchronously {
@@ -215,7 +293,12 @@ struct SpeechTranscriberCLI {
                 try? FileManager.default.removeItem(at: tempAudioURL)
             }
 
-            try await exportAudioTrack(from: inputURL, to: tempAudioURL)
+            try await exportAudioTrack(
+                from: inputURL,
+                to: tempAudioURL,
+                startMs: args.startMs,
+                durationMs: args.durationMs
+            )
             let transcript = try await transcribeAudio(at: tempAudioURL, localeId: args.locale)
 
             let payload = TranscriptionResult(
