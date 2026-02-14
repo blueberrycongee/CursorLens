@@ -16,10 +16,14 @@ type UseScreenRecorderOptions = {
   cameraShape?: CameraOverlayShape;
   cameraSizePercent?: number;
   captureProfile?: CaptureProfile;
+  captureFrameRate?: CaptureFrameRate;
+  captureResolutionPreset?: CaptureResolutionPreset;
   recordSystemCursor?: boolean;
 };
 
 export type CaptureProfile = "balanced" | "quality" | "ultra";
+export type CaptureFrameRate = 24 | 30 | 60 | 120;
+export type CaptureResolutionPreset = "auto" | "1080p" | "1440p" | "2160p";
 type CursorMode = "always" | "never";
 
 type LegacyDesktopGetUserMedia = (constraints: {
@@ -124,6 +128,8 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
   const cameraShape = options.cameraShape ?? "rounded";
   const cameraSizePercent = options.cameraSizePercent ?? 22;
   const captureProfile = options.captureProfile ?? "quality";
+  const captureFrameRate = options.captureFrameRate;
+  const captureResolutionPreset = options.captureResolutionPreset;
   const recordSystemCursor = options.recordSystemCursor ?? true;
   const [recording, setRecording] = useState(false);
   const [recordingState, setRecordingPhase] = useState<"idle" | "starting" | "recording" | "stopping">("idle");
@@ -154,24 +160,47 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
   };
 
   const activeProfile = profileSettings[captureProfile];
-  const MAX_CAPTURE_FPS = activeProfile.maxFps;
-  const TARGET_CAPTURE_FPS = activeProfile.targetFps;
+  const resolutionLongEdgeByPreset: Record<Exclude<CaptureResolutionPreset, "auto">, number> = {
+    "1080p": 1920,
+    "1440p": 2560,
+    "2160p": 3840,
+  };
+  const hasExplicitFrameRate = Number.isFinite(captureFrameRate);
+  const requestedFrameRate = hasExplicitFrameRate
+    ? Number(captureFrameRate)
+    : activeProfile.targetFps;
+  const MAX_CAPTURE_FPS = hasExplicitFrameRate ? 120 : activeProfile.maxFps;
+  const TARGET_CAPTURE_FPS = Math.max(24, Math.min(MAX_CAPTURE_FPS, Math.round(requestedFrameRate)));
+  const targetMaxLongEdge = captureResolutionPreset && captureResolutionPreset !== "auto"
+    ? resolutionLongEdgeByPreset[captureResolutionPreset]
+    : captureResolutionPreset === "auto"
+      ? undefined
+      : activeProfile.maxLongEdge;
+  const cameraCompositeFpsCap = hasExplicitFrameRate ? 60 : activeProfile.cameraCompositeFpsCap;
 
   const ensureEvenDimension = (value: number, fallback: number) => {
     const resolved = Number.isFinite(value) && value > 0 ? value : fallback;
     return Math.max(2, Math.floor(resolved / 2) * 2);
   };
 
-  const normalizeCaptureDimensions = (rawWidth: number, rawHeight: number): { width: number; height: number } => {
+  const normalizeCaptureDimensions = (
+    rawWidth: number,
+    rawHeight: number,
+    maxLongEdge = targetMaxLongEdge,
+  ): { width: number; height: number } => {
     let width = ensureEvenDimension(rawWidth, 1920);
     let height = ensureEvenDimension(rawHeight, 1080);
 
-    const longEdge = Math.max(width, height);
-    if (longEdge <= activeProfile.maxLongEdge) {
+    if (!Number.isFinite(maxLongEdge) || !maxLongEdge || maxLongEdge <= 0) {
       return { width, height };
     }
 
-    const scale = activeProfile.maxLongEdge / longEdge;
+    const longEdge = Math.max(width, height);
+    if (longEdge <= maxLongEdge) {
+      return { width, height };
+    }
+
+    const scale = maxLongEdge / longEdge;
     width = ensureEvenDimension(Math.round(width * scale), 1920);
     height = ensureEvenDimension(Math.round(height * scale), 1080);
     return { width, height };
@@ -464,7 +493,7 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
         ),
       ),
     );
-    const compositeFrameRate = Math.min(sourceFrameRate, activeProfile.cameraCompositeFpsCap);
+    const compositeFrameRate = Math.min(sourceFrameRate, cameraCompositeFpsCap);
     console.log(
       `Compositing camera overlay on ${desktopVideo.videoWidth || sourceWidthHint}x${desktopVideo.videoHeight || sourceHeightHint} -> ${sourceWidth}x${sourceHeight} @ ${compositeFrameRate}fps`,
     );
@@ -771,7 +800,7 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
             cameraSizePercent,
             frameRate: TARGET_CAPTURE_FPS,
             bitrateScale: activeProfile.bitrateScale,
-            maxLongEdge: activeProfile.maxLongEdge,
+            maxLongEdge: targetMaxLongEdge,
             width: nativeTargetSize?.width,
             height: nativeTargetSize?.height,
           });
