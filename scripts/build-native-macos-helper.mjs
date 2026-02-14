@@ -34,6 +34,16 @@ const helpers = [
       'CryptoKit',
     ],
   },
+  {
+    label: 'speech transcriber helper',
+    sourcePath: path.join(projectRoot, 'electron/native/macos/speech-transcriber.swift'),
+    outputPath: path.join(projectRoot, 'electron/native/bin/speech-transcriber'),
+    frameworks: [
+      'Foundation',
+      'AVFoundation',
+      'Speech',
+    ],
+  },
 ];
 
 for (const helper of helpers) {

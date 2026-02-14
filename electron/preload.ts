@@ -130,4 +130,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getPlatform: () => {
     return ipcRenderer.invoke('get-platform')
   },
+  startVideoAnalysis: (options?: {
+    videoPath?: string
+    locale?: string
+    durationMs?: number
+    videoWidth?: number
+    subtitleWidthRatio?: number
+  }) => {
+    return ipcRenderer.invoke('analysis-start', options)
+  },
+  getVideoAnalysisStatus: (jobId: string) => {
+    return ipcRenderer.invoke('analysis-status', jobId)
+  },
+  getVideoAnalysisResult: (jobId: string) => {
+    return ipcRenderer.invoke('analysis-result', jobId)
+  },
+  getCurrentVideoAnalysis: (videoPath?: string) => {
+    return ipcRenderer.invoke('analysis-get-current', videoPath)
+  },
 })

@@ -1,6 +1,6 @@
 const VIDEO_EXTENSIONS = new Set(['webm', 'mp4', 'mov', 'm4v', 'mkv', 'avi']);
 const VIDEO_FILE_PATTERN = /^(recording-\d+)\.([a-z0-9]+)$/i;
-const CURSOR_SIDECAR_PATTERN = /^(recording-\d+)\.cursor\.json$/i;
+const SIDECAR_PATTERN = /^(recording-\d+)\.(cursor|analysis)\.json$/i;
 
 export interface RecordingArtifactEntry {
   name: string;
@@ -23,7 +23,7 @@ export interface RecordingCleanupPlan {
   estimatedBytesFreed: number;
 }
 
-type ManagedKind = 'video' | 'cursor-sidecar';
+type ManagedKind = 'video' | 'cursor-sidecar' | 'analysis-sidecar';
 
 interface ManagedArtifact {
   key: string;
@@ -76,9 +76,13 @@ function normalizePolicy(input?: Partial<RecordingCleanupPolicy>): RecordingClea
 }
 
 function parseManagedArtifactName(fileName: string): ManagedArtifact | null {
-  const sidecarMatch = CURSOR_SIDECAR_PATTERN.exec(fileName);
+  const sidecarMatch = SIDECAR_PATTERN.exec(fileName);
   if (sidecarMatch) {
-    return { key: sidecarMatch[1], kind: 'cursor-sidecar' };
+    const sidecarKind = String(sidecarMatch[2] ?? '').toLowerCase();
+    return {
+      key: sidecarMatch[1],
+      kind: sidecarKind === 'analysis' ? 'analysis-sidecar' : 'cursor-sidecar',
+    };
   }
 
   const videoMatch = VIDEO_FILE_PATTERN.exec(fileName);

@@ -21,6 +21,7 @@ import {
   type CaptureBoundsMode,
   type CaptureSourceRef,
 } from '../../src/lib/cursor/captureSpace'
+import { readAnalysisSidecar, VideoAnalysisService } from '../analysis/videoAnalysisService'
 
 type SelectedSource = {
   id?: string
@@ -89,6 +90,14 @@ type NativeRecorderStartOptions = {
 
 type SaveExportedVideoOptions = {
   directoryPath?: string | null
+}
+
+type StartVideoAnalysisOptions = {
+  videoPath?: string
+  locale?: string
+  durationMs?: number
+  videoWidth?: number
+  subtitleWidthRatio?: number
 }
 
 type CursorTrackerRuntime = {
@@ -402,6 +411,7 @@ export function registerIpcHandlers(
   let currentVideoPath: string | null = null
   let currentVideoMetadata: CurrentVideoMetadata | null = null
   let cursorTracker: CursorTrackerRuntime | null = null
+  const analysisService = new VideoAnalysisService()
 
   const stopCursorTracker = (): CursorTrackPayload | undefined => {
     if (!cursorTracker) return undefined
@@ -982,6 +992,115 @@ export function registerIpcHandlers(
   ipcMain.handle('get-platform', () => {
     return process.platform;
   });
+
+  ipcMain.handle('analysis-start', async (_, options?: StartVideoAnalysisOptions) => {
+    try {
+      const targetVideoPath = (typeof options?.videoPath === 'string' && options.videoPath.trim().length > 0)
+        ? options.videoPath.trim()
+        : currentVideoPath
+
+      if (!targetVideoPath) {
+        return { success: false, message: 'No video selected for analysis.' }
+      }
+
+      const job = analysisService.start({
+        videoPath: targetVideoPath,
+        locale: typeof options?.locale === 'string' && options.locale.trim().length > 0
+          ? options.locale.trim()
+          : app.getLocale(),
+        durationMs: Number.isFinite(options?.durationMs) ? Number(options?.durationMs) : 0,
+        videoWidth: Number.isFinite(options?.videoWidth) ? Number(options?.videoWidth) : 1920,
+        subtitleWidthRatio: Number.isFinite(options?.subtitleWidthRatio)
+          ? Number(options?.subtitleWidthRatio)
+          : 0.82,
+      })
+
+      return {
+        success: true,
+        jobId: job.jobId,
+      }
+    } catch (error) {
+      console.error('Failed to start analysis job:', error)
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : String(error),
+      }
+    }
+  })
+
+  ipcMain.handle('analysis-status', (_, jobId: string) => {
+    const status = analysisService.getStatus(String(jobId || '').trim())
+    if (!status) {
+      return { success: false, message: 'Analysis job not found.' }
+    }
+
+    return {
+      success: true,
+      status,
+    }
+  })
+
+  ipcMain.handle('analysis-result', (_, jobId: string) => {
+    const normalizedJobId = String(jobId || '').trim()
+    const status = analysisService.getStatus(normalizedJobId)
+    if (!status) {
+      return { success: false, message: 'Analysis job not found.' }
+    }
+
+    if (status.status === 'failed') {
+      return {
+        success: false,
+        message: status.error || 'Analysis job failed.',
+        status,
+      }
+    }
+
+    if (status.status !== 'completed') {
+      return {
+        success: false,
+        message: 'Analysis job is still running.',
+        status,
+      }
+    }
+
+    const result = analysisService.getResult(normalizedJobId)
+    if (!result) {
+      return {
+        success: false,
+        message: 'Analysis job completed without result payload.',
+        status,
+      }
+    }
+
+    return {
+      success: true,
+      status,
+      result,
+    }
+  })
+
+  ipcMain.handle('analysis-get-current', async (_, targetPath?: string) => {
+    const videoPath = typeof targetPath === 'string' && targetPath.trim().length > 0
+      ? targetPath.trim()
+      : currentVideoPath
+    if (!videoPath) {
+      return { success: false, message: 'No video selected for analysis.' }
+    }
+
+    try {
+      const analysis = await readAnalysisSidecar(videoPath)
+      return {
+        success: true,
+        analysis: analysis ?? undefined,
+      }
+    } catch (error) {
+      console.error('Failed to read analysis sidecar:', error)
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : String(error),
+      }
+    }
+  })
 
   const shutdown = async (): Promise<void> => {
     try {

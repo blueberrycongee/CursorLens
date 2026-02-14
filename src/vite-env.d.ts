@@ -28,6 +28,42 @@ type CursorTrackMetadata = {
   };
 };
 
+type SubtitleCueMetadata = {
+  id: string;
+  startMs: number;
+  endMs: number;
+  text: string;
+  source: 'asr' | 'manual' | 'agent';
+  confidence?: number;
+};
+
+type TranscriptWordMetadata = {
+  text: string;
+  startMs: number;
+  endMs: number;
+  confidence?: number;
+};
+
+type RoughCutSuggestionMetadata = {
+  id: string;
+  startMs: number;
+  endMs: number;
+  reason: 'silence' | 'filler';
+  confidence: number;
+  label: string;
+};
+
+type VideoAnalysisMetadata = {
+  transcript: {
+    locale: string;
+    text: string;
+    createdAtMs: number;
+    words: TranscriptWordMetadata[];
+  };
+  subtitleCues: SubtitleCueMetadata[];
+  roughCutSuggestions: RoughCutSuggestionMetadata[];
+};
+
 interface Window {
   electronAPI: {
     getSources: (opts: Electron.SourcesOptions) => Promise<ProcessedDesktopSource[]>
@@ -126,6 +162,43 @@ interface Window {
     }>
     clearCurrentVideoPath: () => Promise<{ success: boolean }>
     getPlatform: () => Promise<string>
+    startVideoAnalysis: (options?: {
+      videoPath?: string
+      locale?: string
+      durationMs?: number
+      videoWidth?: number
+      subtitleWidthRatio?: number
+    }) => Promise<{ success: boolean; jobId?: string; message?: string }>
+    getVideoAnalysisStatus: (jobId: string) => Promise<{
+      success: boolean
+      message?: string
+      status?: {
+        id: string
+        status: 'pending' | 'running' | 'completed' | 'failed'
+        createdAt: number
+        startedAt?: number
+        finishedAt?: number
+        error?: string
+      }
+    }>
+    getVideoAnalysisResult: (jobId: string) => Promise<{
+      success: boolean
+      message?: string
+      status?: {
+        id: string
+        status: 'pending' | 'running' | 'completed' | 'failed'
+        createdAt: number
+        startedAt?: number
+        finishedAt?: number
+        error?: string
+      }
+      result?: VideoAnalysisMetadata
+    }>
+    getCurrentVideoAnalysis: (videoPath?: string) => Promise<{
+      success: boolean
+      message?: string
+      analysis?: VideoAnalysisMetadata
+    }>
     hudOverlayHide: () => void
     hudOverlayClose: () => void
   }

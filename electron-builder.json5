@@ -32,13 +32,18 @@
     {
       "from": "electron/native/bin/cursor-kind-monitor",
       "to": "native/cursor-kind-monitor"
+    },
+    {
+      "from": "electron/native/bin/speech-transcriber",
+      "to": "native/speech-transcriber"
     }
   ],
 
   "mac": {
     "extendInfo": {
       "NSCameraUsageDescription": "CursorLens needs camera access to render camera overlays while recording.",
-      "NSMicrophoneUsageDescription": "CursorLens needs microphone access to record your voice during screen capture."
+      "NSMicrophoneUsageDescription": "CursorLens needs microphone access to record your voice during screen capture.",
+      "NSSpeechRecognitionUsageDescription": "CursorLens needs speech recognition access to generate subtitles from recordings."
     },
     "target": [
       {
