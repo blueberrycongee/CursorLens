@@ -749,14 +749,13 @@ export function LaunchWindow() {
         <Button
           variant="link"
           size="sm"
-          className={`gap-1 min-w-[220px] shrink-0 overflow-hidden text-white bg-transparent hover:bg-transparent px-1 justify-start text-xs ${styles.electronNoDrag}`}
-          style={{ width: 'clamp(220px, 24vw, 420px)' }}
+          className={`gap-1 min-w-[120px] w-fit max-w-[280px] shrink-0 overflow-hidden text-white bg-transparent hover:bg-transparent px-1 justify-start text-xs ${styles.electronNoDrag}`}
           onClick={openSourceSelector}
           disabled={controlsLocked}
           title={selectedSource}
         >
           <MdMonitor size={14} className="text-white" />
-          <span className="truncate max-w-full block pointer-events-none">{selectedSource}</span>
+          <span className="truncate max-w-[240px] block pointer-events-none">{selectedSource}</span>
         </Button>
 
         <Button
