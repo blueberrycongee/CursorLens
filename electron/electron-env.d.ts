@@ -125,8 +125,8 @@ interface Window {
     openPermissionChecker: () => Promise<{ success: boolean }>
     switchToEditor: () => Promise<void>
     openSourceSelector: () => Promise<void>
-    selectSource: (source: any) => Promise<any>
-    getSelectedSource: () => Promise<any>
+    selectSource: (source: unknown) => Promise<unknown>
+    getSelectedSource: () => Promise<unknown>
     storeRecordedVideo: (
       videoData: ArrayBuffer,
       fileName: string,
@@ -147,6 +147,8 @@ interface Window {
       cameraShape?: 'rounded' | 'square' | 'circle'
       cameraSizePercent?: number
       frameRate?: number
+      maxLongEdge?: number
+      bitrateScale?: number
       width?: number
       height?: number
     }) => Promise<{
@@ -247,6 +249,8 @@ interface ProcessedDesktopSource {
   id: string
   name: string
   display_id: string
+  width?: number
+  height?: number
   thumbnail: string | null
   appIcon: string | null
 }

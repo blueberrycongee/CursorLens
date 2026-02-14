@@ -28,6 +28,7 @@ struct RecorderArguments {
     let hideCursor: Bool
     let microphoneEnabled: Bool
     let fps: Int
+    let bitrateScale: Double
     let targetWidth: Int?
     let targetHeight: Int?
     let cameraEnabled: Bool
@@ -41,6 +42,7 @@ struct RecorderArguments {
         var hideCursor = false
         var microphoneEnabled = true
         var fps = 60
+        var bitrateScale = 1.0
         var targetWidth: Int?
         var targetHeight: Int?
         var cameraEnabled = false
@@ -76,6 +78,11 @@ struct RecorderArguments {
                 }
                 fps = max(1, min(120, parsed))
                 idx += 2
+            case "--bitrate-scale":
+                if let value = next, let parsed = Double(value), parsed.isFinite {
+                    bitrateScale = parsed
+                }
+                idx += 2
             case "--width":
                 if let value = next, let parsed = Int(value), parsed > 1 {
                     targetWidth = parsed
@@ -110,6 +117,7 @@ struct RecorderArguments {
         }
 
         let clampedSizePercent = max(14, min(40, cameraSizePercent))
+        let clampedBitrateScale = max(0.5, min(2.0, bitrateScale))
 
         return RecorderArguments(
             outputPath: outputPath,
@@ -118,6 +126,7 @@ struct RecorderArguments {
             hideCursor: hideCursor,
             microphoneEnabled: microphoneEnabled,
             fps: fps,
+            bitrateScale: clampedBitrateScale,
             targetWidth: targetWidth,
             targetHeight: targetHeight,
             cameraEnabled: cameraEnabled,
@@ -398,6 +407,7 @@ final class ScreenStreamWriter: NSObject, SCStreamOutput {
         width: Int,
         height: Int,
         fps: Int,
+        bitrateScale: Double,
         microphoneEnabled: Bool,
         cameraProvider: CameraCaptureProvider?,
         cameraShape: CameraOverlayShape,
@@ -411,7 +421,7 @@ final class ScreenStreamWriter: NSObject, SCStreamOutput {
                 AVVideoWidthKey: width,
                 AVVideoHeightKey: height,
                 AVVideoCompressionPropertiesKey: [
-                    AVVideoAverageBitRateKey: max(width * height * max(1, fps), 6_000_000),
+                    AVVideoAverageBitRateKey: max(Int(Double(width * height * max(1, fps)) * bitrateScale), 6_000_000),
                     AVVideoMaxKeyFrameIntervalKey: max(1, fps),
                     AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
                 ],
@@ -809,6 +819,7 @@ final class SCKRecorder {
                 width: resolved.width,
                 height: resolved.height,
                 fps: args.fps,
+                bitrateScale: args.bitrateScale,
                 microphoneEnabled: args.microphoneEnabled,
                 cameraProvider: cameraProvider,
                 cameraShape: args.cameraShape,

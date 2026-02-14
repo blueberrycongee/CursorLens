@@ -38,6 +38,14 @@ type CompositionResources = {
   cleanup: () => void;
 };
 
+type SelectedCaptureSource = {
+  id?: string;
+  name?: string;
+  display_id?: string | number | null;
+  width?: number;
+  height?: number;
+};
+
 const VIRTUAL_CAMERA_KEYWORDS = [
   "virtual",
   "obs",
@@ -70,6 +78,29 @@ function combineVideoAndAudioStream(
     tracks.push(...microphoneStream.getAudioTracks());
   }
   return new MediaStream(tracks);
+}
+
+function normalizeSelectedCaptureSource(input: unknown): SelectedCaptureSource | null {
+  if (!input || typeof input !== "object") return null;
+  const row = input as Record<string, unknown>;
+  const id = typeof row.id === "string" ? row.id : undefined;
+  const display_id =
+    typeof row.display_id === "string" || typeof row.display_id === "number"
+      ? row.display_id
+      : null;
+  const name = typeof row.name === "string" ? row.name : undefined;
+  const width = Number(row.width);
+  const height = Number(row.height);
+
+  if (!id && display_id === null) return null;
+
+  return {
+    id,
+    display_id,
+    name,
+    width: Number.isFinite(width) && width > 1 ? Math.round(width) : undefined,
+    height: Number.isFinite(height) && height > 1 ? Math.round(height) : undefined,
+  };
 }
 
 async function pickPreferredCameraId(): Promise<string | undefined> {
@@ -674,7 +705,7 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
     setRecordingPhase("starting");
 
     try {
-      const selectedSource = await window.electronAPI.getSelectedSource();
+      const selectedSource = normalizeSelectedCaptureSource(await window.electronAPI.getSelectedSource());
       if (!selectedSource) {
         throw new Error(t("launch.recordSourceRequired"));
       }
@@ -683,6 +714,15 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
       const systemCursorMode: CursorMode = cursorMode;
       const platform = await window.electronAPI.getPlatform();
       const shouldUseNativeRecorder = platform === "darwin";
+      const selectedSourceWidth = Number(selectedSource.width);
+      const selectedSourceHeight = Number(selectedSource.height);
+      const nativeTargetSize =
+        Number.isFinite(selectedSourceWidth)
+          && Number.isFinite(selectedSourceHeight)
+          && selectedSourceWidth > 1
+          && selectedSourceHeight > 1
+          ? normalizeCaptureDimensions(selectedSourceWidth, selectedSourceHeight)
+          : undefined;
 
       const resolveNativeStartFailureMessage = (
         code?: string,
@@ -730,6 +770,10 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
             cameraShape,
             cameraSizePercent,
             frameRate: TARGET_CAPTURE_FPS,
+            bitrateScale: activeProfile.bitrateScale,
+            maxLongEdge: activeProfile.maxLongEdge,
+            width: nativeTargetSize?.width,
+            height: nativeTargetSize?.height,
           });
 
         let nativeStart = await startNative(includeCamera);

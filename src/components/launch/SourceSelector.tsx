@@ -13,6 +13,8 @@ interface DesktopSource {
   name: string;
   thumbnail: string | null;
   display_id: string;
+  width?: number;
+  height?: number;
   appIcon: string | null;
 }
 
@@ -62,6 +64,8 @@ export function SourceSelector() {
               : source.name,
           thumbnail: source.thumbnail,
           display_id: source.display_id,
+          width: source.width,
+          height: source.height,
           appIcon: source.appIcon
         }))
       );

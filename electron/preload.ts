@@ -35,7 +35,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openSourceSelector: () => {
     return ipcRenderer.invoke('open-source-selector')
   },
-  selectSource: (source: any) => {
+  selectSource: (source: unknown) => {
     return ipcRenderer.invoke('select-source', source)
   },
   getSelectedSource: () => {
@@ -76,6 +76,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     cameraShape?: 'rounded' | 'square' | 'circle'
     cameraSizePercent?: number
     frameRate?: number
+    maxLongEdge?: number
+    bitrateScale?: number
     width?: number
     height?: number
   }) => {

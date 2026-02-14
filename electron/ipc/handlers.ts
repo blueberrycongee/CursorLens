@@ -27,6 +27,8 @@ type SelectedSource = {
   id?: string
   name?: string
   display_id?: string | number | null
+  width?: number
+  height?: number
 }
 
 let selectedSource: SelectedSource | null = null
@@ -84,6 +86,8 @@ type NativeRecorderStartOptions = {
   cameraShape?: 'rounded' | 'square' | 'circle'
   cameraSizePercent?: number
   frameRate?: number
+  maxLongEdge?: number
+  bitrateScale?: number
   width?: number
   height?: number
 }
@@ -303,6 +307,59 @@ function normalizeGetSourcesOptions(input?: Partial<Electron.SourcesOptions>): E
       height: Number.isFinite(height) && height > 0 ? Math.floor(height) : 180,
     },
     fetchWindowIcons: input?.fetchWindowIcons !== false,
+  }
+}
+
+function clampRecorderDimension(value: number): number {
+  const rounded = Math.max(2, Math.round(value))
+  return rounded % 2 === 0 ? rounded : rounded - 1
+}
+
+function resolveSourceDisplaySize(source: Electron.DesktopCapturerSource): { width?: number; height?: number } {
+  if (!source.id.startsWith('screen:')) {
+    return {}
+  }
+
+  const displayId = Number(source.display_id)
+  if (!Number.isFinite(displayId)) {
+    return {}
+  }
+
+  const display = screen.getAllDisplays().find((row) => row.id === displayId)
+  if (!display || display.size.width <= 1 || display.size.height <= 1) {
+    return {}
+  }
+
+  return {
+    width: clampRecorderDimension(display.size.width),
+    height: clampRecorderDimension(display.size.height),
+  }
+}
+
+function applyLongEdgeLimit(
+  width: number,
+  height: number,
+  maxLongEdge: number,
+): { width: number; height: number } {
+  if (!Number.isFinite(maxLongEdge) || maxLongEdge <= 0) {
+    return {
+      width: clampRecorderDimension(width),
+      height: clampRecorderDimension(height),
+    }
+  }
+
+  const longEdge = Math.max(width, height)
+  if (longEdge <= maxLongEdge) {
+    return {
+      width: clampRecorderDimension(width),
+      height: clampRecorderDimension(height),
+    }
+  }
+
+  const scale = maxLongEdge / longEdge
+  return {
+    width: clampRecorderDimension(width * scale),
+    height: clampRecorderDimension(height * scale),
   }
 }
 
@@ -930,6 +987,7 @@ export function registerIpcHandlers(
         id: source.id,
         name: source.name,
         display_id: source.display_id,
+        ...resolveSourceDisplaySize(source),
         thumbnail: source.thumbnail ? source.thumbnail.toDataURL() : null,
         appIcon: source.appIcon ? source.appIcon.toDataURL() : null
       }))
@@ -1111,8 +1169,21 @@ export function registerIpcHandlers(
         ? Number(options?.cameraSizePercent)
         : 22
       const frameRate = Number.isFinite(options?.frameRate) ? Number(options?.frameRate) : 60
-      const width = Number.isFinite(options?.width) ? Number(options?.width) : undefined
-      const height = Number.isFinite(options?.height) ? Number(options?.height) : undefined
+      const maxLongEdge = Number.isFinite(options?.maxLongEdge) ? Math.max(2, Math.round(Number(options?.maxLongEdge))) : undefined
+      const bitrateScale = Number.isFinite(options?.bitrateScale)
+        ? Math.max(0.5, Math.min(2, Number(options?.bitrateScale)))
+        : 1
+      let width = Number.isFinite(options?.width) ? clampRecorderDimension(Number(options?.width)) : undefined
+      let height = Number.isFinite(options?.height) ? clampRecorderDimension(Number(options?.height)) : undefined
+      if ((!width || !height) && maxLongEdge && sourceRef?.id?.startsWith('screen:')) {
+        const sourceWidth = Number((options?.source as SelectedSource | undefined)?.width ?? selectedSource?.width)
+        const sourceHeight = Number((options?.source as SelectedSource | undefined)?.height ?? selectedSource?.height)
+        if (Number.isFinite(sourceWidth) && Number.isFinite(sourceHeight) && sourceWidth > 1 && sourceHeight > 1) {
+          const limited = applyLongEdgeLimit(sourceWidth, sourceHeight, maxLongEdge)
+          width = limited.width
+          height = limited.height
+        }
+      }
       const outputPath = path.join(RECORDINGS_DIR, `recording-${Date.now()}.mp4`)
 
       const result = await startNativeMacRecorder({
@@ -1125,6 +1196,7 @@ export function registerIpcHandlers(
         cameraShape,
         cameraSizePercent,
         frameRate,
+        bitrateScale,
         width,
         height,
       })

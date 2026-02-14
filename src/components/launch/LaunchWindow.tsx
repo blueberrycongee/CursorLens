@@ -23,6 +23,10 @@ const STOP_SHORTCUT_STORAGE_KEY = "openscreen.stopRecordingShortcut";
 const DEFAULT_STOP_RECORDING_SHORTCUT = "CommandOrControl+Shift+2";
 const AUTO_HIDE_HUD_ON_RECORD_STORAGE_KEY = "openscreen.autoHideHudOnRecord";
 type RecordCountdownSeconds = (typeof RECORD_COUNTDOWN_CYCLE)[number];
+type SelectedSourceSnapshot = {
+  id?: string;
+  name?: string;
+};
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
@@ -65,6 +69,15 @@ function buildAcceleratorFromEvent(event: KeyboardEvent): string | null {
   if (modifiers.length === 0) return null;
 
   return [...modifiers, keyToken].join("+");
+}
+
+function normalizeSelectedSourceSnapshot(input: unknown): SelectedSourceSnapshot | null {
+  if (!input || typeof input !== "object") return null;
+  const row = input as Record<string, unknown>;
+  const id = typeof row.id === "string" ? row.id : undefined;
+  const name = typeof row.name === "string" ? row.name : undefined;
+  if (!id && !name) return null;
+  return { id, name };
 }
 
 function formatAccelerator(accelerator: string, isMacPlatform: boolean): string {
@@ -413,9 +426,9 @@ export function LaunchWindow() {
       if (!window.electronAPI) return;
 
       try {
-        const source = await window.electronAPI.getSelectedSource();
+        const source = normalizeSelectedSourceSnapshot(await window.electronAPI.getSelectedSource());
         if (source) {
-          setSelectedSource(source.name);
+          setSelectedSource(source.name || t("launch.sourceFallback"));
           setHasSelectedSource(true);
         } else {
           setSelectedSource(t("launch.sourceFallback"));
