@@ -1,6 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import styles from "./LaunchWindow.module.css";
-import { useScreenRecorder, type CaptureProfile } from "../../hooks/useScreenRecorder";
+import {
+  useScreenRecorder,
+  type CaptureFrameRate,
+  type CaptureProfile,
+  type CaptureResolutionPreset,
+} from "../../hooks/useScreenRecorder";
 import type { CameraOverlayShape } from "../../hooks/cameraOverlay";
 import { Button } from "../ui/button";
 import { BsRecordCircle } from "react-icons/bs";
@@ -18,11 +23,17 @@ import { resolveRecordingPermissionReadiness } from "@/lib/permissions/capturePe
 
 const CAMERA_SHAPE_CYCLE: CameraOverlayShape[] = ["rounded", "square", "circle"];
 const CAPTURE_PROFILE_CYCLE: CaptureProfile[] = ["balanced", "quality", "ultra"];
+const CAPTURE_FRAME_RATE_OPTIONS: CaptureFrameRate[] = [24, 30, 60, 120];
+const CAPTURE_RESOLUTION_OPTIONS: CaptureResolutionPreset[] = ["auto", "1080p", "1440p", "2160p"];
 const RECORD_COUNTDOWN_CYCLE = [3, 5, 8] as const;
 const STOP_SHORTCUT_STORAGE_KEY = "openscreen.stopRecordingShortcut";
 const DEFAULT_STOP_RECORDING_SHORTCUT = "CommandOrControl+Shift+2";
 const AUTO_HIDE_HUD_ON_RECORD_STORAGE_KEY = "openscreen.autoHideHudOnRecord";
+const CAPTURE_MODE_STORAGE_KEY = "openscreen.captureMode";
+const CAPTURE_FRAME_RATE_STORAGE_KEY = "openscreen.captureFrameRate";
+const CAPTURE_RESOLUTION_STORAGE_KEY = "openscreen.captureResolutionPreset";
 type RecordCountdownSeconds = (typeof RECORD_COUNTDOWN_CYCLE)[number];
+type CaptureMode = "standard" | "pro";
 type SelectedSourceSnapshot = {
   id?: string;
   name?: string;
@@ -139,6 +150,39 @@ export function LaunchWindow() {
     }
     return "quality";
   });
+  const [captureMode, setCaptureMode] = useState<CaptureMode>(() => {
+    try {
+      const value = window.localStorage.getItem(CAPTURE_MODE_STORAGE_KEY);
+      if (value === "pro" || value === "standard") {
+        return value;
+      }
+    } catch {
+      // no-op
+    }
+    return "standard";
+  });
+  const [captureFrameRate, setCaptureFrameRate] = useState<CaptureFrameRate>(() => {
+    try {
+      const value = Number(window.localStorage.getItem(CAPTURE_FRAME_RATE_STORAGE_KEY));
+      if (value === 24 || value === 30 || value === 60 || value === 120) {
+        return value;
+      }
+    } catch {
+      // no-op
+    }
+    return 60;
+  });
+  const [captureResolutionPreset, setCaptureResolutionPreset] = useState<CaptureResolutionPreset>(() => {
+    try {
+      const value = window.localStorage.getItem(CAPTURE_RESOLUTION_STORAGE_KEY);
+      if (value === "auto" || value === "1080p" || value === "1440p" || value === "2160p") {
+        return value;
+      }
+    } catch {
+      // no-op
+    }
+    return "auto";
+  });
   const [recordSystemCursor, setRecordSystemCursor] = useState(() => {
     try {
       const value = window.localStorage.getItem("openscreen.recordSystemCursor");
@@ -183,6 +227,8 @@ export function LaunchWindow() {
     cameraShape,
     cameraSizePercent,
     captureProfile,
+    captureFrameRate: captureMode === "pro" ? captureFrameRate : undefined,
+    captureResolutionPreset: captureMode === "pro" ? captureResolutionPreset : undefined,
     recordSystemCursor,
   });
   const isTransitioning = recordingState === "starting" || recordingState === "stopping";
@@ -261,6 +307,30 @@ export function LaunchWindow() {
       // no-op
     }
   }, [captureProfile]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(CAPTURE_MODE_STORAGE_KEY, captureMode);
+    } catch {
+      // no-op
+    }
+  }, [captureMode]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(CAPTURE_FRAME_RATE_STORAGE_KEY, String(captureFrameRate));
+    } catch {
+      // no-op
+    }
+  }, [captureFrameRate]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(CAPTURE_RESOLUTION_STORAGE_KEY, captureResolutionPreset);
+    } catch {
+      // no-op
+    }
+  }, [captureResolutionPreset]);
 
   useEffect(() => {
     try {
@@ -405,14 +475,6 @@ export function LaunchWindow() {
     });
   };
 
-  const cycleCaptureProfile = () => {
-    setCaptureProfile((current) => {
-      const index = CAPTURE_PROFILE_CYCLE.indexOf(current);
-      const nextIndex = index >= 0 ? (index + 1) % CAPTURE_PROFILE_CYCLE.length : 0;
-      return CAPTURE_PROFILE_CYCLE[nextIndex] ?? "quality";
-    });
-  };
-
   const cycleRecordCountdown = () => {
     setRecordCountdownSeconds((current) => {
       const index = RECORD_COUNTDOWN_CYCLE.indexOf(current);
@@ -466,6 +528,18 @@ export function LaunchWindow() {
     quality: t("launch.captureProfile.quality"),
     ultra: t("launch.captureProfile.ultra"),
   };
+  const captureResolutionLabelMap: Record<CaptureResolutionPreset, string> = {
+    auto: t("launch.captureResolution.auto"),
+    "1080p": t("launch.captureResolution.1080p"),
+    "1440p": t("launch.captureResolution.1440p"),
+    "2160p": t("launch.captureResolution.2160p"),
+  };
+  const captureSummaryLabel = captureMode === "pro"
+    ? t("launch.captureProButtonLabel", {
+      resolution: captureResolutionLabelMap[captureResolutionPreset],
+      fps: captureFrameRate,
+    })
+    : captureProfileLabelMap[captureProfile];
 
   const openSourceSelector = useCallback(() => {
     if (!window.electronAPI) return;
@@ -749,17 +823,134 @@ export function LaunchWindow() {
           <span className="text-white/90">{t("launch.permissions")}</span>
         </Button>
 
-        <Button
-          variant="link"
-          size="sm"
-          className={`gap-1 shrink-0 min-w-[92px] text-white bg-transparent hover:bg-transparent px-1 text-center text-xs ${styles.electronNoDrag}`}
-          onClick={cycleCaptureProfile}
-          disabled={controlsLocked}
-          title={t("launch.captureProfileLabel", { profile: captureProfileLabelMap[captureProfile] })}
-        >
-          <SlidersHorizontal size={13} className="text-white/80" />
-          <span className="text-white/90">{captureProfileLabelMap[captureProfile]}</span>
-        </Button>
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button
+              variant="link"
+              size="sm"
+              className={`gap-1 shrink-0 min-w-[118px] text-white bg-transparent hover:bg-transparent px-1 text-center text-xs ${styles.electronNoDrag}`}
+              disabled={controlsLocked}
+              title={captureMode === "pro"
+                ? t("launch.captureProLabel", {
+                  resolution: captureResolutionLabelMap[captureResolutionPreset],
+                  fps: captureFrameRate,
+                })
+                : t("launch.captureProfileLabel", { profile: captureProfileLabelMap[captureProfile] })}
+            >
+              <SlidersHorizontal size={13} className="text-white/80" />
+              <span className="text-white/90">{captureSummaryLabel}</span>
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent
+            side="top"
+            sideOffset={8}
+            align="center"
+            collisionPadding={12}
+            className={`w-[310px] bg-[#11131a] border border-white/20 text-white p-2.5 ${styles.electronNoDrag}`}
+          >
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <span className="text-[11px] text-white/80">{t("launch.captureSettingsTitle")}</span>
+              <div className="flex items-center gap-1 rounded-md border border-white/10 bg-white/[0.04] p-0.5">
+                <Button
+                  variant="link"
+                  size="sm"
+                  className={`h-6 px-2 text-[10px] rounded ${captureMode === "standard" ? "bg-white/15 text-white" : "text-white/65 hover:bg-white/10"} ${styles.electronNoDrag}`}
+                  onClick={() => setCaptureMode("standard")}
+                  disabled={controlsLocked}
+                >
+                  {t("launch.captureMode.standard")}
+                </Button>
+                <Button
+                  variant="link"
+                  size="sm"
+                  className={`h-6 px-2 text-[10px] rounded ${captureMode === "pro" ? "bg-cyan-400/20 text-cyan-100" : "text-white/65 hover:bg-white/10"} ${styles.electronNoDrag}`}
+                  onClick={() => setCaptureMode("pro")}
+                  disabled={controlsLocked}
+                >
+                  {t("launch.captureMode.pro")}
+                </Button>
+              </div>
+            </div>
+
+            {captureMode === "standard" ? (
+              <>
+                <div className="text-[10px] text-white/55 mb-2">
+                  {t("launch.captureProfileHint")}
+                </div>
+                <div className="grid grid-cols-3 gap-1.5">
+                  {CAPTURE_PROFILE_CYCLE.map((profile) => {
+                    const active = profile === captureProfile;
+                    return (
+                      <Button
+                        key={profile}
+                        variant="link"
+                        size="sm"
+                        className={`h-7 px-2 text-[11px] rounded border ${active ? "border-cyan-300/35 bg-cyan-400/20 text-cyan-100" : "border-white/10 bg-white/5 text-white/80 hover:bg-white/10"} ${styles.electronNoDrag}`}
+                        onClick={() => setCaptureProfile(profile)}
+                        disabled={controlsLocked}
+                      >
+                        {captureProfileLabelMap[profile]}
+                      </Button>
+                    );
+                  })}
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="text-[10px] text-white/55 mb-2">
+                  {t("launch.captureProHint")}
+                </div>
+                <div className="space-y-2">
+                  <div>
+                    <div className="text-[10px] text-white/65 mb-1">
+                      {t("launch.captureResolution")}
+                    </div>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      {CAPTURE_RESOLUTION_OPTIONS.map((preset) => {
+                        const active = preset === captureResolutionPreset;
+                        return (
+                          <Button
+                            key={preset}
+                            variant="link"
+                            size="sm"
+                            className={`h-7 px-2 text-[11px] rounded border ${active ? "border-cyan-300/35 bg-cyan-400/20 text-cyan-100" : "border-white/10 bg-white/5 text-white/80 hover:bg-white/10"} ${styles.electronNoDrag}`}
+                            onClick={() => setCaptureResolutionPreset(preset)}
+                            disabled={controlsLocked}
+                          >
+                            {captureResolutionLabelMap[preset]}
+                          </Button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="text-[10px] text-white/65 mb-1">
+                      {t("launch.captureFrameRate")}
+                    </div>
+                    <div className="grid grid-cols-4 gap-1.5">
+                      {CAPTURE_FRAME_RATE_OPTIONS.map((fps) => {
+                        const active = fps === captureFrameRate;
+                        return (
+                          <Button
+                            key={fps}
+                            variant="link"
+                            size="sm"
+                            className={`h-7 px-2 text-[11px] rounded border ${active ? "border-cyan-300/35 bg-cyan-400/20 text-cyan-100" : "border-white/10 bg-white/5 text-white/80 hover:bg-white/10"} ${styles.electronNoDrag}`}
+                            onClick={() => setCaptureFrameRate(fps)}
+                            disabled={controlsLocked}
+                          >
+                            {fps}fps
+                          </Button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
+          </PopoverContent>
+        </Popover>
 
         <Button
           variant="link"
