@@ -13,6 +13,8 @@ import { applyZoomTransform } from "./videoPlayback/zoomTransform";
 import { createVideoEventHandlers } from "./videoPlayback/videoEventHandlers";
 import { type AspectRatio, formatAspectRatioForCSS } from "@/utils/aspectRatioUtils";
 import { AnnotationOverlay } from "./AnnotationOverlay";
+import { getRenderableAnnotations } from "@/lib/annotations/renderOrder";
+import { getPreviewBackgroundFilter } from "@/lib/rendering/backgroundBlur";
 import {
   DEFAULT_CURSOR_STYLE,
   drawCompositedCursor,
@@ -992,7 +994,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
         className="absolute inset-0 bg-cover bg-center"
         style={{
           ...backgroundStyle,
-          filter: showBlur ? 'blur(2px)' : 'none',
+          filter: getPreviewBackgroundFilter(Boolean(showBlur)),
         }}
       />
       <div
@@ -1025,18 +1027,9 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
             style={{ display: 'none', pointerEvents: 'none' }}
           />
           {(() => {
-            const filtered = (annotationRegions || []).filter((annotation) => {
-              if (typeof annotation.startMs !== 'number' || typeof annotation.endMs !== 'number') return false;
-              
-              if (annotation.id === selectedAnnotationId) return true;
-              
-              const timeMs = Math.round(currentTime * 1000);
-              return timeMs >= annotation.startMs && timeMs <= annotation.endMs;
-            });
-            
-            // Sort by z-index (lowest to highest) so higher z-index renders on top
-            const sorted = [...filtered].sort((a, b) => a.zIndex - b.zIndex);
-            
+            const timeMs = Math.round(currentTime * 1000);
+            const sorted = getRenderableAnnotations(annotationRegions || [], timeMs);
+
             // Handle click-through cycling: when clicking same annotation, cycle to next
             const handleAnnotationClick = (clickedId: string) => {
               if (!onSelectAnnotation) return;
@@ -1064,7 +1057,6 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
                 onSizeChange={(id, size) => onAnnotationSizeChange?.(id, size)}
                 onClick={handleAnnotationClick}
                 zIndex={annotation.zIndex}
-                isSelectedBoost={annotation.id === selectedAnnotationId}
               />
             ));
           })()}

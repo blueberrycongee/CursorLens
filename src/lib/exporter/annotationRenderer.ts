@@ -1,4 +1,5 @@
 import type { AnnotationRegion, ArrowDirection } from '@/components/video-editor/types';
+import { getRenderableAnnotations } from '@/lib/annotations/renderOrder';
 
 // SVG path data for each arrow direction
 const ARROW_PATHS: Record<ArrowDirection, string[]> = {
@@ -272,13 +273,7 @@ export async function renderAnnotations(
   currentTimeMs: number,
   scaleFactor: number = 1.0
 ): Promise<void> {
-  // Filter active annotations at current time
-  const activeAnnotations = annotations.filter(
-    (ann) => currentTimeMs >= ann.startMs && currentTimeMs <= ann.endMs
-  );
-  
-  // Sort by z-index (lower first, so higher z-index draws on top)
-  const sortedAnnotations = [...activeAnnotations].sort((a, b) => a.zIndex - b.zIndex);
+  const sortedAnnotations = getRenderableAnnotations(annotations, currentTimeMs);
   
   for (const annotation of sortedAnnotations) {
     const x = (annotation.position.x / 100) * canvasWidth;

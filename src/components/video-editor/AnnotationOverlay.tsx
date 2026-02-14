@@ -13,7 +13,6 @@ interface AnnotationOverlayProps {
   onSizeChange: (id: string, size: { width: number; height: number }) => void;
   onClick: (id: string) => void;
   zIndex: number;
-  isSelectedBoost: boolean; // Boost z-index when selected for easy editing
 }
 
 export function AnnotationOverlay({
@@ -25,7 +24,6 @@ export function AnnotationOverlay({
   onSizeChange,
   onClick,
   zIndex,
-  isSelectedBoost,
 }: AnnotationOverlayProps) {
   const x = (annotation.position.x / 100) * containerWidth;
   const y = (annotation.position.y / 100) * containerHeight;
@@ -151,7 +149,7 @@ export function AnnotationOverlay({
         isSelected && "ring-2 ring-[#34B27B] ring-offset-2 ring-offset-transparent"
       )}
       style={{
-        zIndex: isSelectedBoost ? zIndex + 1000 : zIndex, // Boost selected annotation to ensure it's on top
+        zIndex,
         pointerEvents: isSelected ? 'auto' : 'none',
         border: isSelected ? '2px solid rgba(52, 178, 123, 0.8)' : 'none',
         backgroundColor: isSelected ? 'rgba(52, 178, 123, 0.1)' : 'transparent',

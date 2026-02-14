@@ -6,6 +6,7 @@ import { applyZoomTransform } from '@/components/video-editor/videoPlayback/zoom
 import { DEFAULT_FOCUS, MIN_DELTA, resolveAdaptiveSmoothingAlpha } from '@/components/video-editor/videoPlayback/constants';
 import { clampFocusToStage as clampFocusToStageUtil } from '@/components/video-editor/videoPlayback/focusUtils';
 import { renderAnnotations } from './annotationRenderer';
+import { getExportBackgroundFilter } from '@/lib/rendering/backgroundBlur';
 import {
   drawCompositedCursor,
   occludeCapturedCursorArtifact,
@@ -607,7 +608,11 @@ export class FrameRenderer {
       
       if (this.config.showBlur) {
         ctx.save();
-        ctx.filter = 'blur(6px)'; // Canvas blur is weaker than CSS
+        ctx.filter = getExportBackgroundFilter({
+          showBlur: true,
+          outputWidth: this.config.width,
+          previewWidth: this.config.previewWidth,
+        });
         ctx.drawImage(bgCanvas, 0, 0, w, h);
         ctx.restore();
       } else {
