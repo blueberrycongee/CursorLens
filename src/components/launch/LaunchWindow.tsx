@@ -536,9 +536,9 @@ export function LaunchWindow() {
   };
 
   return (
-    <div className="w-full h-full flex items-center bg-transparent">
+    <div className="w-full h-full flex items-end pb-2 bg-transparent overflow-hidden pointer-events-none">
       <div
-        className={`w-full max-w-[980px] mx-auto flex items-center gap-2 px-3 py-2 ${styles.electronDrag}`}
+        className={`w-full mx-auto flex items-center gap-2 px-3 py-2 pointer-events-auto ${styles.electronDrag}`}
         style={{
           borderRadius: 16,
           background: 'linear-gradient(135deg, rgba(30,30,40,0.92) 0%, rgba(20,20,30,0.85) 100%)',
@@ -677,8 +677,10 @@ export function LaunchWindow() {
             </Button>
           </PopoverTrigger>
           <PopoverContent
+            side="top"
             sideOffset={8}
             align="center"
+            collisionPadding={12}
             className={`w-[250px] bg-[#11131a] border border-white/20 text-white p-2.5 ${styles.electronNoDrag}`}
           >
             <div className="text-[11px] text-white/80 mb-2">
@@ -744,8 +746,10 @@ export function LaunchWindow() {
               </Button>
             </PopoverTrigger>
             <PopoverContent
+              side="top"
               sideOffset={8}
               align="center"
+              collisionPadding={12}
               className={`w-[210px] bg-[#11131a] border border-cyan-300/20 text-cyan-100 p-2 ${styles.electronNoDrag}`}
             >
               <div className="flex items-center justify-between text-[11px] mb-2">

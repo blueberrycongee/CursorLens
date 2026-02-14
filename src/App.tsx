@@ -16,7 +16,10 @@ export default function App() {
     if (type === 'hud-overlay' || type === 'source-selector') {
       document.body.style.background = 'transparent';
       document.documentElement.style.background = 'transparent';
+      document.body.style.overflow = 'hidden';
+      document.documentElement.style.overflow = 'hidden';
       document.getElementById('root')?.style.setProperty('background', 'transparent');
+      document.getElementById('root')?.style.setProperty('overflow', 'hidden');
     }
 
     // Load custom fonts on app initialization
