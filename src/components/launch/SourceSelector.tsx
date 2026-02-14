@@ -1,10 +1,11 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Button } from "../ui/button";
 import { MdCheck } from "react-icons/md";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { Card } from "../ui/card";
 import styles from "./SourceSelector.module.css";
 import { useI18n } from "@/i18n";
+import { reportUserActionError } from "@/lib/userErrorFeedback";
 
 interface DesktopSource {
   id: string;
@@ -19,43 +20,71 @@ export function SourceSelector() {
   const [sources, setSources] = useState<DesktopSource[]>([]);
   const [selectedSource, setSelectedSource] = useState<DesktopSource | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
+
+  const fetchSources = useCallback(async () => {
+    setLoading(true);
+    setLoadFailed(false);
+    try {
+      const rawSources = await window.electronAPI.getSources({
+        types: ['screen', 'window'],
+        thumbnailSize: { width: 320, height: 180 },
+        fetchWindowIcons: true
+      });
+      setSources(
+        rawSources.map(source => ({
+          id: source.id,
+          name:
+            source.id.startsWith('window:') && source.name.includes(' — ')
+              ? source.name.split(' — ')[1] || source.name
+              : source.name,
+          thumbnail: source.thumbnail,
+          display_id: source.display_id,
+          appIcon: source.appIcon
+        }))
+      );
+    } catch (error) {
+      setLoadFailed(true);
+      reportUserActionError({
+        t,
+        userMessage: t("source.loadFailed"),
+        error,
+        context: "source-selector.fetch-sources",
+        dedupeKey: "source-selector.fetch-sources",
+      });
+    } finally {
+      setLoading(false);
+    }
+  }, [t]);
 
   useEffect(() => {
-    async function fetchSources() {
-      setLoading(true);
-      try {
-        const rawSources = await window.electronAPI.getSources({
-          types: ['screen', 'window'],
-          thumbnailSize: { width: 320, height: 180 },
-          fetchWindowIcons: true
-        });
-        setSources(
-          rawSources.map(source => ({
-            id: source.id,
-            name:
-              source.id.startsWith('window:') && source.name.includes(' — ')
-                ? source.name.split(' — ')[1] || source.name
-                : source.name,
-            thumbnail: source.thumbnail,
-            display_id: source.display_id,
-            appIcon: source.appIcon
-          }))
-        );
-      } catch (error) {
-        console.error('Error loading sources:', error);
-      } finally {
-        setLoading(false);
-      }
-    }
-    fetchSources();
-  }, []);
+    void fetchSources();
+  }, [fetchSources]);
 
   const screenSources = sources.filter(s => s.id.startsWith('screen:'));
   const windowSources = sources.filter(s => s.id.startsWith('window:'));
 
   const handleSourceSelect = (source: DesktopSource) => setSelectedSource(source);
   const handleShare = async () => {
-    if (selectedSource) await window.electronAPI.selectSource(selectedSource);
+    if (!selectedSource) {
+      return;
+    }
+
+    try {
+      await window.electronAPI.selectSource(selectedSource);
+    } catch (error) {
+      reportUserActionError({
+        t,
+        userMessage: t("source.shareFailed"),
+        error,
+        context: "source-selector.share",
+        details: {
+          sourceId: selectedSource.id,
+          sourceName: selectedSource.name,
+        },
+        dedupeKey: `source-selector.share:${selectedSource.id}`,
+      });
+    }
   };
 
   if (loading) {
@@ -64,6 +93,19 @@ export function SourceSelector() {
         <div className="text-center">
           <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-zinc-600 mx-auto mb-2" />
           <p className="text-xs text-zinc-300">{t("source.loading")}</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (loadFailed) {
+    return (
+      <div className={`h-full flex items-center justify-center ${styles.glassContainer}`} style={{ minHeight: '100vh' }}>
+        <div className="text-center px-6">
+          <p className="text-sm text-zinc-100 mb-3">{t("source.loadFailed")}</p>
+          <Button onClick={() => void fetchSources()} className="bg-[#34B27B] text-white hover:bg-[#34B27B]/85">
+            {t("source.retry")}
+          </Button>
         </div>
       </div>
     );

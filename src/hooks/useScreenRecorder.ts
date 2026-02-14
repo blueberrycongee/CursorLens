@@ -2,6 +2,8 @@ import { useState, useRef, useEffect } from "react";
 import { fixWebmDuration } from "@fix-webm-duration/fix";
 import { toast } from "sonner";
 import { computeCameraOverlayRect, type CameraOverlayShape } from "./cameraOverlay";
+import { useI18n } from "@/i18n";
+import { reportUserActionError } from "@/lib/userErrorFeedback";
 
 type UseScreenRecorderReturn = {
   recording: boolean;
@@ -86,6 +88,7 @@ async function pickPreferredCameraId(): Promise<string | undefined> {
 }
 
 export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseScreenRecorderReturn {
+  const { t } = useI18n();
   const includeCamera = options.includeCamera ?? false;
   const cameraShape = options.cameraShape ?? "rounded";
   const cameraSizePercent = options.cameraSizePercent ?? 22;
@@ -273,6 +276,14 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
 
       if (!stopResult.success || !stopResult.path) {
         console.error("Failed to stop native ScreenCaptureKit recording:", stopResult.message);
+        reportUserActionError({
+          t,
+          userMessage: t("launch.recordStopFailed"),
+          error: stopResult.message || "native-screen-recorder-stop returned no path",
+          context: "recording.stop.native",
+          details: stopResult,
+          dedupeKey: "recording.stop.native",
+        });
         return;
       }
 
@@ -301,6 +312,13 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
       await window.electronAPI.switchToEditor();
     } catch (error) {
       console.error("Failed to finalize native ScreenCaptureKit recording:", error);
+      reportUserActionError({
+        t,
+        userMessage: t("launch.recordStopFailed"),
+        error,
+        context: "recording.stop.native.finalize",
+        dedupeKey: "recording.stop.native.finalize",
+      });
       setRecording(false);
       window.electronAPI?.setRecordingState(false);
     } finally {
@@ -658,12 +676,7 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
     try {
       const selectedSource = await window.electronAPI.getSelectedSource();
       if (!selectedSource) {
-        alert("Please select a source to record");
-        setRecording(false);
-        setRecordingPhase("idle");
-        window.electronAPI?.setRecordingState(false);
-        transitionInFlight.current = false;
-        return;
+        throw new Error(t("launch.recordSourceRequired"));
       }
 
       const cursorMode: CursorMode = recordSystemCursor ? "always" : "never";
@@ -961,6 +974,14 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
           const videoResult = await window.electronAPI.storeRecordedVideo(arrayBuffer, videoFileName, captureMetadata);
           if (!videoResult.success) {
             console.error('Failed to store video:', videoResult.message);
+            reportUserActionError({
+              t,
+              userMessage: t("launch.recordSaveFailed"),
+              error: videoResult.message || 'storeRecordedVideo returned unsuccessful result',
+              context: "recording.save.store-recorded-video",
+              details: videoResult,
+              dedupeKey: "recording.save.store-recorded-video",
+            });
             return;
           }
 
@@ -970,6 +991,13 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
           await window.electronAPI.switchToEditor();
         } catch (error) {
           console.error('Error saving recording:', error);
+          reportUserActionError({
+            t,
+            userMessage: t("launch.recordSaveFailed"),
+            error,
+            context: "recording.save.media-recorder.onstop",
+            dedupeKey: "recording.save.media-recorder.onstop",
+          });
         } finally {
           transitionInFlight.current = false;
           setRecording(false);
@@ -979,6 +1007,13 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
       };
       recorder.onerror = (event) => {
         console.error("MediaRecorder error event:", event);
+        reportUserActionError({
+          t,
+          userMessage: t("launch.recordSaveFailed"),
+          error: event,
+          context: "recording.media-recorder.onerror",
+          dedupeKey: "recording.media-recorder.onerror",
+        });
         transitionInFlight.current = false;
         setRecording(false);
         setRecordingPhase("idle");
@@ -1001,13 +1036,30 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
       const message = error instanceof Error && error.message
         ? error.message
         : "Failed to start recording.";
+      const userMessage = message === "Failed to start recording."
+        ? t("launch.recordStartFailed")
+        : message;
       console.error('Failed to start recording:', error);
       transitionInFlight.current = false;
       setRecording(false);
       setRecordingPhase("idle");
       window.electronAPI?.setRecordingState(false);
       cleanupActiveMedia();
-      alert(message);
+      reportUserActionError({
+        t,
+        userMessage,
+        error,
+        context: "recording.start",
+        details: {
+          includeCamera,
+          cameraShape,
+          cameraSizePercent,
+          captureProfile,
+          recordSystemCursor,
+          normalizedMessage: message,
+        },
+        dedupeKey: "recording.start",
+      });
     }
   };
 

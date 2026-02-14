@@ -1,7 +1,6 @@
 
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Toaster } from "@/components/ui/sonner";
 import { toast } from "sonner";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 
@@ -1163,9 +1162,6 @@ export default function VideoEditor() {
           autoEditDisabled={!cursorTrack?.samples?.length || !Number.isFinite(duration) || duration <= 0}
         />
       </div>
-
-      <Toaster theme="dark" className="pointer-events-auto" />
-      
       <ExportDialog
         isOpen={showExportDialog}
         onClose={() => setShowExportDialog(false)}

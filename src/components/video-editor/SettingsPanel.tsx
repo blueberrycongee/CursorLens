@@ -19,6 +19,8 @@ import { GIF_FRAME_RATES, GIF_SIZE_PRESETS } from "@/lib/exporter";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { useI18n } from "@/i18n";
 import { DEFAULT_CURSOR_STYLE, type CursorMovementStyle, type CursorStyleConfig } from "@/lib/cursor";
+import { GITHUB_ISSUES_URL, GITHUB_REPO_URL } from "@/lib/supportLinks";
+import { reportUserActionError } from "@/lib/userErrorFeedback";
 
 const WALLPAPER_COUNT = 18;
 const WALLPAPER_RELATIVE = Array.from({ length: WALLPAPER_COUNT }, (_, i) => `wallpapers/wallpaper${i + 1}.jpg`);
@@ -185,6 +187,24 @@ export function SettingsPanel({
   const [wallpaperPaths, setWallpaperPaths] = useState<string[]>([]);
   const [customImages, setCustomImages] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const openSupportUrl = async (url: string, context: string) => {
+    try {
+      const result = await window.electronAPI.openExternalUrl(url);
+      if (!result.success) {
+        throw new Error(result.error || "openExternalUrl returned unsuccessful result");
+      }
+    } catch (error) {
+      reportUserActionError({
+        t,
+        userMessage: t("error.reportOpenFailed"),
+        error,
+        context,
+        details: { url },
+        dedupeKey: context,
+      });
+    }
+  };
 
   useEffect(() => {
     let mounted = true
@@ -1072,7 +1092,7 @@ export function SettingsPanel({
           <button
             type="button"
             onClick={() => {
-              window.electronAPI?.openExternalUrl('https://github.com/blueberrycongee/CursorLens/issues');
+              void openSupportUrl(GITHUB_ISSUES_URL, 'settings-panel.open-report-bug-link');
             }}
             className="flex-1 flex items-center justify-center gap-1.5 text-[10px] text-slate-500 hover:text-slate-300 py-1.5 transition-colors"
           >
@@ -1082,7 +1102,7 @@ export function SettingsPanel({
           <button
             type="button"
             onClick={() => {
-              window.electronAPI?.openExternalUrl('https://github.com/blueberrycongee/CursorLens');
+              void openSupportUrl(GITHUB_REPO_URL, 'settings-panel.open-star-repo-link');
             }}
             className="flex-1 flex items-center justify-center gap-1.5 text-[10px] text-slate-500 hover:text-slate-300 py-1.5 transition-colors"
           >

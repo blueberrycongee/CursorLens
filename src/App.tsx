@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { LaunchWindow } from "./components/launch/LaunchWindow";
 import { SourceSelector } from "./components/launch/SourceSelector";
 import VideoEditor from "./components/video-editor/VideoEditor";
+import { GlobalErrorObserver } from "./components/app/GlobalErrorObserver";
+import { Toaster } from "./components/ui/sonner";
 import { loadAllCustomFonts } from "./lib/customFonts";
 import { useI18n } from "./i18n";
 
@@ -28,18 +30,31 @@ export default function App() {
     });
   }, []);
 
+  let content: JSX.Element;
   switch (windowType) {
     case 'hud-overlay':
-      return <LaunchWindow />;
+      content = <LaunchWindow />;
+      break;
     case 'source-selector':
-      return <SourceSelector />;
+      content = <SourceSelector />;
+      break;
     case 'editor':
-      return <VideoEditor />;
-      default:
-      return (
+      content = <VideoEditor />;
+      break;
+    default:
+      content = (
         <div className="w-full h-full bg-background text-foreground">
           <h1>{t("app.name")}</h1>
         </div>
       );
+      break;
   }
+
+  return (
+    <>
+      <GlobalErrorObserver />
+      {content}
+      <Toaster theme="dark" className="pointer-events-auto" />
+    </>
+  );
 }

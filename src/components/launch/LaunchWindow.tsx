@@ -13,6 +13,7 @@ import { EyeOff, Keyboard, RotateCcw, SlidersHorizontal, Timer } from "lucide-re
 import { useI18n } from "@/i18n";
 import { toast } from "sonner";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { reportUserActionError } from "@/lib/userErrorFeedback";
 
 const CAMERA_SHAPE_CYCLE: CameraOverlayShape[] = ["rounded", "square", "circle"];
 const CAPTURE_PROFILE_CYCLE: CaptureProfile[] = ["balanced", "quality", "ultra"];
@@ -176,6 +177,7 @@ export function LaunchWindow() {
   const controlsLocked = recording || isTransitioning || isCountingDown;
   const countdownTimerRef = useRef<NodeJS.Timeout | null>(null);
   const previousRecordingRef = useRef(false);
+  const selectedSourceSyncErrorAtRef = useRef(0);
   const [recordingStart, setRecordingStart] = useState<number | null>(null);
   const [elapsed, setElapsed] = useState(0);
 
@@ -298,14 +300,27 @@ export function LaunchWindow() {
         // no-op
       }
       if (!result.success && !options?.silent) {
-        toast.error(result.message || t("launch.stopShortcutApplyError"));
+        reportUserActionError({
+          t,
+          userMessage: result.message || t("launch.stopShortcutApplyError"),
+          error: result.message || t("launch.stopShortcutApplyError"),
+          context: "launch-window.apply-stop-shortcut",
+          details: { accelerator },
+          dedupeKey: `launch-window.apply-stop-shortcut:${accelerator}`,
+        });
       }
       return result.success;
     } catch (error) {
       if (!options?.silent) {
-        toast.error(t("launch.stopShortcutApplyError"));
+        reportUserActionError({
+          t,
+          userMessage: t("launch.stopShortcutApplyError"),
+          error,
+          context: "launch-window.apply-stop-shortcut",
+          details: { accelerator },
+          dedupeKey: `launch-window.apply-stop-shortcut:${accelerator}`,
+        });
       }
-      console.error("Failed to apply stop recording shortcut:", error);
       return false;
     }
   }, [t]);
@@ -394,7 +409,9 @@ export function LaunchWindow() {
 
   useEffect(() => {
     const checkSelectedSource = async () => {
-      if (window.electronAPI) {
+      if (!window.electronAPI) return;
+
+      try {
         const source = await window.electronAPI.getSelectedSource();
         if (source) {
           setSelectedSource(source.name);
@@ -403,10 +420,23 @@ export function LaunchWindow() {
           setSelectedSource(t("launch.sourceFallback"));
           setHasSelectedSource(false);
         }
+      } catch (error) {
+        const now = Date.now();
+        if (now - selectedSourceSyncErrorAtRef.current >= 10_000) {
+          selectedSourceSyncErrorAtRef.current = now;
+          reportUserActionError({
+            t,
+            userMessage: t("launch.sourceStatusSyncFailed"),
+            error,
+            context: "launch-window.sync-selected-source",
+            dedupeKey: "launch-window.sync-selected-source",
+            dedupeMs: 8_000,
+          });
+        }
       }
     };
 
-    checkSelectedSource();
+    void checkSelectedSource();
     
     const interval = setInterval(checkSelectedSource, 500);
     return () => clearInterval(interval);
@@ -424,10 +454,22 @@ export function LaunchWindow() {
   };
 
   const openSourceSelector = useCallback(() => {
-    if (window.electronAPI) {
-      window.electronAPI.openSourceSelector();
-    }
-  }, []);
+    if (!window.electronAPI) return;
+
+    void (async () => {
+      try {
+        await window.electronAPI.openSourceSelector();
+      } catch (error) {
+        reportUserActionError({
+          t,
+          userMessage: t("launch.openSourceSelectorFailed"),
+          error,
+          context: "launch-window.open-source-selector",
+          dedupeKey: "launch-window.open-source-selector",
+        });
+      }
+    })();
+  }, [t]);
 
   const beginRecordCountdown = useCallback(() => {
     if (!hasSelectedSource || recording || isTransitioning || countdownRemaining !== null) {
@@ -489,15 +531,34 @@ export function LaunchWindow() {
   ]);
 
   const openVideoFile = async () => {
-    const result = await window.electronAPI.openVideoFilePicker(locale);
-    
-    if (result.cancelled) {
-      return;
-    }
-    
-    if (result.success && result.path) {
+    try {
+      const result = await window.electronAPI.openVideoFilePicker(locale);
+
+      if (result.cancelled) {
+        return;
+      }
+
+      if (!result.success || !result.path) {
+        reportUserActionError({
+          t,
+          userMessage: t("launch.openVideoFailed"),
+          error: result,
+          context: "launch-window.open-video-file-picker",
+          dedupeKey: "launch-window.open-video-file-picker",
+        });
+        return;
+      }
+
       await window.electronAPI.setCurrentVideoPath(result.path);
       await window.electronAPI.switchToEditor();
+    } catch (error) {
+      reportUserActionError({
+        t,
+        userMessage: t("launch.openVideoFailed"),
+        error,
+        context: "launch-window.open-video-file",
+        dedupeKey: "launch-window.open-video-file",
+      });
     }
   };
 
