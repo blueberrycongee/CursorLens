@@ -100,6 +100,111 @@ type StartVideoAnalysisOptions = {
   subtitleWidthRatio?: number
 }
 
+const SOURCE_PERMISSION_GUIDANCE =
+  'Screen Recording permission is not granted. Open System Settings > Privacy & Security > Screen & System Audio, allow CursorLens, then relaunch the app.'
+
+function normalizeGetSourcesOptions(input?: Partial<Electron.SourcesOptions>): Electron.SourcesOptions {
+  const requestedTypes = Array.isArray(input?.types) ? input?.types : []
+  const types: Array<'screen' | 'window'> = []
+  for (const type of requestedTypes) {
+    if (type === 'screen' || type === 'window') {
+      types.push(type)
+    }
+  }
+
+  const normalizedTypes: Array<'screen' | 'window'> = types.length > 0 ? types : ['screen', 'window']
+  const width = Number(input?.thumbnailSize?.width)
+  const height = Number(input?.thumbnailSize?.height)
+
+  return {
+    types: normalizedTypes,
+    thumbnailSize: {
+      width: Number.isFinite(width) && width > 0 ? Math.floor(width) : 320,
+      height: Number.isFinite(height) && height > 0 ? Math.floor(height) : 180,
+    },
+    fetchWindowIcons: input?.fetchWindowIcons !== false,
+  }
+}
+
+function isGetSourcesPermissionError(error: unknown): boolean {
+  const message = String(
+    (error as { message?: unknown } | undefined)?.message
+    ?? error
+    ?? '',
+  ).toLowerCase()
+  return (
+    message.includes('permission')
+    || message.includes('not authorized')
+    || message.includes('denied')
+    || message.includes('tcc')
+  )
+}
+
+function formatGetSourcesError(error: unknown): string {
+  const raw = String((error as { message?: unknown } | undefined)?.message ?? error ?? 'Failed to get sources.')
+  if (isGetSourcesPermissionError(error)) {
+    return `${raw} ${SOURCE_PERMISSION_GUIDANCE}`
+  }
+  return raw
+}
+
+async function getSourcesWithFallback(
+  opts: Electron.SourcesOptions,
+): Promise<Electron.DesktopCapturerSource[]> {
+  const attempts: Electron.SourcesOptions[] = [opts]
+
+  if (opts.fetchWindowIcons) {
+    attempts.push({
+      ...opts,
+      fetchWindowIcons: false,
+    })
+  }
+
+  if (opts.types.includes('screen') && opts.types.includes('window')) {
+    const noIcons = {
+      ...opts,
+      fetchWindowIcons: false,
+    }
+    attempts.push(
+      {
+        ...noIcons,
+        types: ['screen'],
+      },
+      {
+        ...noIcons,
+        types: ['window'],
+      },
+    )
+  }
+
+  let lastError: unknown = null
+  const collected = new Map<string, Electron.DesktopCapturerSource>()
+
+  for (const attempt of attempts) {
+    try {
+      const sources = await desktopCapturer.getSources(attempt)
+      for (const source of sources) {
+        if (!collected.has(source.id)) {
+          collected.set(source.id, source)
+        }
+      }
+      if (attempt.types.length === 1) {
+        continue
+      }
+      if (sources.length > 0) {
+        return Array.from(collected.values())
+      }
+    } catch (error) {
+      lastError = error
+    }
+  }
+
+  if (collected.size > 0) {
+    return Array.from(collected.values())
+  }
+  throw lastError ?? new Error('Failed to get sources.')
+}
+
 type CursorTrackerRuntime = {
   timer: NodeJS.Timeout
   boundsRefreshTimer: NodeJS.Timeout | null
@@ -631,14 +736,21 @@ export function registerIpcHandlers(
   })
 
   ipcMain.handle('get-sources', async (_, opts) => {
-    const sources = await desktopCapturer.getSources(opts)
-    return sources.map(source => ({
-      id: source.id,
-      name: source.name,
-      display_id: source.display_id,
-      thumbnail: source.thumbnail ? source.thumbnail.toDataURL() : null,
-      appIcon: source.appIcon ? source.appIcon.toDataURL() : null
-    }))
+    const normalized = normalizeGetSourcesOptions(opts)
+    try {
+      const sources = await getSourcesWithFallback(normalized)
+      return sources.map(source => ({
+        id: source.id,
+        name: source.name,
+        display_id: source.display_id,
+        thumbnail: source.thumbnail ? source.thumbnail.toDataURL() : null,
+        appIcon: source.appIcon ? source.appIcon.toDataURL() : null
+      }))
+    } catch (error) {
+      const message = formatGetSourcesError(error)
+      console.error('Failed to get sources:', error)
+      throw new Error(message)
+    }
   })
 
   ipcMain.handle('select-source', (_, source) => {

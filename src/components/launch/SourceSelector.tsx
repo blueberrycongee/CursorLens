@@ -21,10 +21,12 @@ export function SourceSelector() {
   const [selectedSource, setSelectedSource] = useState<DesktopSource | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadFailed, setLoadFailed] = useState(false);
+  const [loadErrorDetail, setLoadErrorDetail] = useState<string>("");
 
   const fetchSources = useCallback(async () => {
     setLoading(true);
     setLoadFailed(false);
+    setLoadErrorDetail("");
     try {
       const rawSources = await window.electronAPI.getSources({
         types: ['screen', 'window'],
@@ -45,6 +47,8 @@ export function SourceSelector() {
       );
     } catch (error) {
       setLoadFailed(true);
+      const errorDetail = error instanceof Error ? error.message : String(error);
+      setLoadErrorDetail(errorDetail);
       reportUserActionError({
         t,
         userMessage: t("source.loadFailed"),
@@ -103,6 +107,11 @@ export function SourceSelector() {
       <div className={`h-full flex items-center justify-center ${styles.glassContainer}`} style={{ minHeight: '100vh' }}>
         <div className="text-center px-6">
           <p className="text-sm text-zinc-100 mb-3">{t("source.loadFailed")}</p>
+          {loadErrorDetail ? (
+            <p className="text-xs text-zinc-400 mb-3 whitespace-pre-wrap break-all max-w-[560px]">
+              {loadErrorDetail}
+            </p>
+          ) : null}
           <Button onClick={() => void fetchSources()} className="bg-[#34B27B] text-white hover:bg-[#34B27B]/85">
             {t("source.retry")}
           </Button>
