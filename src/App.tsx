@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { LaunchWindow } from "./components/launch/LaunchWindow";
+import { PermissionCheckerWindow } from "./components/launch/PermissionCheckerWindow";
 import { SourceSelector } from "./components/launch/SourceSelector";
 import VideoEditor from "./components/video-editor/VideoEditor";
 import { GlobalErrorObserver } from "./components/app/GlobalErrorObserver";
@@ -37,6 +38,9 @@ export default function App() {
       break;
     case 'source-selector':
       content = <SourceSelector />;
+      break;
+    case 'permission-checker':
+      content = <PermissionCheckerWindow />;
       break;
     case 'editor':
       content = <VideoEditor />;

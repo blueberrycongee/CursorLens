@@ -9,11 +9,12 @@ import { MdMonitor } from "react-icons/md";
 import { RxDragHandleDots2 } from "react-icons/rx";
 import { FaFolderMinus } from "react-icons/fa6";
 import { FiCamera, FiMinus, FiMousePointer, FiX } from "react-icons/fi";
-import { EyeOff, Keyboard, RotateCcw, SlidersHorizontal, Timer } from "lucide-react";
+import { EyeOff, Keyboard, RotateCcw, Shield, SlidersHorizontal, Timer } from "lucide-react";
 import { useI18n } from "@/i18n";
 import { toast } from "sonner";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { reportUserActionError } from "@/lib/userErrorFeedback";
+import { resolveRecordingPermissionReadiness } from "@/lib/permissions/capturePermissions";
 
 const CAMERA_SHAPE_CYCLE: CameraOverlayShape[] = ["rounded", "square", "circle"];
 const CAPTURE_PROFILE_CYCLE: CaptureProfile[] = ["balanced", "quality", "ultra"];
@@ -458,6 +459,13 @@ export function LaunchWindow() {
 
     void (async () => {
       try {
+        const permissionSnapshot = await window.electronAPI.getCapturePermissionSnapshot();
+        const readiness = resolveRecordingPermissionReadiness(permissionSnapshot);
+        if (!readiness.ready) {
+          await window.electronAPI.openPermissionChecker();
+          toast.error(t("permission.missingRequiredHint"));
+          return;
+        }
         await window.electronAPI.openSourceSelector();
       } catch (error) {
         reportUserActionError({
@@ -466,6 +474,23 @@ export function LaunchWindow() {
           error,
           context: "launch-window.open-source-selector",
           dedupeKey: "launch-window.open-source-selector",
+        });
+      }
+    })();
+  }, [t]);
+
+  const openPermissionChecker = useCallback(() => {
+    if (!window.electronAPI) return;
+    void (async () => {
+      try {
+        await window.electronAPI.openPermissionChecker();
+      } catch (error) {
+        reportUserActionError({
+          t,
+          userMessage: t("permission.openSettingsFailed"),
+          error,
+          context: "launch-window.open-permission-checker",
+          dedupeKey: "launch-window.open-permission-checker",
         });
       }
     })();
@@ -517,7 +542,26 @@ export function LaunchWindow() {
       return;
     }
 
-    beginRecordCountdown();
+    void (async () => {
+      try {
+        const permissionSnapshot = await window.electronAPI.getCapturePermissionSnapshot();
+        const readiness = resolveRecordingPermissionReadiness(permissionSnapshot);
+        if (!readiness.ready) {
+          await window.electronAPI.openPermissionChecker();
+          toast.error(t("permission.missingRequiredHint"));
+          return;
+        }
+        beginRecordCountdown();
+      } catch (error) {
+        reportUserActionError({
+          t,
+          userMessage: t("permission.refreshFailed"),
+          error,
+          context: "launch-window.record-permission-preflight",
+          dedupeKey: "launch-window.record-permission-preflight",
+        });
+      }
+    })();
   }, [
     beginRecordCountdown,
     countdownRemaining,
@@ -528,6 +572,7 @@ export function LaunchWindow() {
     recordingState,
     clearRecordCountdown,
     toggleRecording,
+    t,
   ]);
 
   const openVideoFile = async () => {
@@ -677,6 +722,18 @@ export function LaunchWindow() {
         >
           <FiCamera size={14} className={includeCamera ? "text-cyan-300" : "text-white/50"} />
           <span className={includeCamera ? "text-cyan-300" : "text-white/50"}>{t("launch.camera")}</span>
+        </Button>
+
+        <Button
+          variant="link"
+          size="sm"
+          className={`gap-1 shrink-0 min-w-[88px] text-white bg-transparent hover:bg-transparent px-1 text-center text-xs ${styles.electronNoDrag}`}
+          onClick={openPermissionChecker}
+          disabled={controlsLocked}
+          title={t("launch.permissions")}
+        >
+          <Shield size={13} className="text-white/80" />
+          <span className="text-white/90">{t("launch.permissions")}</span>
         </Button>
 
         <Button

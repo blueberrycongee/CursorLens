@@ -117,6 +117,19 @@ export function SourceSelector() {
       });
     }
   };
+  const handleOpenPermissionChecker = async () => {
+    try {
+      await window.electronAPI.openPermissionChecker();
+    } catch (error) {
+      reportUserActionError({
+        t,
+        userMessage: t("permission.openSettingsFailed"),
+        error,
+        context: "source-selector.open-permission-checker",
+        dedupeKey: "source-selector.open-permission-checker",
+      });
+    }
+  };
   const handleShare = async () => {
     if (!selectedSource) {
       return;
@@ -170,6 +183,12 @@ export function SourceSelector() {
                 {t("source.openSystemSettings")}
               </Button>
             ) : null}
+            <Button
+              onClick={() => void handleOpenPermissionChecker()}
+              className="bg-zinc-700 text-white hover:bg-zinc-600"
+            >
+              {t("source.checkPermissions")}
+            </Button>
             <Button onClick={() => void fetchSources()} className="bg-[#34B27B] text-white hover:bg-[#34B27B]/85">
               {t("source.retry")}
             </Button>
