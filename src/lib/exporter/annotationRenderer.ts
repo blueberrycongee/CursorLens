@@ -45,6 +45,36 @@ const ARROW_PATHS: Record<ArrowDirection, string[]> = {
   ],
 };
 
+const ANNOTATION_IMAGE_CACHE_LIMIT = 128;
+const annotationImageCache = new Map<string, Promise<HTMLImageElement | null>>();
+
+function loadAnnotationImage(content: string): Promise<HTMLImageElement | null> {
+  const cached = annotationImageCache.get(content);
+  if (cached) {
+    return cached;
+  }
+
+  const loading = new Promise<HTMLImageElement | null>((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => {
+      console.error('[AnnotationRenderer] Failed to load image annotation');
+      resolve(null);
+    };
+    img.src = content;
+  });
+
+  annotationImageCache.set(content, loading);
+  if (annotationImageCache.size > ANNOTATION_IMAGE_CACHE_LIMIT) {
+    const oldestKey = annotationImageCache.keys().next().value as string | undefined;
+    if (oldestKey) {
+      annotationImageCache.delete(oldestKey);
+    }
+  }
+
+  return loading;
+}
+
 function parseSvgPath(pathString: string, scaleX: number, scaleY: number): Array<{ cmd: string; args: number[] }> {
   const commands: Array<{ cmd: string; args: number[] }> = [];
   const parts = pathString.trim().split(/\s+/);
@@ -232,37 +262,30 @@ async function renderImage(
   if (!annotation.content || !annotation.content.startsWith('data:image')) {
     return;
   }
-  
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.onload = () => {
-      // Preserve aspect ratio - contain the image within the bounds
-      const imgAspect = img.width / img.height;
-      const boxAspect = width / height;
-      
-      let drawWidth = width;
-      let drawHeight = height;
-      let drawX = x;
-      let drawY = y;
-      
-      if (imgAspect > boxAspect) {
 
-        drawHeight = width / imgAspect;
-        drawY = y + (height - drawHeight) / 2;
-      } else {
-        drawWidth = height * imgAspect;
-        drawX = x + (width - drawWidth) / 2;
-      }
-      
-      ctx.drawImage(img, drawX, drawY, drawWidth, drawHeight);
-      resolve();
-    };
-    img.onerror = () => {
-      console.error('[AnnotationRenderer] Failed to load image annotation');
-      resolve();
-    };
-    img.src = annotation.content;
-  });
+  const img = await loadAnnotationImage(annotation.content);
+  if (!img) {
+    return;
+  }
+
+  // Preserve aspect ratio - contain the image within the bounds
+  const imgAspect = img.width / img.height;
+  const boxAspect = width / height;
+
+  let drawWidth = width;
+  let drawHeight = height;
+  let drawX = x;
+  let drawY = y;
+
+  if (imgAspect > boxAspect) {
+    drawHeight = width / imgAspect;
+    drawY = y + (height - drawHeight) / 2;
+  } else {
+    drawWidth = height * imgAspect;
+    drawX = x + (width - drawWidth) / 2;
+  }
+
+  ctx.drawImage(img, drawX, drawY, drawWidth, drawHeight);
 }
 
 export async function renderAnnotations(
