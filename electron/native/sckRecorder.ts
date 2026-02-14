@@ -48,11 +48,17 @@ type RecorderHelperErrorInfo = {
   message: string
 }
 
+type RecorderDoneInfo = {
+  frameCount: number
+  observedFrameRate?: number
+}
+
 type ActiveNativeRecorderSession = {
   process: ChildProcess
   outputPath: string
   cursorMode: NativeCursorMode
   ready: RecorderReadyInfo
+  doneInfoRef: { current?: RecorderDoneInfo }
   exitPromise: Promise<{ code: number | null; signal: NodeJS.Signals | null }>
 }
 
@@ -115,6 +121,23 @@ function parseHelperErrorLine(line: string): RecorderHelperErrorInfo | null {
   return {
     code: String(match[1]).toLowerCase(),
     message: String(match[2]).trim(),
+  }
+}
+
+function parseDoneLine(line: string): RecorderDoneInfo | null {
+  const match = /^SCK_RECORDER_DONE\s+frames=(\d+)(?:\s+observed_fps=(\d+))?$/i.exec(line)
+  if (!match) return null
+  const frameCount = Number(match[1])
+  const observedFrameRateRaw = Number(match[2] ?? 0)
+  if (!Number.isFinite(frameCount) || frameCount < 0) {
+    return null
+  }
+  const observedFrameRate = Number.isFinite(observedFrameRateRaw) && observedFrameRateRaw > 0
+    ? Math.max(1, Math.min(240, Math.round(observedFrameRateRaw)))
+    : undefined
+  return {
+    frameCount: Math.max(0, Math.round(frameCount)),
+    observedFrameRate,
   }
 }
 
@@ -286,6 +309,7 @@ export async function startNativeMacRecorder(options: NativeRecorderStartOptions
     const exitPromise = waitForProcessExit(helperProcess)
 
     let readyInfo: RecorderReadyInfo | null = null
+    const doneInfoRef: { current?: RecorderDoneInfo } = {}
     let stderrBuffer = ''
     const helperErrorRef: { current?: RecorderHelperErrorInfo } = {}
 
@@ -293,6 +317,10 @@ export async function startNativeMacRecorder(options: NativeRecorderStartOptions
       const maybeReady = parseReadyLine(line)
       if (maybeReady) {
         readyInfo = maybeReady
+      }
+      const maybeDone = parseDoneLine(line)
+      if (maybeDone) {
+        doneInfoRef.current = maybeDone
       }
       if (!line.startsWith('SCK_RECORDER_READY') && !line.startsWith('SCK_RECORDER_DONE')) {
         console.log(`[sck-recorder] ${line}`)
@@ -349,6 +377,7 @@ export async function startNativeMacRecorder(options: NativeRecorderStartOptions
       outputPath: options.outputPath,
       cursorMode: options.cursorMode,
       ready: readyInfo,
+      doneInfoRef,
       exitPromise,
     }
 
@@ -426,7 +455,7 @@ export async function stopNativeMacRecorder(): Promise<NativeRecorderStopResult>
     success: true,
     path: session.outputPath,
     metadata: {
-      frameRate: session.ready.frameRate,
+      frameRate: session.doneInfoRef.current?.observedFrameRate ?? session.ready.frameRate,
       width: session.ready.width,
       height: session.ready.height,
       mimeType: 'video/mp4',

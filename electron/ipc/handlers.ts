@@ -330,9 +330,13 @@ function resolveSourceDisplaySize(source: Electron.DesktopCapturerSource): { wid
     return {}
   }
 
+  const scaleFactor = Math.max(1, Number(display.scaleFactor) || 1)
+  const nativeWidth = clampRecorderDimension(display.size.width * scaleFactor)
+  const nativeHeight = clampRecorderDimension(display.size.height * scaleFactor)
+
   return {
-    width: clampRecorderDimension(display.size.width),
-    height: clampRecorderDimension(display.size.height),
+    width: nativeWidth,
+    height: nativeHeight,
   }
 }
 

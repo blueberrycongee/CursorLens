@@ -21,6 +21,11 @@ struct OverlayRect {
     let cornerRadius: Int
 }
 
+struct RecordingStopSummary {
+    let frameCount: Int
+    let observedFrameRate: Int
+}
+
 struct RecorderArguments {
     let outputPath: String
     let sourceId: String?
@@ -400,6 +405,7 @@ final class ScreenStreamWriter: NSObject, SCStreamOutput {
     let hasMicrophoneAudio: Bool
 
     private var firstPTS: CMTime?
+    private var lastRelativePTS: CMTime?
     private(set) var frameCount = 0
 
     init(
@@ -511,10 +517,11 @@ final class ScreenStreamWriter: NSObject, SCStreamOutput {
         let relative = CMTimeSubtract(pts, firstPTS)
         if adaptor.append(outputPixelBuffer, withPresentationTime: relative) {
             frameCount += 1
+            lastRelativePTS = relative
         }
     }
 
-    func finish() async throws {
+    func finish() async throws -> RecordingStopSummary {
         input.markAsFinished()
         audioInput?.markAsFinished()
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
@@ -528,6 +535,22 @@ final class ScreenStreamWriter: NSObject, SCStreamOutput {
         if writer.status != .completed {
             throw RecorderError.writerFailed("AVAssetWriter finished with status=\(writer.status.rawValue)")
         }
+
+        let observedFrameRate = resolveObservedFrameRate()
+        return RecordingStopSummary(frameCount: frameCount, observedFrameRate: observedFrameRate)
+    }
+
+    private func resolveObservedFrameRate() -> Int {
+        guard frameCount > 1 else { return 0 }
+        guard let lastRelativePTS else { return 0 }
+        let duration = lastRelativePTS.seconds
+        guard duration.isFinite, duration > 0 else {
+            return 0
+        }
+        let intervals = max(1, frameCount - 1)
+        let estimated = Double(intervals) / duration
+        guard estimated.isFinite else { return 0 }
+        return max(1, min(240, Int(round(estimated))))
     }
 
     func appendMicrophoneSampleBuffer(_ sampleBuffer: CMSampleBuffer) {
@@ -878,7 +901,7 @@ final class SCKRecorder {
         )
     }
 
-    func stop() async throws -> Int {
+    func stop() async throws -> RecordingStopSummary {
         guard let stream, let writer else {
             throw RecorderError.streamNotStarted
         }
@@ -891,8 +914,7 @@ final class SCKRecorder {
         }
 
         try await stream.stopCapture()
-        try await writer.finish()
-        return writer.frameCount
+        return try await writer.finish()
     }
 
     private func resolveSource(from content: SCShareableContent) throws -> (filter: SCContentFilter, width: Int, height: Int, sourceKind: String) {
@@ -1045,8 +1067,8 @@ struct NativeRecorderMain {
             let stopSignal = StopSignal()
             await stopSignal.wait()
 
-            let frameCount = try await recorder.stop()
-            print("SCK_RECORDER_DONE frames=\(frameCount)")
+            let summary = try await recorder.stop()
+            print("SCK_RECORDER_DONE frames=\(summary.frameCount) observed_fps=\(summary.observedFrameRate)")
             fflush(stdout)
             exit(0)
         } catch {
