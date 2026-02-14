@@ -556,7 +556,8 @@ export function LaunchWindow() {
         <Button
           variant="link"
           size="sm"
-          className={`gap-1 min-w-0 flex-1 overflow-hidden text-white bg-transparent hover:bg-transparent px-1 justify-start text-xs ${styles.electronNoDrag}`}
+          className={`gap-1 min-w-[220px] shrink-0 overflow-hidden text-white bg-transparent hover:bg-transparent px-1 justify-start text-xs ${styles.electronNoDrag}`}
+          style={{ width: 'clamp(220px, 24vw, 420px)' }}
           onClick={openSourceSelector}
           disabled={controlsLocked}
           title={selectedSource}
