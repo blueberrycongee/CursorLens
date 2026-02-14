@@ -18,6 +18,7 @@ import {
   drawCompositedCursor,
   occludeCapturedCursorArtifact,
   projectCursorToViewport,
+  resolveCursorOcclusionState,
   resolveCursorState,
   type CursorStyleConfig,
   type CursorTrack,
@@ -515,7 +516,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
 
     ctx.clearRect(0, 0, layout.stageSize.width, layout.stageSize.height);
 
-    const cursorState = resolveCursorState({
+    const drawCursorState = resolveCursorState({
       timeMs,
       track: cursorTrackRef.current,
       zoomRegions: zoomRegionsRef.current,
@@ -523,11 +524,56 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
       style: cursorStyleRef.current,
     });
 
-    if (!cursorState.visible) return;
+    const occlusionCursorState = hideCapturedSystemCursorRef.current
+      ? resolveCursorOcclusionState({
+          timeMs,
+          track: cursorTrackRef.current,
+          zoomRegions: zoomRegionsRef.current,
+          fallbackFocus: { cx: animationStateRef.current.focusX, cy: animationStateRef.current.focusY },
+          style: cursorStyleRef.current,
+        })
+      : null;
 
-    const projected = projectCursorToViewport({
-      normalizedX: cursorState.x,
-      normalizedY: cursorState.y,
+    if (hideCapturedSystemCursorRef.current && occlusionCursorState) {
+      const occlusionProjected = projectCursorToViewport({
+        normalizedX: occlusionCursorState.x,
+        normalizedY: occlusionCursorState.y,
+        cropRegion: cropRegionRef.current ?? { x: 0, y: 0, width: 1, height: 1 },
+        baseOffset: layout.baseOffset,
+        maskRect: layout.maskRect,
+        cameraScale: {
+          x: cameraContainer.scale.x,
+          y: cameraContainer.scale.y,
+        },
+        cameraPosition: {
+          x: cameraContainer.position.x,
+          y: cameraContainer.position.y,
+        },
+        stageSize: layout.stageSize,
+      });
+
+      if (occlusionProjected.inViewport) {
+        const sourceCanvas = appRef.current?.canvas as HTMLCanvasElement | undefined;
+        if (sourceCanvas) {
+          occludeCapturedCursorArtifact(
+            ctx,
+            { x: occlusionProjected.x, y: occlusionProjected.y },
+            occlusionCursorState,
+            {
+              sourceCanvas,
+              stageSize: layout.stageSize,
+              contentScale: Math.max(0.1, (Math.abs(cameraContainer.scale.x) + Math.abs(cameraContainer.scale.y)) / 2),
+            },
+          );
+        }
+      }
+    }
+
+    if (!drawCursorState.visible) return;
+
+    const drawProjected = projectCursorToViewport({
+      normalizedX: drawCursorState.x,
+      normalizedY: drawCursorState.y,
       cropRegion: cropRegionRef.current ?? { x: 0, y: 0, width: 1, height: 1 },
       baseOffset: layout.baseOffset,
       maskRect: layout.maskRect,
@@ -542,28 +588,12 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
       stageSize: layout.stageSize,
     });
 
-    if (!projected.inViewport) return;
-
-    if (hideCapturedSystemCursorRef.current) {
-      const sourceCanvas = appRef.current?.canvas as HTMLCanvasElement | undefined;
-      if (sourceCanvas) {
-        occludeCapturedCursorArtifact(
-          ctx,
-          { x: projected.x, y: projected.y },
-          cursorState,
-          {
-            sourceCanvas,
-            stageSize: layout.stageSize,
-            contentScale: Math.max(0.1, (Math.abs(cameraContainer.scale.x) + Math.abs(cameraContainer.scale.y)) / 2),
-          },
-        );
-      }
-    }
+    if (!drawProjected.inViewport) return;
 
     drawCompositedCursor(
       ctx,
-      { x: projected.x, y: projected.y },
-      cursorState,
+      { x: drawProjected.x, y: drawProjected.y },
+      drawCursorState,
       cursorStyleRef.current,
       Math.max(0.1, (Math.abs(cameraContainer.scale.x) + Math.abs(cameraContainer.scale.y)) / 2),
     );

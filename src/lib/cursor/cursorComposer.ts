@@ -403,6 +403,29 @@ export function resolveCursorState(params: CursorResolveParams): CursorResolvedS
   };
 }
 
+export function resolveCursorOcclusionState(params: CursorResolveParams): CursorResolvedState | null {
+  const hasTrackSamples = Array.isArray(params.track?.samples) && params.track.samples.length > 0;
+  if (!hasTrackSamples) {
+    return null;
+  }
+
+  // Occlusion is independent from visual cursor styling. Keep temporal alignment/smoothing,
+  // but never gate erasing on style.enabled or auto-hide/loop effects.
+  const occlusionStyle: CursorStyleConfig = {
+    ...normalizeCursorStyle(params.style),
+    enabled: true,
+    autoHideStatic: false,
+    loopCursorPosition: false,
+  };
+
+  const state = resolveCursorState({
+    ...params,
+    style: occlusionStyle,
+  });
+
+  return state.visible ? state : null;
+}
+
 export function projectCursorToViewport(args: {
   normalizedX: number;
   normalizedY: number;

@@ -10,6 +10,7 @@ import {
   drawCompositedCursor,
   occludeCapturedCursorArtifact,
   projectCursorToViewport,
+  resolveCursorOcclusionState,
   resolveCursorState,
   type CursorStyleConfig,
   type CursorTrack,
@@ -367,7 +368,7 @@ export class FrameRenderer {
       return;
     }
 
-    const cursorState = resolveCursorState({
+    const drawCursorState = resolveCursorState({
       timeMs,
       track: this.config.cursorTrack,
       zoomRegions: this.config.zoomRegions,
@@ -375,11 +376,53 @@ export class FrameRenderer {
       style: this.config.cursorStyle,
     });
 
-    if (!cursorState.visible) return;
+    const occlusionCursorState = this.config.hideCapturedSystemCursor
+      ? resolveCursorOcclusionState({
+          timeMs,
+          track: this.config.cursorTrack,
+          zoomRegions: this.config.zoomRegions,
+          fallbackFocus: { cx: this.animationState.focusX, cy: this.animationState.focusY },
+          style: this.config.cursorStyle,
+        })
+      : null;
 
-    const projected = projectCursorToViewport({
-      normalizedX: cursorState.x,
-      normalizedY: cursorState.y,
+    if (this.config.hideCapturedSystemCursor && this.compositeCanvas && occlusionCursorState) {
+      const occlusionProjected = projectCursorToViewport({
+        normalizedX: occlusionCursorState.x,
+        normalizedY: occlusionCursorState.y,
+        cropRegion: this.config.cropRegion,
+        baseOffset: this.layoutCache.baseOffset,
+        maskRect: this.layoutCache.maskRect,
+        cameraScale: {
+          x: this.cameraContainer.scale.x,
+          y: this.cameraContainer.scale.y,
+        },
+        cameraPosition: {
+          x: this.cameraContainer.position.x,
+          y: this.cameraContainer.position.y,
+        },
+        stageSize: this.layoutCache.stageSize,
+      });
+
+      if (occlusionProjected.inViewport) {
+        occludeCapturedCursorArtifact(
+          this.compositeCtx,
+          { x: occlusionProjected.x, y: occlusionProjected.y },
+          occlusionCursorState,
+          {
+            sourceCanvas: this.compositeCanvas,
+            stageSize: this.layoutCache.stageSize,
+            contentScale: Math.max(0.1, (Math.abs(this.cameraContainer.scale.x) + Math.abs(this.cameraContainer.scale.y)) / 2),
+          },
+        );
+      }
+    }
+
+    if (!drawCursorState.visible) return;
+
+    const drawProjected = projectCursorToViewport({
+      normalizedX: drawCursorState.x,
+      normalizedY: drawCursorState.y,
       cropRegion: this.config.cropRegion,
       baseOffset: this.layoutCache.baseOffset,
       maskRect: this.layoutCache.maskRect,
@@ -394,25 +437,12 @@ export class FrameRenderer {
       stageSize: this.layoutCache.stageSize,
     });
 
-    if (!projected.inViewport) return;
-
-    if (this.config.hideCapturedSystemCursor && this.compositeCanvas) {
-      occludeCapturedCursorArtifact(
-        this.compositeCtx,
-        { x: projected.x, y: projected.y },
-        cursorState,
-        {
-          sourceCanvas: this.compositeCanvas,
-          stageSize: this.layoutCache.stageSize,
-          contentScale: Math.max(0.1, (Math.abs(this.cameraContainer.scale.x) + Math.abs(this.cameraContainer.scale.y)) / 2),
-        },
-      );
-    }
+    if (!drawProjected.inViewport) return;
 
     drawCompositedCursor(
       this.compositeCtx,
-      { x: projected.x, y: projected.y },
-      cursorState,
+      { x: drawProjected.x, y: drawProjected.y },
+      drawCursorState,
       this.config.cursorStyle,
       Math.max(0.1, (Math.abs(this.cameraContainer.scale.x) + Math.abs(this.cameraContainer.scale.y)) / 2),
     );
