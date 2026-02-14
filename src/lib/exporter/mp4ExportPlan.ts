@@ -29,15 +29,16 @@ const QUALITY_TARGET_HEIGHT: Record<Exclude<ExportQuality, 'source'>, number> = 
 };
 
 const BITRATE_BPP_PER_FRAME: Record<ExportQuality, number> = {
-  medium: 0.08,
-  good: 0.11,
-  source: 0.14,
+  // Screen content is text-heavy and more sensitive to compression artifacts.
+  medium: 0.1,
+  good: 0.14,
+  source: 0.22,
 };
 
 const BITRATE_LIMITS: Record<ExportQuality, { min: number; max: number }> = {
-  medium: { min: 6_000_000, max: 18_000_000 },
-  good: { min: 10_000_000, max: 35_000_000 },
-  source: { min: 12_000_000, max: 90_000_000 },
+  medium: { min: 8_000_000, max: 24_000_000 },
+  good: { min: 12_000_000, max: 48_000_000 },
+  source: { min: 18_000_000, max: 140_000_000 },
 };
 
 function normalizeDimension(value: number, fallback: number): number {
