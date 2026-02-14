@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import styles from "./LaunchWindow.module.css";
 import { useScreenRecorder, type CaptureProfile } from "../../hooks/useScreenRecorder";
 import type { CameraOverlayShape } from "../../hooks/cameraOverlay";
@@ -9,12 +9,14 @@ import { MdMonitor } from "react-icons/md";
 import { RxDragHandleDots2 } from "react-icons/rx";
 import { FaFolderMinus } from "react-icons/fa6";
 import { FiCamera, FiMinus, FiMousePointer, FiX } from "react-icons/fi";
-import { SlidersHorizontal } from "lucide-react";
+import { SlidersHorizontal, Timer } from "lucide-react";
 import { useI18n } from "@/i18n";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
 const CAMERA_SHAPE_CYCLE: CameraOverlayShape[] = ["rounded", "square", "circle"];
 const CAPTURE_PROFILE_CYCLE: CaptureProfile[] = ["balanced", "quality", "ultra"];
+const RECORD_COUNTDOWN_CYCLE = [3, 5, 8] as const;
+type RecordCountdownSeconds = (typeof RECORD_COUNTDOWN_CYCLE)[number];
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
@@ -70,6 +72,17 @@ export function LaunchWindow() {
       return true;
     }
   });
+  const [recordCountdownSeconds, setRecordCountdownSeconds] = useState<RecordCountdownSeconds>(() => {
+    try {
+      const value = Number(window.localStorage.getItem("openscreen.recordCountdownSeconds"));
+      if (value === 3 || value === 5 || value === 8) {
+        return value;
+      }
+    } catch {
+      // no-op
+    }
+    return 3;
+  });
   const { recording, recordingState, toggleRecording } = useScreenRecorder({
     includeCamera,
     cameraShape,
@@ -78,7 +91,10 @@ export function LaunchWindow() {
     recordSystemCursor,
   });
   const isTransitioning = recordingState === "starting" || recordingState === "stopping";
-  const controlsLocked = recording || isTransitioning;
+  const [countdownRemaining, setCountdownRemaining] = useState<number | null>(null);
+  const isCountingDown = countdownRemaining !== null;
+  const controlsLocked = recording || isTransitioning || isCountingDown;
+  const countdownTimerRef = useRef<NodeJS.Timeout | null>(null);
   const [recordingStart, setRecordingStart] = useState<number | null>(null);
   const [elapsed, setElapsed] = useState(0);
 
@@ -100,6 +116,14 @@ export function LaunchWindow() {
       if (timer) clearInterval(timer);
     };
   }, [recording, recordingStart]);
+
+  const clearRecordCountdown = useCallback(() => {
+    if (countdownTimerRef.current) {
+      clearInterval(countdownTimerRef.current);
+      countdownTimerRef.current = null;
+    }
+    setCountdownRemaining(null);
+  }, []);
 
   const formatTime = (seconds: number) => {
     const m = Math.floor(seconds / 60).toString().padStart(2, '0');
@@ -149,6 +173,26 @@ export function LaunchWindow() {
     }
   }, [recordSystemCursor]);
 
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("openscreen.recordCountdownSeconds", String(recordCountdownSeconds));
+    } catch {
+      // no-op
+    }
+  }, [recordCountdownSeconds]);
+
+  useEffect(() => {
+    if (!hasSelectedSource && countdownRemaining !== null) {
+      clearRecordCountdown();
+    }
+  }, [hasSelectedSource, countdownRemaining, clearRecordCountdown]);
+
+  useEffect(() => {
+    return () => {
+      clearRecordCountdown();
+    };
+  }, [clearRecordCountdown]);
+
   const cycleCameraShape = () => {
     setCameraShape((current) => {
       const index = CAMERA_SHAPE_CYCLE.indexOf(current);
@@ -162,6 +206,14 @@ export function LaunchWindow() {
       const index = CAPTURE_PROFILE_CYCLE.indexOf(current);
       const nextIndex = index >= 0 ? (index + 1) % CAPTURE_PROFILE_CYCLE.length : 0;
       return CAPTURE_PROFILE_CYCLE[nextIndex] ?? "quality";
+    });
+  };
+
+  const cycleRecordCountdown = () => {
+    setRecordCountdownSeconds((current) => {
+      const index = RECORD_COUNTDOWN_CYCLE.indexOf(current);
+      const nextIndex = index >= 0 ? (index + 1) % RECORD_COUNTDOWN_CYCLE.length : 0;
+      return RECORD_COUNTDOWN_CYCLE[nextIndex] ?? 3;
     });
   };
 
@@ -201,6 +253,64 @@ export function LaunchWindow() {
       window.electronAPI.openSourceSelector();
     }
   };
+
+  const beginRecordCountdown = useCallback(() => {
+    if (!hasSelectedSource || recording || isTransitioning || countdownRemaining !== null) {
+      return;
+    }
+
+    let remaining = recordCountdownSeconds;
+    setCountdownRemaining(remaining);
+
+    countdownTimerRef.current = setInterval(() => {
+      remaining -= 1;
+      if (remaining <= 0) {
+        clearRecordCountdown();
+        toggleRecording();
+        return;
+      }
+      setCountdownRemaining(remaining);
+    }, 1000);
+  }, [
+    countdownRemaining,
+    hasSelectedSource,
+    isTransitioning,
+    recordCountdownSeconds,
+    recording,
+    clearRecordCountdown,
+    toggleRecording,
+  ]);
+
+  const handleRecordButtonClick = useCallback(() => {
+    if (recording || recordingState === "recording") {
+      clearRecordCountdown();
+      toggleRecording();
+      return;
+    }
+
+    if (isTransitioning) return;
+
+    if (!hasSelectedSource) {
+      openSourceSelector();
+      return;
+    }
+
+    if (countdownRemaining !== null) {
+      clearRecordCountdown();
+      return;
+    }
+
+    beginRecordCountdown();
+  }, [
+    beginRecordCountdown,
+    countdownRemaining,
+    hasSelectedSource,
+    isTransitioning,
+    recording,
+    recordingState,
+    clearRecordCountdown,
+    toggleRecording,
+  ]);
 
   const openVideoFile = async () => {
     const result = await window.electronAPI.openVideoFilePicker(locale);
@@ -260,14 +370,24 @@ export function LaunchWindow() {
         <Button
           variant="link"
           size="sm"
-          onClick={hasSelectedSource ? toggleRecording : openSourceSelector}
+          onClick={handleRecordButtonClick}
           disabled={isTransitioning}
           className={`relative z-20 gap-1 shrink-0 min-w-[96px] text-white bg-white/5 hover:bg-white/10 border border-white/10 rounded-md px-2 text-center text-xs ${styles.electronNoDrag}`}
+          title={
+            countdownRemaining !== null
+              ? t("launch.countdownCancelHint", { seconds: countdownRemaining })
+              : undefined
+          }
         >
           {recording ? (
             <>
               <FaRegStopCircle size={14} className="text-red-400" />
               <span className="text-red-400">{formatTime(elapsed)}</span>
+            </>
+          ) : countdownRemaining !== null ? (
+            <>
+              <BsRecordCircle size={14} className="text-amber-300 animate-pulse" />
+              <span className="text-amber-300">{t("launch.countdownStarting", { seconds: countdownRemaining })}</span>
             </>
           ) : recordingState === "starting" ? (
             <>
@@ -309,6 +429,18 @@ export function LaunchWindow() {
         >
           <SlidersHorizontal size={13} className="text-white/80" />
           <span className="text-white/90">{captureProfileLabelMap[captureProfile]}</span>
+        </Button>
+
+        <Button
+          variant="link"
+          size="sm"
+          className={`gap-1 shrink-0 min-w-[80px] text-white bg-transparent hover:bg-transparent px-1 text-center text-xs ${styles.electronNoDrag}`}
+          onClick={cycleRecordCountdown}
+          disabled={controlsLocked}
+          title={t("launch.countdownLabel", { seconds: recordCountdownSeconds })}
+        >
+          <Timer size={13} className="text-white/80" />
+          <span className="text-white/90">{recordCountdownSeconds}s</span>
         </Button>
 
         <Button
