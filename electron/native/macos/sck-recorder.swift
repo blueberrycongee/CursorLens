@@ -891,8 +891,9 @@ final class SCKRecorder {
             guard let window = content.windows.first(where: { $0.windowID == windowId }) else {
                 throw RecorderError.windowNotFound("The selected window is no longer on-screen (it may be minimized, closed, or moved to another Space).")
             }
-            let width = max(2, forceEven(args.targetWidth ?? Int(window.frame.width)))
-            let height = max(2, forceEven(args.targetHeight ?? Int(window.frame.height)))
+            let defaultSize = resolveWindowCaptureSize(window: window, displays: content.displays)
+            let width = max(2, forceEven(args.targetWidth ?? defaultSize.width))
+            let height = max(2, forceEven(args.targetHeight ?? defaultSize.height))
             return (
                 filter: SCContentFilter(desktopIndependentWindow: window),
                 width: width,
@@ -956,6 +957,26 @@ final class SCKRecorder {
         }
 
         return .streamStartFailed("Failed to enumerate shareable content: \(localized)")
+    }
+
+    private func resolveWindowCaptureSize(window: SCWindow, displays: [SCDisplay]) -> (width: Int, height: Int) {
+        let windowFrame = window.frame
+        var scale = 1.0
+
+        let frameCenter = CGPoint(x: windowFrame.midX, y: windowFrame.midY)
+        if let display = displays.first(where: { $0.frame.contains(frameCenter) })
+            ?? displays.first(where: { $0.frame.intersects(windowFrame) }) {
+            let displayFrame = display.frame
+            if displayFrame.width > 0, displayFrame.height > 0 {
+                let scaleX = Double(display.width) / Double(displayFrame.width)
+                let scaleY = Double(display.height) / Double(displayFrame.height)
+                scale = max(1.0, (scaleX + scaleY) / 2.0)
+            }
+        }
+
+        let width = max(2, forceEven(Int(round(Double(windowFrame.width) * scale))))
+        let height = max(2, forceEven(Int(round(Double(windowFrame.height) * scale))))
+        return (width: width, height: height)
     }
 
     private func ensureMicrophonePermission() async throws {
