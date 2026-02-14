@@ -253,7 +253,6 @@ export default function VideoEditor() {
   const nextAnnotationZIndexRef = useRef(1); // Track z-index for stacking order
   const exporterRef = useRef<{ cancel: () => void } | null>(null);
   const exportCancelledRef = useRef(false);
-  const previousAspectRatioRef = useRef<AspectRatio>('16:9');
   const autoEditInitializedAspectsRef = useRef<Set<AspectRatio>>(new Set());
   const sourceAspectRatio = useMemo(() => {
     const fallback = 16 / 9;
@@ -753,17 +752,6 @@ export default function VideoEditor() {
       setSelectedAnnotationId(null);
     }
   }, [selectedAnnotationId, annotationRegions]);
-
-  useEffect(() => {
-    const previousAspectRatio = previousAspectRatioRef.current;
-    setExportAspectRatios((current) => {
-      if (current.length === 1 && current[0] === previousAspectRatio) {
-        return [aspectRatio];
-      }
-      return current;
-    });
-    previousAspectRatioRef.current = aspectRatio;
-  }, [aspectRatio]);
 
   useEffect(() => {
     setCropRegionsByAspect((previous) => {
