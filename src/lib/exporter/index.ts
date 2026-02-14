@@ -3,6 +3,7 @@ export { VideoFileDecoder } from './videoDecoder';
 export { FrameRenderer } from './frameRenderer';
 export { VideoMuxer } from './muxer';
 export { GifExporter, calculateOutputDimensions } from './gifExporter';
+export { calculateMp4ExportPlan, resolveExportFrameRate, normalizeExportSourceFrameRate } from './mp4ExportPlan';
 export type { 
   ExportConfig, 
   ExportProgress, 
@@ -21,4 +22,3 @@ export {
   VALID_GIF_FRAME_RATES, 
   isValidGifFrameRate 
 } from './types';
-

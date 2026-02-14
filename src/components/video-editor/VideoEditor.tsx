@@ -28,7 +28,19 @@ import {
   type CropRegion,
   type FigureData,
 } from "./types";
-import { VideoExporter, GifExporter, type ExportProgress, type ExportQuality, type ExportSettings, type ExportFormat, type GifFrameRate, type GifSizePreset, GIF_SIZE_PRESETS, calculateOutputDimensions } from "@/lib/exporter";
+import {
+  VideoExporter,
+  GifExporter,
+  type ExportProgress,
+  type ExportQuality,
+  type ExportSettings,
+  type ExportFormat,
+  type GifFrameRate,
+  type GifSizePreset,
+  GIF_SIZE_PRESETS,
+  calculateOutputDimensions,
+  calculateMp4ExportPlan,
+} from "@/lib/exporter";
 import { ASPECT_RATIOS, type AspectRatio, getAspectRatioValue } from "@/utils/aspectRatioUtils";
 import { getAssetPath } from "@/lib/assetPath";
 import { useI18n } from "@/i18n";
@@ -47,105 +59,10 @@ function resolvePreviewFrameRate(sourceFrameRate?: number): number {
   return normalized;
 }
 
-function normalizeExportSourceFrameRate(sourceFrameRate?: number): number {
-  if (!Number.isFinite(sourceFrameRate)) return 60;
-  const normalized = Math.round(sourceFrameRate || 60);
-  if (normalized < 24) return 24;
-  if (normalized > 120) return 120;
-  return normalized;
-}
-
-function resolveExportFrameRate(sourceFrameRate: number | undefined, quality: ExportQuality): number {
-  const sourceRate = normalizeExportSourceFrameRate(sourceFrameRate);
-  if (quality === 'source') {
-    return sourceRate;
-  }
-  return Math.min(sourceRate, 60);
-}
-
 function normalizeSelectedAspectRatios(selected: AspectRatio[], fallback: AspectRatio): AspectRatio[] {
   const selectedSet = new Set(selected);
   const ordered = ASPECT_RATIOS.filter((ratio) => selectedSet.has(ratio));
   return ordered.length > 0 ? ordered : [fallback];
-}
-
-function calculateMp4ExportPlan(
-  quality: ExportQuality,
-  aspectRatioValue: number,
-  sourceWidth: number,
-  sourceHeight: number,
-): { width: number; height: number; bitrate: number } {
-  let exportWidth: number;
-  let exportHeight: number;
-  let bitrate: number;
-
-  if (quality === 'source') {
-    exportWidth = sourceWidth;
-    exportHeight = sourceHeight;
-
-    if (aspectRatioValue === 1) {
-      const baseDimension = Math.floor(Math.min(sourceWidth, sourceHeight) / 2) * 2;
-      exportWidth = baseDimension;
-      exportHeight = baseDimension;
-    } else if (aspectRatioValue > 1) {
-      const baseWidth = Math.floor(sourceWidth / 2) * 2;
-      let found = false;
-      for (let w = baseWidth; w >= 100 && !found; w -= 2) {
-        const h = Math.round(w / aspectRatioValue);
-        if (h % 2 === 0 && Math.abs((w / h) - aspectRatioValue) < 0.0001) {
-          exportWidth = w;
-          exportHeight = h;
-          found = true;
-        }
-      }
-      if (!found) {
-        exportWidth = baseWidth;
-        exportHeight = Math.floor((baseWidth / aspectRatioValue) / 2) * 2;
-      }
-    } else {
-      const baseHeight = Math.floor(sourceHeight / 2) * 2;
-      let found = false;
-      for (let h = baseHeight; h >= 100 && !found; h -= 2) {
-        const w = Math.round(h * aspectRatioValue);
-        if (w % 2 === 0 && Math.abs((w / h) - aspectRatioValue) < 0.0001) {
-          exportWidth = w;
-          exportHeight = h;
-          found = true;
-        }
-      }
-      if (!found) {
-        exportHeight = baseHeight;
-        exportWidth = Math.floor((baseHeight * aspectRatioValue) / 2) * 2;
-      }
-    }
-
-    const totalPixels = exportWidth * exportHeight;
-    bitrate = 30_000_000;
-    if (totalPixels > 1920 * 1080 && totalPixels <= 2560 * 1440) {
-      bitrate = 50_000_000;
-    } else if (totalPixels > 2560 * 1440) {
-      bitrate = 80_000_000;
-    }
-  } else {
-    const targetHeight = quality === 'medium' ? 720 : 1080;
-    exportHeight = Math.floor(targetHeight / 2) * 2;
-    exportWidth = Math.floor((exportHeight * aspectRatioValue) / 2) * 2;
-
-    const totalPixels = exportWidth * exportHeight;
-    if (totalPixels <= 1280 * 720) {
-      bitrate = 10_000_000;
-    } else if (totalPixels <= 1920 * 1080) {
-      bitrate = 20_000_000;
-    } else {
-      bitrate = 30_000_000;
-    }
-  }
-
-  return {
-    width: exportWidth,
-    height: exportHeight,
-    bitrate,
-  };
 }
 
 function normalizeCursorTrack(input: unknown): CursorTrack | null {
@@ -969,14 +886,25 @@ export default function VideoEditor() {
             aspectRatio: currentRatio,
           });
 
-          const { width: exportWidth, height: exportHeight, bitrate } = calculateMp4ExportPlan(
+          const exportPlan = calculateMp4ExportPlan({
             quality,
-            getAspectRatioValue(currentRatio),
+            aspectRatio: getAspectRatioValue(currentRatio),
             sourceWidth,
             sourceHeight,
-          );
+            sourceFrameRate,
+          });
+          const {
+            width: exportWidth,
+            height: exportHeight,
+            bitrate,
+            frameRate: exportFrameRate,
+            limitedBySource,
+          } = exportPlan;
 
-          const exportFrameRate = resolveExportFrameRate(sourceFrameRate, quality);
+          if (limitedBySource && quality !== 'source') {
+            toast.info(t('editor.exportResolutionLimited', { width: exportWidth, height: exportHeight }));
+          }
+
           const exporter = new VideoExporter({
             videoUrl: videoPath,
             width: exportWidth,
