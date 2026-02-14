@@ -6,6 +6,7 @@ import { Card } from "../ui/card";
 import styles from "./SourceSelector.module.css";
 import { useI18n } from "@/i18n";
 import { reportUserActionError } from "@/lib/userErrorFeedback";
+import { isScreenCaptureAccessBlocked, type ScreenCaptureAccessStatus } from "@/lib/screenCaptureAccess";
 
 interface DesktopSource {
   id: string;
@@ -22,12 +23,31 @@ export function SourceSelector() {
   const [loading, setLoading] = useState(true);
   const [loadFailed, setLoadFailed] = useState(false);
   const [loadErrorDetail, setLoadErrorDetail] = useState<string>("");
+  const [screenCaptureAccessStatus, setScreenCaptureAccessStatus] = useState<ScreenCaptureAccessStatus>("unknown");
+  const [canOpenSystemSettings, setCanOpenSystemSettings] = useState(false);
 
   const fetchSources = useCallback(async () => {
     setLoading(true);
     setLoadFailed(false);
     setLoadErrorDetail("");
+    let accessStatus: ScreenCaptureAccessStatus = "unknown";
     try {
+      try {
+        const statusResult = await window.electronAPI.getScreenCaptureAccessStatus();
+        accessStatus = statusResult.status;
+        setScreenCaptureAccessStatus(statusResult.status);
+        setCanOpenSystemSettings(Boolean(statusResult.canOpenSystemSettings));
+      } catch {
+        setScreenCaptureAccessStatus("unknown");
+        setCanOpenSystemSettings(false);
+      }
+
+      if (isScreenCaptureAccessBlocked(accessStatus)) {
+        setLoadFailed(true);
+        setLoadErrorDetail(t("source.screenPermissionHint"));
+        return;
+      }
+
       const rawSources = await window.electronAPI.getSources({
         types: ['screen', 'window'],
         thumbnailSize: { width: 320, height: 180 },
@@ -47,15 +67,21 @@ export function SourceSelector() {
       );
     } catch (error) {
       setLoadFailed(true);
+      const fallbackDetail = isScreenCaptureAccessBlocked(accessStatus) ? t("source.screenPermissionHint") : "";
       const errorDetail = error instanceof Error ? error.message : String(error);
       setLoadErrorDetail(errorDetail);
-      reportUserActionError({
-        t,
-        userMessage: t("source.loadFailed"),
-        error,
-        context: "source-selector.fetch-sources",
-        dedupeKey: "source-selector.fetch-sources",
-      });
+      if (fallbackDetail) {
+        setLoadErrorDetail(errorDetail || fallbackDetail);
+      }
+      if (!isScreenCaptureAccessBlocked(accessStatus)) {
+        reportUserActionError({
+          t,
+          userMessage: t("source.loadFailed"),
+          error,
+          context: "source-selector.fetch-sources",
+          dedupeKey: "source-selector.fetch-sources",
+        });
+      }
     } finally {
       setLoading(false);
     }
@@ -69,6 +95,28 @@ export function SourceSelector() {
   const windowSources = sources.filter(s => s.id.startsWith('window:'));
 
   const handleSourceSelect = (source: DesktopSource) => setSelectedSource(source);
+  const handleOpenSystemSettings = async () => {
+    try {
+      const result = await window.electronAPI.openScreenCaptureSettings();
+      if (!result.success) {
+        reportUserActionError({
+          t,
+          userMessage: t("source.openSystemSettingsFailed"),
+          error: result.message || "openScreenCaptureSettings returned unsuccessful result",
+          context: "source-selector.open-system-settings",
+          dedupeKey: "source-selector.open-system-settings",
+        });
+      }
+    } catch (error) {
+      reportUserActionError({
+        t,
+        userMessage: t("source.openSystemSettingsFailed"),
+        error,
+        context: "source-selector.open-system-settings",
+        dedupeKey: "source-selector.open-system-settings",
+      });
+    }
+  };
   const handleShare = async () => {
     if (!selectedSource) {
       return;
@@ -103,6 +151,7 @@ export function SourceSelector() {
   }
 
   if (loadFailed) {
+    const showSystemSettingsAction = canOpenSystemSettings && isScreenCaptureAccessBlocked(screenCaptureAccessStatus);
     return (
       <div className={`h-full flex items-center justify-center ${styles.glassContainer}`} style={{ minHeight: '100vh' }}>
         <div className="text-center px-6">
@@ -112,9 +161,19 @@ export function SourceSelector() {
               {loadErrorDetail}
             </p>
           ) : null}
-          <Button onClick={() => void fetchSources()} className="bg-[#34B27B] text-white hover:bg-[#34B27B]/85">
-            {t("source.retry")}
-          </Button>
+          <div className="flex items-center justify-center gap-2">
+            {showSystemSettingsAction ? (
+              <Button
+                onClick={() => void handleOpenSystemSettings()}
+                className="bg-zinc-700 text-white hover:bg-zinc-600"
+              >
+                {t("source.openSystemSettings")}
+              </Button>
+            ) : null}
+            <Button onClick={() => void fetchSources()} className="bg-[#34B27B] text-white hover:bg-[#34B27B]/85">
+              {t("source.retry")}
+            </Button>
+          </div>
         </div>
       </div>
     );

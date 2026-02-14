@@ -14,6 +14,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getSources: async (opts: Electron.SourcesOptions) => {
     return await ipcRenderer.invoke('get-sources', opts)
   },
+  getScreenCaptureAccessStatus: async () => {
+    return await ipcRenderer.invoke('get-screen-capture-access-status')
+  },
+  openScreenCaptureSettings: async () => {
+    return await ipcRenderer.invoke('open-screen-capture-settings')
+  },
   switchToEditor: () => {
     return ipcRenderer.invoke('switch-to-editor')
   },

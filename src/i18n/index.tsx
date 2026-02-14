@@ -89,6 +89,9 @@ const messages: Record<Locale, Record<string, string>> = {
     "source.appIcon": "App icon",
     "source.loadFailed": "Failed to load shareable sources.",
     "source.shareFailed": "Failed to confirm selected source.",
+    "source.screenPermissionHint": "Screen Recording permission is not granted. Open System Settings > Privacy & Security > Screen & System Audio, allow CursorLens, then relaunch the app.",
+    "source.openSystemSettings": "Open System Settings",
+    "source.openSystemSettingsFailed": "Failed to open System Settings.",
     "source.retry": "Retry",
 
     "playback.play": "Play",
@@ -408,6 +411,9 @@ const messages: Record<Locale, Record<string, string>> = {
     "source.appIcon": "应用图标",
     "source.loadFailed": "加载可共享来源失败。",
     "source.shareFailed": "确认共享所选来源失败。",
+    "source.screenPermissionHint": "未授予屏幕录制权限。请打开“系统设置 > 隐私与安全性 > 屏幕与系统音频录制”，允许 CursorLens，然后重启应用。",
+    "source.openSystemSettings": "打开系统设置",
+    "source.openSystemSettingsFailed": "打开系统设置失败。",
     "source.retry": "重试",
 
     "playback.play": "播放",

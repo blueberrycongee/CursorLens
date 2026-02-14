@@ -1,4 +1,4 @@
-import { ipcMain, desktopCapturer, BrowserWindow, shell, app, dialog, screen } from 'electron'
+import { ipcMain, desktopCapturer, BrowserWindow, shell, app, dialog, screen, systemPreferences } from 'electron'
 
 import fs from 'node:fs/promises'
 import path from 'node:path'
@@ -102,6 +102,40 @@ type StartVideoAnalysisOptions = {
 
 const SOURCE_PERMISSION_GUIDANCE =
   'Screen Recording permission is not granted. Open System Settings > Privacy & Security > Screen & System Audio, allow CursorLens, then relaunch the app.'
+const SCREEN_CAPTURE_SETTINGS_URL = 'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture'
+
+type ScreenCaptureAccessStatus = 'granted' | 'denied' | 'restricted' | 'not-determined' | 'unknown'
+
+function normalizeScreenCaptureAccessStatus(input: unknown): ScreenCaptureAccessStatus {
+  const normalized = String(input ?? '').trim().toLowerCase()
+  switch (normalized) {
+    case 'granted':
+      return 'granted'
+    case 'denied':
+      return 'denied'
+    case 'restricted':
+      return 'restricted'
+    case 'not-determined':
+      return 'not-determined'
+    default:
+      return 'unknown'
+  }
+}
+
+function getScreenCaptureAccessStatus(): ScreenCaptureAccessStatus {
+  if (process.platform !== 'darwin') {
+    return 'granted'
+  }
+  try {
+    return normalizeScreenCaptureAccessStatus(systemPreferences.getMediaAccessStatus('screen'))
+  } catch {
+    return 'unknown'
+  }
+}
+
+function isScreenCaptureAccessBlocked(status: ScreenCaptureAccessStatus): boolean {
+  return status === 'denied' || status === 'restricted'
+}
 
 function normalizeGetSourcesOptions(input?: Partial<Electron.SourcesOptions>): Electron.SourcesOptions {
   const requestedTypes = Array.isArray(input?.types) ? input?.types : []
@@ -737,6 +771,11 @@ export function registerIpcHandlers(
 
   ipcMain.handle('get-sources', async (_, opts) => {
     const normalized = normalizeGetSourcesOptions(opts)
+    const accessStatus = getScreenCaptureAccessStatus()
+    if (isScreenCaptureAccessBlocked(accessStatus)) {
+      throw new Error(`${SOURCE_PERMISSION_GUIDANCE} (status: ${accessStatus})`)
+    }
+
     try {
       const sources = await getSourcesWithFallback(normalized)
       return sources.map(source => ({
@@ -747,9 +786,36 @@ export function registerIpcHandlers(
         appIcon: source.appIcon ? source.appIcon.toDataURL() : null
       }))
     } catch (error) {
+      const latestStatus = getScreenCaptureAccessStatus()
+      if (isScreenCaptureAccessBlocked(latestStatus)) {
+        throw new Error(`${SOURCE_PERMISSION_GUIDANCE} (status: ${latestStatus})`)
+      }
       const message = formatGetSourcesError(error)
       console.error('Failed to get sources:', error)
       throw new Error(message)
+    }
+  })
+
+  ipcMain.handle('get-screen-capture-access-status', () => {
+    const status = getScreenCaptureAccessStatus()
+    return {
+      status,
+      canOpenSystemSettings: process.platform === 'darwin',
+    }
+  })
+
+  ipcMain.handle('open-screen-capture-settings', async () => {
+    if (process.platform !== 'darwin') {
+      return { success: false, message: 'Opening Screen Capture settings is only supported on macOS.' }
+    }
+    try {
+      await shell.openExternal(SCREEN_CAPTURE_SETTINGS_URL)
+      return { success: true }
+    } catch (error) {
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : String(error),
+      }
     }
   })
 

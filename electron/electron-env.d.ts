@@ -80,6 +80,11 @@ type VideoAnalysisMetadata = {
 interface Window {
   electronAPI: {
     getSources: (opts: Electron.SourcesOptions) => Promise<ProcessedDesktopSource[]>
+    getScreenCaptureAccessStatus: () => Promise<{
+      status: 'granted' | 'denied' | 'restricted' | 'not-determined' | 'unknown'
+      canOpenSystemSettings: boolean
+    }>
+    openScreenCaptureSettings: () => Promise<{ success: boolean; message?: string }>
     switchToEditor: () => Promise<void>
     openSourceSelector: () => Promise<void>
     selectSource: (source: any) => Promise<any>
