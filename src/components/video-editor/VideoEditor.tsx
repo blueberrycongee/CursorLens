@@ -29,7 +29,7 @@ import {
   type FigureData,
 } from "./types";
 import { VideoExporter, GifExporter, type ExportProgress, type ExportQuality, type ExportSettings, type ExportFormat, type GifFrameRate, type GifSizePreset, GIF_SIZE_PRESETS, calculateOutputDimensions } from "@/lib/exporter";
-import { type AspectRatio, getAspectRatioValue } from "@/utils/aspectRatioUtils";
+import { ASPECT_RATIOS, type AspectRatio, getAspectRatioValue } from "@/utils/aspectRatioUtils";
 import { getAssetPath } from "@/lib/assetPath";
 import { useI18n } from "@/i18n";
 import { DEFAULT_CURSOR_STYLE, type CursorStyleConfig, type CursorTrack } from "@/lib/cursor";
@@ -61,6 +61,91 @@ function resolveExportFrameRate(sourceFrameRate: number | undefined, quality: Ex
     return sourceRate;
   }
   return Math.min(sourceRate, 60);
+}
+
+function normalizeSelectedAspectRatios(selected: AspectRatio[], fallback: AspectRatio): AspectRatio[] {
+  const selectedSet = new Set(selected);
+  const ordered = ASPECT_RATIOS.filter((ratio) => selectedSet.has(ratio));
+  return ordered.length > 0 ? ordered : [fallback];
+}
+
+function calculateMp4ExportPlan(
+  quality: ExportQuality,
+  aspectRatioValue: number,
+  sourceWidth: number,
+  sourceHeight: number,
+): { width: number; height: number; bitrate: number } {
+  let exportWidth: number;
+  let exportHeight: number;
+  let bitrate: number;
+
+  if (quality === 'source') {
+    exportWidth = sourceWidth;
+    exportHeight = sourceHeight;
+
+    if (aspectRatioValue === 1) {
+      const baseDimension = Math.floor(Math.min(sourceWidth, sourceHeight) / 2) * 2;
+      exportWidth = baseDimension;
+      exportHeight = baseDimension;
+    } else if (aspectRatioValue > 1) {
+      const baseWidth = Math.floor(sourceWidth / 2) * 2;
+      let found = false;
+      for (let w = baseWidth; w >= 100 && !found; w -= 2) {
+        const h = Math.round(w / aspectRatioValue);
+        if (h % 2 === 0 && Math.abs((w / h) - aspectRatioValue) < 0.0001) {
+          exportWidth = w;
+          exportHeight = h;
+          found = true;
+        }
+      }
+      if (!found) {
+        exportWidth = baseWidth;
+        exportHeight = Math.floor((baseWidth / aspectRatioValue) / 2) * 2;
+      }
+    } else {
+      const baseHeight = Math.floor(sourceHeight / 2) * 2;
+      let found = false;
+      for (let h = baseHeight; h >= 100 && !found; h -= 2) {
+        const w = Math.round(h * aspectRatioValue);
+        if (w % 2 === 0 && Math.abs((w / h) - aspectRatioValue) < 0.0001) {
+          exportWidth = w;
+          exportHeight = h;
+          found = true;
+        }
+      }
+      if (!found) {
+        exportHeight = baseHeight;
+        exportWidth = Math.floor((baseHeight * aspectRatioValue) / 2) * 2;
+      }
+    }
+
+    const totalPixels = exportWidth * exportHeight;
+    bitrate = 30_000_000;
+    if (totalPixels > 1920 * 1080 && totalPixels <= 2560 * 1440) {
+      bitrate = 50_000_000;
+    } else if (totalPixels > 2560 * 1440) {
+      bitrate = 80_000_000;
+    }
+  } else {
+    const targetHeight = quality === 'medium' ? 720 : 1080;
+    exportHeight = Math.floor(targetHeight / 2) * 2;
+    exportWidth = Math.floor((exportHeight * aspectRatioValue) / 2) * 2;
+
+    const totalPixels = exportWidth * exportHeight;
+    if (totalPixels <= 1280 * 720) {
+      bitrate = 10_000_000;
+    } else if (totalPixels <= 1920 * 1080) {
+      bitrate = 20_000_000;
+    } else {
+      bitrate = 30_000_000;
+    }
+  }
+
+  return {
+    width: exportWidth,
+    height: exportHeight,
+    bitrate,
+  };
 }
 
 function normalizeCursorTrack(input: unknown): CursorTrack | null {
@@ -205,6 +290,12 @@ export default function VideoEditor() {
   const [exportError, setExportError] = useState<string | null>(null);
   const [showExportDialog, setShowExportDialog] = useState(false);
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('16:9');
+  const [exportAspectRatios, setExportAspectRatios] = useState<AspectRatio[]>(['16:9']);
+  const [activeBatchExport, setActiveBatchExport] = useState<{
+    current: number;
+    total: number;
+    aspectRatio: AspectRatio;
+  } | null>(null);
   const [exportQuality, setExportQuality] = useState<ExportQuality>('source');
   const [exportFormat, setExportFormat] = useState<ExportFormat>('mp4');
   const [gifFrameRate, setGifFrameRate] = useState<GifFrameRate>(15);
@@ -224,7 +315,9 @@ export default function VideoEditor() {
   const nextTrimIdRef = useRef(1);
   const nextAnnotationIdRef = useRef(1);
   const nextAnnotationZIndexRef = useRef(1); // Track z-index for stacking order
-  const exporterRef = useRef<VideoExporter | null>(null);
+  const exporterRef = useRef<{ cancel: () => void } | null>(null);
+  const exportCancelledRef = useRef(false);
+  const previousAspectRatioRef = useRef<AspectRatio>('16:9');
   const autoEditInitializedRef = useRef(false);
 
   // Helper to convert file path to proper file:// URL
@@ -723,6 +816,17 @@ export default function VideoEditor() {
   }, [selectedAnnotationId, annotationRegions]);
 
   useEffect(() => {
+    const previousAspectRatio = previousAspectRatioRef.current;
+    setExportAspectRatios((current) => {
+      if (current.length === 1 && current[0] === previousAspectRatio) {
+        return [aspectRatio];
+      }
+      return current;
+    });
+    previousAspectRatioRef.current = aspectRatio;
+  }, [aspectRatio]);
+
+  useEffect(() => {
     if (loading) return;
     if (autoEditInitializedRef.current) return;
     if (zoomRegions.length > 0) {
@@ -754,25 +858,26 @@ export default function VideoEditor() {
     setIsExporting(true);
     setExportProgress(null);
     setExportError(null);
+    setActiveBatchExport(null);
+    exportCancelledRef.current = false;
+
+    let shouldResumePlayback = false;
 
     try {
-      const wasPlaying = isPlaying;
-      if (wasPlaying) {
+      if (isPlaying) {
         videoPlaybackRef.current?.pause();
+        shouldResumePlayback = true;
       }
 
-      const aspectRatioValue = getAspectRatioValue(aspectRatio);
       const sourceWidth = video.videoWidth || 1920;
       const sourceHeight = video.videoHeight || 1080;
 
-      // Get preview CONTAINER dimensions for scaling
       const playbackRef = videoPlaybackRef.current;
       const containerElement = playbackRef?.containerRef?.current;
       const previewWidth = containerElement?.clientWidth || 1920;
       const previewHeight = containerElement?.clientHeight || 1080;
 
       if (settings.format === 'gif' && settings.gifConfig) {
-        // GIF Export
         const gifExporter = new GifExporter({
           videoUrl: videoPath,
           width: settings.gifConfig.width,
@@ -802,10 +907,14 @@ export default function VideoEditor() {
           },
         });
 
-        exporterRef.current = gifExporter as unknown as VideoExporter;
+        exporterRef.current = gifExporter;
         const result = await gifExporter.export();
+        const cancelled = exportCancelledRef.current
+          || (typeof result.error === 'string' && result.error.toLowerCase().includes('cancel'));
 
-        if (result.success && result.blob) {
+        if (cancelled) {
+          toast.info(t('editor.exportCancelled'));
+        } else if (result.success && result.blob) {
           const arrayBuffer = await result.blob.arrayBuffer();
           const timestamp = Date.now();
           const fileName = `export-${timestamp}.gif`;
@@ -825,140 +934,118 @@ export default function VideoEditor() {
           toast.error(result.error || t('editor.gifExportFailed'));
         }
       } else {
-        // MP4 Export
         const quality = settings.quality || exportQuality;
-        let exportWidth: number;
-        let exportHeight: number;
-        let bitrate: number;
+        const ratiosToExport = normalizeSelectedAspectRatios(exportAspectRatios, aspectRatio);
 
-        if (quality === 'source') {
-          // Use source resolution
-          exportWidth = sourceWidth;
-          exportHeight = sourceHeight;
-
-          if (aspectRatioValue === 1) {
-            // Square (1:1): use smaller dimension to avoid codec limits
-            const baseDimension = Math.floor(Math.min(sourceWidth, sourceHeight) / 2) * 2;
-            exportWidth = baseDimension;
-            exportHeight = baseDimension;
-          } else if (aspectRatioValue > 1) {
-            // Landscape: find largest even dimensions that exactly match aspect ratio
-            const baseWidth = Math.floor(sourceWidth / 2) * 2;
-            let found = false;
-            for (let w = baseWidth; w >= 100 && !found; w -= 2) {
-              const h = Math.round(w / aspectRatioValue);
-              if (h % 2 === 0 && Math.abs((w / h) - aspectRatioValue) < 0.0001) {
-                exportWidth = w;
-                exportHeight = h;
-                found = true;
-              }
-            }
-            if (!found) {
-              exportWidth = baseWidth;
-              exportHeight = Math.floor((baseWidth / aspectRatioValue) / 2) * 2;
-            }
-          } else {
-            // Portrait: find largest even dimensions that exactly match aspect ratio
-            const baseHeight = Math.floor(sourceHeight / 2) * 2;
-            let found = false;
-            for (let h = baseHeight; h >= 100 && !found; h -= 2) {
-              const w = Math.round(h * aspectRatioValue);
-              if (w % 2 === 0 && Math.abs((w / h) - aspectRatioValue) < 0.0001) {
-                exportWidth = w;
-                exportHeight = h;
-                found = true;
-              }
-            }
-            if (!found) {
-              exportHeight = baseHeight;
-              exportWidth = Math.floor((baseHeight * aspectRatioValue) / 2) * 2;
-            }
+        let exportDirectoryPath: string | null = null;
+        if (ratiosToExport.length > 1) {
+          const pickDirectoryResult = await window.electronAPI.pickExportDirectory(locale);
+          if (pickDirectoryResult.cancelled || !pickDirectoryResult.path) {
+            toast.info(t('editor.exportCancelled'));
+            return;
           }
-
-          // Calculate visually lossless bitrate matching screen recording optimization
-          const totalPixels = exportWidth * exportHeight;
-          bitrate = 30_000_000;
-          if (totalPixels > 1920 * 1080 && totalPixels <= 2560 * 1440) {
-            bitrate = 50_000_000;
-          } else if (totalPixels > 2560 * 1440) {
-            bitrate = 80_000_000;
-          }
-        } else {
-          // Use quality-based target resolution
-          const targetHeight = quality === 'medium' ? 720 : 1080;
-
-          // Calculate dimensions maintaining aspect ratio
-          exportHeight = Math.floor(targetHeight / 2) * 2;
-          exportWidth = Math.floor((exportHeight * aspectRatioValue) / 2) * 2;
-
-          // Adjust bitrate for lower resolutions
-          const totalPixels = exportWidth * exportHeight;
-          if (totalPixels <= 1280 * 720) {
-            bitrate = 10_000_000;
-          } else if (totalPixels <= 1920 * 1080) {
-            bitrate = 20_000_000;
-          } else {
-            bitrate = 30_000_000;
-          }
+          exportDirectoryPath = pickDirectoryResult.path;
         }
 
-        const exportFrameRate = resolveExportFrameRate(sourceFrameRate, quality);
-        const exporter = new VideoExporter({
-          videoUrl: videoPath,
-          width: exportWidth,
-          height: exportHeight,
-          frameRate: exportFrameRate,
-          bitrate,
-          codec: 'avc1.640033',
-          wallpaper,
-          zoomRegions,
-          trimRegions,
-          showShadow: shadowIntensity > 0,
-          shadowIntensity,
-          showBlur,
-          motionBlurEnabled,
-          borderRadius,
-          padding,
-          cropRegion,
-          annotationRegions,
-          previewWidth,
-          previewHeight,
-          cursorTrack,
-          cursorStyle,
-          hideCapturedSystemCursor,
-          audioEnabled: sourceHasAudio && audioEnabled,
-          audioGain,
-          onProgress: (progress: ExportProgress) => {
-            setExportProgress(progress);
-          },
-        });
+        const timestamp = Date.now();
+        let completedCount = 0;
+        let aborted = false;
 
-        exporterRef.current = exporter;
-        const result = await exporter.export();
+        for (let index = 0; index < ratiosToExport.length; index += 1) {
+          const currentRatio = ratiosToExport[index];
+          setActiveBatchExport({
+            current: index + 1,
+            total: ratiosToExport.length,
+            aspectRatio: currentRatio,
+          });
 
-        if (result.success && result.blob) {
+          const { width: exportWidth, height: exportHeight, bitrate } = calculateMp4ExportPlan(
+            quality,
+            getAspectRatioValue(currentRatio),
+            sourceWidth,
+            sourceHeight,
+          );
+
+          const exportFrameRate = resolveExportFrameRate(sourceFrameRate, quality);
+          const exporter = new VideoExporter({
+            videoUrl: videoPath,
+            width: exportWidth,
+            height: exportHeight,
+            frameRate: exportFrameRate,
+            bitrate,
+            codec: 'avc1.640033',
+            wallpaper,
+            zoomRegions,
+            trimRegions,
+            showShadow: shadowIntensity > 0,
+            shadowIntensity,
+            showBlur,
+            motionBlurEnabled,
+            borderRadius,
+            padding,
+            cropRegion,
+            annotationRegions,
+            previewWidth,
+            previewHeight,
+            cursorTrack,
+            cursorStyle,
+            hideCapturedSystemCursor,
+            audioEnabled: sourceHasAudio && audioEnabled,
+            audioGain,
+            onProgress: (progress: ExportProgress) => {
+              setExportProgress(progress);
+            },
+          });
+
+          exporterRef.current = exporter;
+          const result = await exporter.export();
+          const cancelled = exportCancelledRef.current
+            || (typeof result.error === 'string' && result.error.toLowerCase().includes('cancel'));
+
+          if (cancelled) {
+            toast.info(t('editor.exportCancelled'));
+            aborted = true;
+            break;
+          }
+
+          if (!(result.success && result.blob)) {
+            setExportError(result.error || t('editor.exportFailed'));
+            toast.error(result.error || t('editor.exportFailed'));
+            aborted = true;
+            break;
+          }
+
           const arrayBuffer = await result.blob.arrayBuffer();
-          const timestamp = Date.now();
-          const fileName = `export-${timestamp}.mp4`;
+          const ratioSuffix = ratiosToExport.length > 1 ? `-${currentRatio.replace(':', 'x')}` : '';
+          const fileName = `export-${timestamp}${ratioSuffix}.mp4`;
 
-          const saveResult = await window.electronAPI.saveExportedVideo(arrayBuffer, fileName, locale);
+          const saveResult = await window.electronAPI.saveExportedVideo(
+            arrayBuffer,
+            fileName,
+            locale,
+            exportDirectoryPath ? { directoryPath: exportDirectoryPath } : undefined,
+          );
 
           if (saveResult.cancelled) {
             toast.info(t('editor.exportCancelled'));
+            aborted = true;
+            break;
           } else if (saveResult.success) {
-            toast.success(t('editor.videoExportSuccess', { path: saveResult.path ?? '' }));
+            completedCount += 1;
+            if (ratiosToExport.length === 1) {
+              toast.success(t('editor.videoExportSuccess', { path: saveResult.path ?? '' }));
+            }
           } else {
             setExportError(saveResult.message || t('editor.saveVideoFailed'));
             toast.error(saveResult.message || t('editor.saveVideoFailed'));
+            aborted = true;
+            break;
           }
-        } else {
-          setExportError(result.error || t('editor.exportFailed'));
-          toast.error(result.error || t('editor.exportFailed'));
         }
-      }
 
-      if (wasPlaying) {
-        videoPlaybackRef.current?.play();
+        if (!aborted && completedCount > 1 && exportDirectoryPath) {
+          toast.success(t('editor.batchVideoExportSuccess', { count: completedCount, path: exportDirectoryPath }));
+        }
       }
     } catch (error) {
       console.error('Export error:', error);
@@ -966,14 +1053,17 @@ export default function VideoEditor() {
       setExportError(errorMessage);
       toast.error(t('editor.exportError', { message: errorMessage }));
     } finally {
+      if (shouldResumePlayback) {
+        videoPlaybackRef.current?.play();
+      }
       setIsExporting(false);
       exporterRef.current = null;
-      // Reset dialog state to ensure it can be opened again on next export
-      // This fixes the bug where second export doesn't show save dialog
+      exportCancelledRef.current = false;
+      setActiveBatchExport(null);
       setShowExportDialog(false);
       setExportProgress(null);
     }
-  }, [videoPath, wallpaper, zoomRegions, trimRegions, shadowIntensity, showBlur, motionBlurEnabled, borderRadius, padding, cropRegion, annotationRegions, isPlaying, aspectRatio, exportQuality, locale, sourceFrameRate, sourceHasAudio, audioEnabled, audioGain, cursorTrack, cursorStyle, hideCapturedSystemCursor, t]);
+  }, [videoPath, wallpaper, zoomRegions, trimRegions, shadowIntensity, showBlur, motionBlurEnabled, borderRadius, padding, cropRegion, annotationRegions, isPlaying, exportAspectRatios, aspectRatio, exportQuality, locale, sourceFrameRate, sourceHasAudio, audioEnabled, audioGain, cursorTrack, cursorStyle, hideCapturedSystemCursor, t]);
 
   const handleOpenExportDialog = useCallback(() => {
     if (!videoPath) {
@@ -1013,12 +1103,10 @@ export default function VideoEditor() {
 
   const handleCancelExport = useCallback(() => {
     if (exporterRef.current) {
+      exportCancelledRef.current = true;
       exporterRef.current.cancel();
       toast.info(t('editor.exportCancelled'));
       setShowExportDialog(false);
-      setIsExporting(false);
-      setExportProgress(null);
-      setExportError(null);
     }
   }, [t]);
 
@@ -1175,6 +1263,8 @@ export default function VideoEditor() {
           onExportQualityChange={setExportQuality}
           exportFormat={exportFormat}
           onExportFormatChange={setExportFormat}
+          exportAspectRatios={exportAspectRatios}
+          onExportAspectRatiosChange={setExportAspectRatios}
           gifFrameRate={gifFrameRate}
           onGifFrameRateChange={setGifFrameRate}
           gifLoop={gifLoop}
@@ -1221,6 +1311,7 @@ export default function VideoEditor() {
         error={exportError}
         onCancel={handleCancelExport}
         exportFormat={exportFormat}
+        batchProgress={activeBatchExport}
       />
     </div>
   );

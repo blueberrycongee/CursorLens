@@ -12,6 +12,11 @@ interface ExportDialogProps {
   error: string | null;
   onCancel?: () => void;
   exportFormat?: 'mp4' | 'gif';
+  batchProgress?: {
+    current: number;
+    total: number;
+    aspectRatio: string;
+  } | null;
 }
 
 export function ExportDialog({
@@ -22,6 +27,7 @@ export function ExportDialog({
   error,
   onCancel,
   exportFormat = 'mp4',
+  batchProgress = null,
 }: ExportDialogProps) {
   const { t } = useI18n();
   const [showSuccess, setShowSuccess] = useState(false);
@@ -195,6 +201,16 @@ export function ExportDialog({
 
         {isExporting && progress && (
           <div className="space-y-6">
+            {batchProgress && batchProgress.total > 1 && (
+              <div className="rounded-xl border border-[#34B27B]/30 bg-[#34B27B]/10 p-3">
+                <div className="text-[10px] uppercase tracking-wider text-[#34B27B]">
+                  {t('export.batchProgress', { current: batchProgress.current, total: batchProgress.total })}
+                </div>
+                <div className="mt-1 text-sm font-medium text-slate-200">
+                  {batchProgress.aspectRatio}
+                </div>
+              </div>
+            )}
             <div className="space-y-2">
               <div className="flex justify-between text-xs font-medium text-slate-400 uppercase tracking-wider">
                   <span>

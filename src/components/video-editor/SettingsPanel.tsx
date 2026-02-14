@@ -13,7 +13,7 @@ import type { ZoomDepth, CropRegion, AnnotationRegion, AnnotationType, FigureDat
 import { CropControl } from "./CropControl";
 import { KeyboardShortcutsHelp } from "./KeyboardShortcutsHelp";
 import { AnnotationSettingsPanel } from "./AnnotationSettingsPanel";
-import { type AspectRatio } from "@/utils/aspectRatioUtils";
+import { ASPECT_RATIOS, type AspectRatio } from "@/utils/aspectRatioUtils";
 import type { ExportQuality, ExportFormat, GifFrameRate, GifSizePreset } from "@/lib/exporter";
 import { GIF_FRAME_RATES, GIF_SIZE_PRESETS } from "@/lib/exporter";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
@@ -77,6 +77,8 @@ interface SettingsPanelProps {
   // Export format settings
   exportFormat?: ExportFormat;
   onExportFormatChange?: (format: ExportFormat) => void;
+  exportAspectRatios?: AspectRatio[];
+  onExportAspectRatiosChange?: (ratios: AspectRatio[]) => void;
   gifFrameRate?: GifFrameRate;
   onGifFrameRateChange?: (rate: GifFrameRate) => void;
   gifLoop?: boolean;
@@ -156,6 +158,8 @@ export function SettingsPanel({
   onExportQualityChange,
   exportFormat = 'mp4',
   onExportFormatChange,
+  exportAspectRatios = [],
+  onExportAspectRatiosChange,
   gifFrameRate = 15,
   onGifFrameRateChange,
   gifLoop = true,
@@ -211,6 +215,7 @@ export function SettingsPanel({
   const [selectedColor, setSelectedColor] = useState('#ADADAD');
   const [gradient, setGradient] = useState<string>(GRADIENTS[0]);
   const [showCropDropdown, setShowCropDropdown] = useState(false);
+  const activeExportAspectRatios = exportAspectRatios.length > 0 ? exportAspectRatios : [aspectRatio];
 
   const zoomEnabled = Boolean(selectedZoomDepth);
   const trimEnabled = Boolean(selectedTrimId);
@@ -225,6 +230,25 @@ export function SettingsPanel({
     if (selectedTrimId && onTrimDelete) {
       onTrimDelete(selectedTrimId);
     }
+  };
+
+  const toggleExportAspectRatio = (ratio: AspectRatio) => {
+    if (!onExportAspectRatiosChange) return;
+    const currentlySelected = activeExportAspectRatios.includes(ratio);
+    if (currentlySelected && activeExportAspectRatios.length === 1) {
+      return;
+    }
+
+    const nextSelection = new Set(activeExportAspectRatios);
+    if (currentlySelected) {
+      nextSelection.delete(ratio);
+    } else {
+      nextSelection.add(ratio);
+    }
+
+    const ordered = ASPECT_RATIOS.filter((candidate) => nextSelection.has(candidate));
+    if (ordered.length === 0) return;
+    onExportAspectRatiosChange(ordered);
   };
 
   const updateCursorStyle = (patch: Partial<CursorStyleConfig>) => {
@@ -940,34 +964,73 @@ export function SettingsPanel({
         </div>
 
         {exportFormat === 'mp4' && (
-          <div className="mb-3 bg-white/5 border border-white/5 p-0.5 w-full grid grid-cols-3 h-7 rounded-lg">
-            <button
-              onClick={() => onExportQualityChange?.('medium')}
-              className={cn(
-                "rounded-md transition-all text-[10px] font-medium",
-                exportQuality === 'medium' ? "bg-white text-black" : "text-slate-400 hover:text-slate-200"
-              )}
-            >
-              {t("settings.quality.low")}
-            </button>
-            <button
-              onClick={() => onExportQualityChange?.('good')}
-              className={cn(
-                "rounded-md transition-all text-[10px] font-medium",
-                exportQuality === 'good' ? "bg-white text-black" : "text-slate-400 hover:text-slate-200"
-              )}
-            >
-              {t("settings.quality.medium")}
-            </button>
-            <button
-              onClick={() => onExportQualityChange?.('source')}
-              className={cn(
-                "rounded-md transition-all text-[10px] font-medium",
-                exportQuality === 'source' ? "bg-white text-black" : "text-slate-400 hover:text-slate-200"
-              )}
-            >
-              {t("settings.quality.high")}
-            </button>
+          <div className="mb-3 space-y-2">
+            <div className="bg-white/5 border border-white/5 p-0.5 w-full grid grid-cols-3 h-7 rounded-lg">
+              <button
+                onClick={() => onExportQualityChange?.('medium')}
+                className={cn(
+                  "rounded-md transition-all text-[10px] font-medium",
+                  exportQuality === 'medium' ? "bg-white text-black" : "text-slate-400 hover:text-slate-200"
+                )}
+              >
+                {t("settings.quality.low")}
+              </button>
+              <button
+                onClick={() => onExportQualityChange?.('good')}
+                className={cn(
+                  "rounded-md transition-all text-[10px] font-medium",
+                  exportQuality === 'good' ? "bg-white text-black" : "text-slate-400 hover:text-slate-200"
+                )}
+              >
+                {t("settings.quality.medium")}
+              </button>
+              <button
+                onClick={() => onExportQualityChange?.('source')}
+                className={cn(
+                  "rounded-md transition-all text-[10px] font-medium",
+                  exportQuality === 'source' ? "bg-white text-black" : "text-slate-400 hover:text-slate-200"
+                )}
+              >
+                {t("settings.quality.high")}
+              </button>
+            </div>
+
+            <div className="rounded-lg border border-white/10 bg-white/5 p-2">
+              <div className="mb-2 flex items-center justify-between text-[10px]">
+                <span className="uppercase tracking-wide text-slate-400">
+                  {t("settings.exportAspectRatios")}
+                </span>
+                <span className="text-slate-500">
+                  {t("settings.exportAspectRatioCount", { count: activeExportAspectRatios.length })}
+                </span>
+              </div>
+              <div className="grid grid-cols-4 gap-1">
+                {ASPECT_RATIOS.map((ratio) => {
+                  const isSelected = activeExportAspectRatios.includes(ratio);
+                  const isLocked = isSelected && activeExportAspectRatios.length === 1;
+                  return (
+                    <button
+                      key={ratio}
+                      type="button"
+                      onClick={() => toggleExportAspectRatio(ratio)}
+                      disabled={isLocked}
+                      className={cn(
+                        "h-6 rounded-md border text-[10px] font-medium transition-all",
+                        isSelected
+                          ? "border-[#34B27B]/70 bg-[#34B27B]/20 text-white"
+                          : "border-white/10 text-slate-400 hover:border-[#34B27B]/50 hover:text-slate-200",
+                        isLocked && "cursor-not-allowed opacity-70"
+                      )}
+                    >
+                      {ratio}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="mt-2 text-[10px] leading-snug text-slate-500">
+                {t("settings.exportAspectRatioHint")}
+              </p>
+            </div>
           </div>
         )}
 
