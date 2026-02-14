@@ -100,6 +100,8 @@ interface Window {
     }) => Promise<{ success: boolean }>
     stopCursorTracking: () => Promise<{ success: boolean; track?: CursorTrackMetadata }>
     onStopRecordingFromTray: (callback: () => void) => () => void
+    setStopRecordingShortcut: (accelerator: string) => Promise<{ success: boolean; accelerator: string; message?: string }>
+    getStopRecordingShortcut: () => Promise<{ success: boolean; accelerator: string; message?: string }>
     openExternalUrl: (url: string) => Promise<{ success: boolean; error?: string }>
     saveExportedVideo: (videoData: ArrayBuffer, fileName: string, locale?: string) => Promise<{ success: boolean; path?: string; message?: string; cancelled?: boolean }>
     openVideoFilePicker: (locale?: string) => Promise<{ success: boolean; path?: string; cancelled?: boolean }>

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Tray, Menu, nativeImage, session, desktopCapturer } from 'electron'
+import { app, BrowserWindow, Tray, Menu, nativeImage, session, desktopCapturer, globalShortcut, ipcMain } from 'electron'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import fs from 'node:fs/promises'
@@ -46,6 +46,9 @@ let sourceSelectorWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let selectedSourceName = ''
 let selectedDesktopSourceId: string | null = null
+let recordingActive = false
+const DEFAULT_STOP_RECORDING_SHORTCUT = 'CommandOrControl+Shift+2'
+let stopRecordingShortcut = DEFAULT_STOP_RECORDING_SHORTCUT
 let shutdownInProgress = false
 let shutdownFinished = false
 let ipcRuntime: { shutdown: () => Promise<void> } | null = null
@@ -103,11 +106,7 @@ function updateTrayMenu(recording: boolean = false) {
     ? [
         {
           label: trayText(locale, 'stop'),
-          click: () => {
-            if (mainWindow && !mainWindow.isDestroyed()) {
-              mainWindow.webContents.send("stop-recording-from-tray");
-            }
-          },
+          click: () => emitStopRecordingRequest(),
         },
       ]
     : [
@@ -131,6 +130,52 @@ function updateTrayMenu(recording: boolean = false) {
   tray.setImage(trayIcon);
   tray.setToolTip(trayToolTip);
   tray.setContextMenu(Menu.buildFromTemplate(menuTemplate));
+}
+
+function emitStopRecordingRequest(): void {
+  if (!recordingActive) return
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  mainWindow.webContents.send('stop-recording-from-tray')
+}
+
+function registerStopRecordingShortcut(accelerator: string): { success: boolean; accelerator: string; message?: string } {
+  const nextAccelerator = String(accelerator || '').trim()
+  if (!nextAccelerator) {
+    return {
+      success: false,
+      accelerator: stopRecordingShortcut,
+      message: 'Shortcut cannot be empty.',
+    }
+  }
+
+  const previousShortcut = stopRecordingShortcut
+  try {
+    if (previousShortcut) {
+      globalShortcut.unregister(previousShortcut)
+    }
+  } catch {
+    // ignore unregister errors
+  }
+
+  const didRegister = globalShortcut.register(nextAccelerator, () => {
+    emitStopRecordingRequest()
+  })
+
+  if (!didRegister) {
+    if (previousShortcut) {
+      globalShortcut.register(previousShortcut, () => {
+        emitStopRecordingRequest()
+      })
+    }
+    return {
+      success: false,
+      accelerator: previousShortcut,
+      message: 'Shortcut is unavailable. Try a different key combination.',
+    }
+  }
+
+  stopRecordingShortcut = nextAccelerator
+  return { success: true, accelerator: stopRecordingShortcut }
 }
 
 function createEditorWindowWrapper() {
@@ -161,6 +206,10 @@ app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) {
     createWindow()
   }
+})
+
+app.on('will-quit', () => {
+  globalShortcut.unregisterAll()
 })
 
 app.on('before-quit', (event) => {
@@ -226,13 +275,19 @@ app.whenReady().then(async () => {
     }
   })
 
-    // Listen for HUD overlay quit event (macOS only)
-    const { ipcMain } = await import('electron');
-    ipcMain.on('hud-overlay-close', () => {
-      app.quit();
-    });
-    createTray()
-    updateTrayMenu()
+  // Listen for HUD overlay quit event (macOS only)
+  ipcMain.on('hud-overlay-close', () => {
+    app.quit()
+  })
+  ipcMain.handle('set-stop-recording-shortcut', (_, accelerator: string) => {
+    return registerStopRecordingShortcut(accelerator)
+  })
+  ipcMain.handle('get-stop-recording-shortcut', () => {
+    return { success: true, accelerator: stopRecordingShortcut }
+  })
+  createTray()
+  updateTrayMenu()
+  registerStopRecordingShortcut(stopRecordingShortcut)
   // Ensure recordings directory exists
   await ensureRecordingsDir()
   scheduleRecordingsCleanup({
@@ -246,11 +301,12 @@ app.whenReady().then(async () => {
     () => mainWindow,
     () => sourceSelectorWindow,
     (recording: boolean, sourceName: string) => {
+      recordingActive = recording
       selectedSourceName = sourceName
-      if (!tray) createTray();
-      updateTrayMenu(recording);
+      if (!tray) createTray()
+      updateTrayMenu(recording)
       if (!recording) {
-        if (mainWindow) mainWindow.restore();
+        if (mainWindow) mainWindow.restore()
       }
     },
     (source) => {

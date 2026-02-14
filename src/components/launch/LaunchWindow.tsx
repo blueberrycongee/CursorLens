@@ -9,17 +9,77 @@ import { MdMonitor } from "react-icons/md";
 import { RxDragHandleDots2 } from "react-icons/rx";
 import { FaFolderMinus } from "react-icons/fa6";
 import { FiCamera, FiMinus, FiMousePointer, FiX } from "react-icons/fi";
-import { SlidersHorizontal, Timer } from "lucide-react";
+import { EyeOff, Keyboard, RotateCcw, SlidersHorizontal, Timer } from "lucide-react";
 import { useI18n } from "@/i18n";
+import { toast } from "sonner";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
 const CAMERA_SHAPE_CYCLE: CameraOverlayShape[] = ["rounded", "square", "circle"];
 const CAPTURE_PROFILE_CYCLE: CaptureProfile[] = ["balanced", "quality", "ultra"];
 const RECORD_COUNTDOWN_CYCLE = [3, 5, 8] as const;
+const STOP_SHORTCUT_STORAGE_KEY = "openscreen.stopRecordingShortcut";
+const DEFAULT_STOP_RECORDING_SHORTCUT = "CommandOrControl+Shift+2";
+const AUTO_HIDE_HUD_ON_RECORD_STORAGE_KEY = "openscreen.autoHideHudOnRecord";
 type RecordCountdownSeconds = (typeof RECORD_COUNTDOWN_CYCLE)[number];
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
+}
+
+function isModifierKey(key: string): boolean {
+  return key === "Meta" || key === "Control" || key === "Alt" || key === "Shift";
+}
+
+function resolveAcceleratorKey(event: KeyboardEvent): string | null {
+  const key = event.key;
+  if (!key) return null;
+
+  if (/^[a-zA-Z]$/.test(key)) return key.toUpperCase();
+  if (/^[0-9]$/.test(key)) return key;
+  if (/^F([1-9]|1[0-2])$/i.test(key)) return key.toUpperCase();
+
+  if (key === " ") return "Space";
+  if (key === "Enter") return "Enter";
+  if (key === "Tab") return "Tab";
+  if (key === "Backspace") return "Backspace";
+  if (key === "Delete") return "Delete";
+  if (key === "ArrowUp") return "Up";
+  if (key === "ArrowDown") return "Down";
+  if (key === "ArrowLeft") return "Left";
+  if (key === "ArrowRight") return "Right";
+  return null;
+}
+
+function buildAcceleratorFromEvent(event: KeyboardEvent): string | null {
+  if (isModifierKey(event.key)) return null;
+  const keyToken = resolveAcceleratorKey(event);
+  if (!keyToken) return null;
+
+  const modifiers: string[] = [];
+  if (event.metaKey) modifiers.push("Command");
+  if (event.ctrlKey) modifiers.push("Control");
+  if (event.altKey) modifiers.push("Alt");
+  if (event.shiftKey) modifiers.push("Shift");
+  if (modifiers.length === 0) return null;
+
+  return [...modifiers, keyToken].join("+");
+}
+
+function formatAccelerator(accelerator: string, isMacPlatform: boolean): string {
+  if (!accelerator) return "";
+
+  const parts = accelerator.split("+").map((part) => part.trim()).filter(Boolean);
+  const mapped = parts.map((part) => {
+    const normalized = part.toLowerCase();
+    if (normalized === "commandorcontrol") return isMacPlatform ? "⌘" : "Ctrl";
+    if (normalized === "command") return isMacPlatform ? "⌘" : "Cmd";
+    if (normalized === "control") return isMacPlatform ? "⌃" : "Ctrl";
+    if (normalized === "alt" || normalized === "option") return isMacPlatform ? "⌥" : "Alt";
+    if (normalized === "shift") return isMacPlatform ? "⇧" : "Shift";
+    return part.length === 1 ? part.toUpperCase() : part;
+  });
+
+  return isMacPlatform ? mapped.join("") : mapped.join(" + ");
 }
 
 export function LaunchWindow() {
@@ -72,6 +132,26 @@ export function LaunchWindow() {
       return true;
     }
   });
+  const [autoHideHudOnRecord, setAutoHideHudOnRecord] = useState(() => {
+    try {
+      return window.localStorage.getItem(AUTO_HIDE_HUD_ON_RECORD_STORAGE_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const [stopRecordingShortcut, setStopRecordingShortcut] = useState(() => {
+    try {
+      return window.localStorage.getItem(STOP_SHORTCUT_STORAGE_KEY) || DEFAULT_STOP_RECORDING_SHORTCUT;
+    } catch {
+      return DEFAULT_STOP_RECORDING_SHORTCUT;
+    }
+  });
+  const [captureStopShortcut, setCaptureStopShortcut] = useState(false);
+  const [stopShortcutPopoverOpen, setStopShortcutPopoverOpen] = useState(false);
+  const [isMacPlatform, setIsMacPlatform] = useState(() => {
+    if (typeof navigator === "undefined") return false;
+    return /Mac|iPhone|iPad|iPod/.test(navigator.platform);
+  });
   const [recordCountdownSeconds, setRecordCountdownSeconds] = useState<RecordCountdownSeconds>(() => {
     try {
       const value = Number(window.localStorage.getItem("openscreen.recordCountdownSeconds"));
@@ -95,6 +175,7 @@ export function LaunchWindow() {
   const isCountingDown = countdownRemaining !== null;
   const controlsLocked = recording || isTransitioning || isCountingDown;
   const countdownTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const previousRecordingRef = useRef(false);
   const [recordingStart, setRecordingStart] = useState<number | null>(null);
   const [elapsed, setElapsed] = useState(0);
 
@@ -175,6 +256,14 @@ export function LaunchWindow() {
 
   useEffect(() => {
     try {
+      window.localStorage.setItem(AUTO_HIDE_HUD_ON_RECORD_STORAGE_KEY, autoHideHudOnRecord ? "1" : "0");
+    } catch {
+      // no-op
+    }
+  }, [autoHideHudOnRecord]);
+
+  useEffect(() => {
+    try {
       window.localStorage.setItem("openscreen.recordCountdownSeconds", String(recordCountdownSeconds));
     } catch {
       // no-op
@@ -182,10 +271,96 @@ export function LaunchWindow() {
   }, [recordCountdownSeconds]);
 
   useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const platform = await window.electronAPI.getPlatform();
+        if (!cancelled) {
+          setIsMacPlatform(platform === "darwin");
+        }
+      } catch {
+        // ignore platform probe failures
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const applyStopRecordingShortcut = useCallback(async (accelerator: string, options?: { silent?: boolean }) => {
+    try {
+      const result = await window.electronAPI.setStopRecordingShortcut(accelerator);
+      const applied = result.accelerator || DEFAULT_STOP_RECORDING_SHORTCUT;
+      setStopRecordingShortcut(applied);
+      try {
+        window.localStorage.setItem(STOP_SHORTCUT_STORAGE_KEY, applied);
+      } catch {
+        // no-op
+      }
+      if (!result.success && !options?.silent) {
+        toast.error(result.message || t("launch.stopShortcutApplyError"));
+      }
+      return result.success;
+    } catch (error) {
+      if (!options?.silent) {
+        toast.error(t("launch.stopShortcutApplyError"));
+      }
+      console.error("Failed to apply stop recording shortcut:", error);
+      return false;
+    }
+  }, [t]);
+
+  useEffect(() => {
+    void applyStopRecordingShortcut(stopRecordingShortcut, { silent: true });
+    // apply once using persisted value
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
     if (!hasSelectedSource && countdownRemaining !== null) {
       clearRecordCountdown();
     }
   }, [hasSelectedSource, countdownRemaining, clearRecordCountdown]);
+
+  useEffect(() => {
+    if (controlsLocked && captureStopShortcut) {
+      setCaptureStopShortcut(false);
+    }
+  }, [captureStopShortcut, controlsLocked]);
+
+  useEffect(() => {
+    if (!captureStopShortcut) return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      if (event.key === "Escape") {
+        setCaptureStopShortcut(false);
+        return;
+      }
+
+      const accelerator = buildAcceleratorFromEvent(event);
+      if (!accelerator) {
+        return;
+      }
+
+      void (async () => {
+        const success = await applyStopRecordingShortcut(accelerator);
+        if (success) {
+          toast.success(t("launch.stopShortcutUpdated", {
+            shortcut: formatAccelerator(accelerator, isMacPlatform),
+          }));
+          setCaptureStopShortcut(false);
+        }
+      })();
+    };
+
+    window.addEventListener("keydown", onKeyDown, { capture: true });
+    return () => {
+      window.removeEventListener("keydown", onKeyDown, { capture: true });
+    };
+  }, [applyStopRecordingShortcut, captureStopShortcut, isMacPlatform, t]);
 
   useEffect(() => {
     return () => {
@@ -248,11 +423,11 @@ export function LaunchWindow() {
     ultra: t("launch.captureProfile.ultra"),
   };
 
-  const openSourceSelector = () => {
+  const openSourceSelector = useCallback(() => {
     if (window.electronAPI) {
       window.electronAPI.openSourceSelector();
     }
-  };
+  }, []);
 
   const beginRecordCountdown = useCallback(() => {
     if (!hasSelectedSource || recording || isTransitioning || countdownRemaining !== null) {
@@ -306,6 +481,7 @@ export function LaunchWindow() {
     countdownRemaining,
     hasSelectedSource,
     isTransitioning,
+    openSourceSelector,
     recording,
     recordingState,
     clearRecordCountdown,
@@ -326,15 +502,37 @@ export function LaunchWindow() {
   };
 
   // IPC events for hide/close
-  const sendHudOverlayHide = () => {
+  const sendHudOverlayHide = useCallback(() => {
     if (window.electronAPI && window.electronAPI.hudOverlayHide) {
       window.electronAPI.hudOverlayHide();
     }
-  };
+  }, []);
   const sendHudOverlayClose = () => {
     if (window.electronAPI && window.electronAPI.hudOverlayClose) {
       window.electronAPI.hudOverlayClose();
     }
+  };
+
+  useEffect(() => {
+    const justStartedRecording = recording && !previousRecordingRef.current;
+    previousRecordingRef.current = recording;
+    if (justStartedRecording && autoHideHudOnRecord) {
+      sendHudOverlayHide();
+    }
+  }, [autoHideHudOnRecord, recording, sendHudOverlayHide]);
+
+  const displayedStopShortcut = formatAccelerator(stopRecordingShortcut, isMacPlatform);
+
+  const resetStopRecordingShortcut = () => {
+    void (async () => {
+      const success = await applyStopRecordingShortcut(DEFAULT_STOP_RECORDING_SHORTCUT);
+      if (success) {
+        toast.success(t("launch.stopShortcutResetOk", {
+          shortcut: formatAccelerator(DEFAULT_STOP_RECORDING_SHORTCUT, isMacPlatform),
+        }));
+        setCaptureStopShortcut(false);
+      }
+    })();
   };
 
   return (
@@ -442,6 +640,81 @@ export function LaunchWindow() {
           <Timer size={13} className="text-white/80" />
           <span className="text-white/90">{recordCountdownSeconds}s</span>
         </Button>
+
+        <Button
+          variant="link"
+          size="sm"
+          className={`gap-1 shrink-0 min-w-[90px] text-white bg-transparent hover:bg-transparent px-1 text-center text-xs ${styles.electronNoDrag}`}
+          onClick={() => setAutoHideHudOnRecord((value) => !value)}
+          disabled={controlsLocked}
+          title={autoHideHudOnRecord ? t("launch.autoHideHudOnRecordOn") : t("launch.autoHideHudOnRecordOff")}
+        >
+          <EyeOff size={13} className={autoHideHudOnRecord ? "text-cyan-300" : "text-white/60"} />
+          <span className={autoHideHudOnRecord ? "text-cyan-300" : "text-white/80"}>
+            {t("launch.autoHideHudOnRecord")}
+          </span>
+        </Button>
+
+        <Popover
+          open={stopShortcutPopoverOpen}
+          onOpenChange={(open) => {
+            setStopShortcutPopoverOpen(open);
+            if (!open) {
+              setCaptureStopShortcut(false);
+            }
+          }}
+        >
+          <PopoverTrigger asChild>
+            <Button
+              variant="link"
+              size="sm"
+              className={`gap-1 shrink-0 min-w-[100px] text-white bg-transparent hover:bg-transparent px-1 text-center text-xs ${styles.electronNoDrag}`}
+              disabled={controlsLocked}
+              title={t("launch.stopShortcutLabel", { shortcut: displayedStopShortcut })}
+            >
+              <Keyboard size={13} className="text-white/80" />
+              <span className="text-white/90">{displayedStopShortcut}</span>
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent
+            sideOffset={8}
+            align="center"
+            className={`w-[250px] bg-[#11131a] border border-white/20 text-white p-2.5 ${styles.electronNoDrag}`}
+          >
+            <div className="text-[11px] text-white/80 mb-2">
+              {t("launch.stopShortcutConfigTitle")}
+            </div>
+            <div className="rounded-md border border-white/10 bg-white/5 px-2 py-1.5 text-xs mb-2">
+              {captureStopShortcut
+                ? t("launch.stopShortcutListening")
+                : t("launch.stopShortcutCurrent", { shortcut: displayedStopShortcut })}
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="link"
+                size="sm"
+                className={`h-7 px-2 text-xs border border-white/15 rounded-md bg-white/5 hover:bg-white/10 ${styles.electronNoDrag}`}
+                onClick={() => setCaptureStopShortcut((value) => !value)}
+                disabled={controlsLocked}
+              >
+                {captureStopShortcut ? t("common.cancel") : t("launch.stopShortcutSet")}
+              </Button>
+              <Button
+                variant="link"
+                size="sm"
+                className={`h-7 px-2 text-xs border border-white/15 rounded-md bg-white/5 hover:bg-white/10 ${styles.electronNoDrag}`}
+                onClick={resetStopRecordingShortcut}
+                disabled={controlsLocked}
+              >
+                <RotateCcw size={12} className="mr-1" />
+                {t("launch.stopShortcutReset")}
+              </Button>
+            </div>
+            <div className="text-[10px] text-white/50 mt-2">
+              {t("launch.stopShortcutHint")}
+            </div>
+          </PopoverContent>
+        </Popover>
 
         <Button
           variant="link"
