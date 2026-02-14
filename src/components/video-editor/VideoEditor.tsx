@@ -255,8 +255,7 @@ export default function VideoEditor() {
   const exporterRef = useRef<{ cancel: () => void } | null>(null);
   const exportCancelledRef = useRef(false);
   const previousAspectRatioRef = useRef<AspectRatio>('16:9');
-  const initialAspectRatioRef = useRef<AspectRatio>('16:9');
-  const autoEditBootstrapDoneRef = useRef(false);
+  const autoEditInitializedAspectsRef = useRef<Set<AspectRatio>>(new Set());
   const sourceAspectRatio = useMemo(() => {
     const fallback = 16 / 9;
     if (sourceVideoDimensions && sourceVideoDimensions.width > 0 && sourceVideoDimensions.height > 0) {
@@ -570,8 +569,9 @@ export default function VideoEditor() {
   }, [aspectRatio, cursorTrack, duration, setSelectedZoomIdForActiveAspect, t]);
 
   const handleAutoEdit = useCallback(() => {
+    autoEditInitializedAspectsRef.current.add(aspectRatio);
     applyAutoZoomEdits();
-  }, [applyAutoZoomEdits]);
+  }, [applyAutoZoomEdits, aspectRatio]);
 
   const handleTrimDelete = useCallback((id: string) => {
     setTrimRegions((prev) => prev.filter((region) => region.id !== id));
@@ -782,19 +782,18 @@ export default function VideoEditor() {
 
   useEffect(() => {
     if (loading) return;
-    if (autoEditBootstrapDoneRef.current) return;
-    if (aspectRatio !== initialAspectRatioRef.current) return;
+    if (autoEditInitializedAspectsRef.current.has(aspectRatio)) return;
     if (zoomRegions.length > 0) {
-      autoEditBootstrapDoneRef.current = true;
+      autoEditInitializedAspectsRef.current.add(aspectRatio);
       return;
     }
     if (!cursorTrack?.samples?.length) {
-      autoEditBootstrapDoneRef.current = true;
+      autoEditInitializedAspectsRef.current.add(aspectRatio);
       return;
     }
     if (!Number.isFinite(duration) || duration <= 0) return;
 
-    autoEditBootstrapDoneRef.current = true;
+    autoEditInitializedAspectsRef.current.add(aspectRatio);
     applyAutoZoomEdits({ silent: true });
   }, [applyAutoZoomEdits, aspectRatio, cursorTrack, duration, loading, zoomRegions.length]);
 
