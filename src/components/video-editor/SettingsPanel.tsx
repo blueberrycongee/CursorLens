@@ -101,10 +101,6 @@ interface SettingsPanelProps {
   onAudioGainChange?: (gain: number) => void;
   cursorStyle?: CursorStyleConfig;
   onCursorStyleChange?: (style: CursorStyleConfig) => void;
-  hideCapturedSystemCursor?: boolean;
-  onHideCapturedSystemCursorChange?: (hidden: boolean) => void;
-  canHideCapturedSystemCursor?: boolean;
-  hideCapturedSystemCursorHint?: string;
   onAutoEdit?: () => void;
   autoEditDisabled?: boolean;
 }
@@ -182,10 +178,6 @@ export function SettingsPanel({
   onAudioGainChange,
   cursorStyle = DEFAULT_CURSOR_STYLE,
   onCursorStyleChange,
-  hideCapturedSystemCursor = false,
-  onHideCapturedSystemCursorChange,
-  canHideCapturedSystemCursor = true,
-  hideCapturedSystemCursorHint = "",
   onAutoEdit,
   autoEditDisabled = false,
 }: SettingsPanelProps) {
@@ -456,20 +448,6 @@ export function SettingsPanel({
                     className="data-[state=checked]:bg-[#34B27B] scale-90"
                   />
                 </div>
-                <div className="flex items-center justify-between p-1.5 rounded-md bg-black/20 border border-white/5 mb-2">
-                  <div className="text-[10px] text-slate-300">{t("settings.hideCapturedCursor")}</div>
-                  <Switch
-                    checked={hideCapturedSystemCursor}
-                    onCheckedChange={onHideCapturedSystemCursorChange}
-                    disabled={!canHideCapturedSystemCursor}
-                    className="data-[state=checked]:bg-[#34B27B] scale-90"
-                  />
-                </div>
-                {!canHideCapturedSystemCursor && hideCapturedSystemCursorHint ? (
-                  <div className="mb-2 rounded-md border border-amber-300/20 bg-amber-400/10 px-2 py-1 text-[10px] text-amber-100/90">
-                    {hideCapturedSystemCursorHint}
-                  </div>
-                ) : null}
                 <div className="rounded-md bg-black/20 border border-white/5 p-2 mb-2 space-y-2">
                   <div className="flex items-center justify-between">
                     <div className="text-[10px] text-slate-300">{t("settings.cursorMovementStyle")}</div>

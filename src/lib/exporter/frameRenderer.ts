@@ -9,9 +9,7 @@ import { renderAnnotations } from './annotationRenderer';
 import { getExportBackgroundFilter } from '@/lib/rendering/backgroundBlur';
 import {
   drawCompositedCursor,
-  occludeCapturedCursorArtifact,
   projectCursorToViewport,
-  resolveCursorOcclusionState,
   resolveCursorState,
   type CursorStyleConfig,
   type CursorTrack,
@@ -36,7 +34,6 @@ interface FrameRenderConfig {
   previewHeight?: number;
   cursorTrack?: CursorTrack | null;
   cursorStyle?: Partial<CursorStyleConfig>;
-  hideCapturedSystemCursor?: boolean;
 }
 
 interface AnimationState {
@@ -389,48 +386,6 @@ export class FrameRenderer {
       fallbackFocus: { cx: this.animationState.focusX, cy: this.animationState.focusY },
       style: this.config.cursorStyle,
     });
-
-    const occlusionCursorState = this.config.hideCapturedSystemCursor
-      ? resolveCursorOcclusionState({
-          timeMs,
-          track: this.config.cursorTrack,
-          zoomRegions: this.config.zoomRegions,
-          fallbackFocus: { cx: this.animationState.focusX, cy: this.animationState.focusY },
-          style: this.config.cursorStyle,
-        })
-      : null;
-
-    if (this.config.hideCapturedSystemCursor && this.compositeCanvas && occlusionCursorState) {
-      const occlusionProjected = projectCursorToViewport({
-        normalizedX: occlusionCursorState.x,
-        normalizedY: occlusionCursorState.y,
-        cropRegion: this.config.cropRegion,
-        baseOffset: this.layoutCache.baseOffset,
-        maskRect: this.layoutCache.maskRect,
-        cameraScale: {
-          x: this.cameraContainer.scale.x,
-          y: this.cameraContainer.scale.y,
-        },
-        cameraPosition: {
-          x: this.cameraContainer.position.x,
-          y: this.cameraContainer.position.y,
-        },
-        stageSize: this.layoutCache.stageSize,
-      });
-
-      if (occlusionProjected.inViewport) {
-        occludeCapturedCursorArtifact(
-          this.compositeCtx,
-          { x: occlusionProjected.x, y: occlusionProjected.y },
-          occlusionCursorState,
-          {
-            sourceCanvas: this.compositeCanvas,
-            stageSize: this.layoutCache.stageSize,
-            contentScale: Math.max(0.1, (Math.abs(this.cameraContainer.scale.x) + Math.abs(this.cameraContainer.scale.y)) / 2),
-          },
-        );
-      }
-    }
 
     if (!drawCursorState.visible) return;
 

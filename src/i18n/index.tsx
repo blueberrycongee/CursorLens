@@ -98,8 +98,6 @@ const messages: Record<Locale, Record<string, string>> = {
     "editor.exportResolutionLimited": "Source resolution limits this export to {{width}}x{{height}}.",
     "editor.autoEditApplied": "Auto edit applied: {{count}} zoom regions",
     "editor.autoEditUnavailable": "No cursor interaction detected for auto edit",
-    "editor.hideCapturedCursorUnavailable": "This recording is missing cursor tracking data, so original cursor hiding is unavailable.",
-    "editor.hideCapturedCursorNotNeeded": "This recording was captured with system cursor hidden. No original cursor needs to be removed.",
 
     "settings.zoomLevel": "Zoom Level",
     "settings.selectZoomToAdjust": "Select a zoom region to adjust",
@@ -110,7 +108,6 @@ const messages: Record<Locale, Record<string, string>> = {
     "settings.motionBlur": "Motion Blur",
     "settings.blurBg": "Blur BG",
     "settings.cursorComposer": "Cursor Composer",
-    "settings.hideCapturedCursor": "Hide Original Cursor",
     "settings.cursorSize": "Cursor Size",
     "settings.cursorHighlight": "Highlight",
     "settings.cursorRipple": "Click Ripple",
@@ -397,8 +394,6 @@ const messages: Record<Locale, Record<string, string>> = {
     "editor.exportResolutionLimited": "源视频分辨率受限，本次导出最高为 {{width}}x{{height}}。",
     "editor.autoEditApplied": "已应用自动剪辑：{{count}} 个缩放片段",
     "editor.autoEditUnavailable": "未检测到可用于自动剪辑的光标交互",
-    "editor.hideCapturedCursorUnavailable": "该录制缺少光标轨迹数据，无法在后期隐藏原始光标。",
-    "editor.hideCapturedCursorNotNeeded": "该录制在采集时已隐藏系统光标，无需再隐藏原始光标。",
 
     "settings.zoomLevel": "缩放级别",
     "settings.selectZoomToAdjust": "请选择一个缩放片段后再调整",
@@ -409,7 +404,6 @@ const messages: Record<Locale, Record<string, string>> = {
     "settings.motionBlur": "运动模糊",
     "settings.blurBg": "背景模糊",
     "settings.cursorComposer": "合成光标",
-    "settings.hideCapturedCursor": "隐藏原始鼠标",
     "settings.cursorSize": "光标尺寸",
     "settings.cursorHighlight": "高亮强度",
     "settings.cursorRipple": "点击波纹",

@@ -153,34 +153,6 @@ function normalizeCursorTrack(input: unknown): CursorTrack | null {
   };
 }
 
-function parseSystemCursorMode(input: unknown): 'always' | 'never' | undefined {
-  if (input === 'always' || input === 'never') {
-    return input;
-  }
-  return undefined;
-}
-
-const EDITOR_HIDE_CURSOR_STORAGE_KEY = "openscreen.editor.hideCapturedSystemCursor";
-
-function readLastSystemCursorHiddenPreference(): boolean {
-  try {
-    const editorPreference = window.localStorage.getItem(EDITOR_HIDE_CURSOR_STORAGE_KEY);
-    if (editorPreference === "1") return true;
-    if (editorPreference === "0") return false;
-  } catch {
-    // ignore localStorage errors
-  }
-
-  try {
-    const raw = window.localStorage.getItem("openscreen.recordSystemCursor");
-    if (raw === "0") return true;
-    if (raw === "1") return false;
-  } catch {
-    // ignore localStorage errors
-  }
-  return false;
-}
-
 export default function VideoEditor() {
   const { t, locale } = useI18n();
   const [videoPath, setVideoPath] = useState<string | null>(null);
@@ -224,8 +196,6 @@ export default function VideoEditor() {
   const [audioGain, setAudioGain] = useState(1);
   const [cursorTrack, setCursorTrack] = useState<CursorTrack | null>(null);
   const [cursorStyle, setCursorStyle] = useState<CursorStyleConfig>(DEFAULT_CURSOR_STYLE);
-  const [hideCapturedSystemCursor, setHideCapturedSystemCursor] = useState(readLastSystemCursorHiddenPreference);
-  const [systemCursorMode, setSystemCursorMode] = useState<'always' | 'never' | undefined>(undefined);
 
   const videoPlaybackRef = useRef<VideoPlaybackRef>(null);
   const nextZoomIdRef = useRef(1);
@@ -274,7 +244,6 @@ export default function VideoEditor() {
           );
           const metadataWithCursor = result.metadata as {
             cursorTrack?: unknown;
-            systemCursorMode?: unknown;
             hasMicrophoneAudio?: unknown;
           } | undefined;
           setCursorTrack(normalizeCursorTrack(metadataWithCursor?.cursorTrack));
@@ -284,13 +253,6 @@ export default function VideoEditor() {
           } else {
             setSourceHasAudio(true);
             setAudioEnabled(true);
-          }
-          const parsedMode = parseSystemCursorMode(metadataWithCursor?.systemCursorMode);
-          setSystemCursorMode(parsedMode);
-          if (parsedMode) {
-            setHideCapturedSystemCursor(parsedMode === 'never');
-          } else {
-            setHideCapturedSystemCursor(readLastSystemCursorHiddenPreference());
           }
         } else {
           setError(t('editor.noVideo'));
@@ -303,38 +265,6 @@ export default function VideoEditor() {
     }
     loadVideo();
   }, [t]);
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(EDITOR_HIDE_CURSOR_STORAGE_KEY, hideCapturedSystemCursor ? "1" : "0");
-    } catch {
-      // ignore localStorage errors
-    }
-  }, [hideCapturedSystemCursor]);
-
-  const hasCursorTrackSamples = Boolean(cursorTrack?.samples?.length);
-  const canHideCapturedSystemCursor = systemCursorMode !== "never" && hasCursorTrackSamples;
-  const hideCapturedSystemCursorHint = systemCursorMode === "never"
-    ? t("editor.hideCapturedCursorNotNeeded")
-    : t("editor.hideCapturedCursorUnavailable");
-
-  useEffect(() => {
-    if (systemCursorMode === "never") {
-      setHideCapturedSystemCursor(true);
-      return;
-    }
-    if (!hasCursorTrackSamples && hideCapturedSystemCursor) {
-      setHideCapturedSystemCursor(false);
-    }
-  }, [hasCursorTrackSamples, hideCapturedSystemCursor, systemCursorMode]);
-
-  const handleHideCapturedSystemCursorChange = useCallback((hidden: boolean) => {
-    if (hidden && !canHideCapturedSystemCursor) {
-      toast.info(hideCapturedSystemCursorHint);
-      return;
-    }
-    setHideCapturedSystemCursor(hidden);
-  }, [canHideCapturedSystemCursor, hideCapturedSystemCursorHint]);
 
   useEffect(() => {
     let rafId: number | null = null;
@@ -827,7 +757,6 @@ export default function VideoEditor() {
           previewHeight,
           cursorTrack,
           cursorStyle,
-          hideCapturedSystemCursor,
           onProgress: (progress: ExportProgress) => {
             setExportProgress(progress);
           },
@@ -927,7 +856,6 @@ export default function VideoEditor() {
             previewHeight,
             cursorTrack,
             cursorStyle,
-            hideCapturedSystemCursor,
             audioEnabled: sourceHasAudio && audioEnabled,
             audioGain,
             onProgress: (progress: ExportProgress) => {
@@ -1003,7 +931,7 @@ export default function VideoEditor() {
       setShowExportDialog(false);
       setExportProgress(null);
     }
-  }, [videoPath, wallpaper, zoomRegions, trimRegions, shadowIntensity, showBlur, motionBlurEnabled, borderRadius, padding, cropRegion, annotationRegions, isPlaying, exportAspectRatios, aspectRatio, exportQuality, locale, sourceFrameRate, sourceHasAudio, audioEnabled, audioGain, cursorTrack, cursorStyle, hideCapturedSystemCursor, t]);
+  }, [videoPath, wallpaper, zoomRegions, trimRegions, shadowIntensity, showBlur, motionBlurEnabled, borderRadius, padding, cropRegion, annotationRegions, isPlaying, exportAspectRatios, aspectRatio, exportQuality, locale, sourceFrameRate, sourceHasAudio, audioEnabled, audioGain, cursorTrack, cursorStyle, t]);
 
   const handleOpenExportDialog = useCallback(() => {
     if (!videoPath) {
@@ -1116,7 +1044,6 @@ export default function VideoEditor() {
                       onAnnotationSizeChange={handleAnnotationSizeChange}
                       cursorTrack={cursorTrack}
                       cursorStyle={cursorStyle}
-                      hideCapturedSystemCursor={hideCapturedSystemCursor}
                     />
                   </div>
                 </div>
@@ -1232,10 +1159,6 @@ export default function VideoEditor() {
           onAudioGainChange={setAudioGain}
           cursorStyle={cursorStyle}
           onCursorStyleChange={setCursorStyle}
-          hideCapturedSystemCursor={hideCapturedSystemCursor}
-          onHideCapturedSystemCursorChange={handleHideCapturedSystemCursorChange}
-          canHideCapturedSystemCursor={canHideCapturedSystemCursor}
-          hideCapturedSystemCursorHint={hideCapturedSystemCursorHint}
           onAutoEdit={handleAutoEdit}
           autoEditDisabled={!cursorTrack?.samples?.length || !Number.isFinite(duration) || duration <= 0}
         />

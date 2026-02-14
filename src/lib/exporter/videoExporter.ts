@@ -25,7 +25,6 @@ interface VideoExporterConfig extends ExportConfig {
   previewHeight?: number;
   cursorTrack?: CursorTrack | null;
   cursorStyle?: Partial<CursorStyleConfig>;
-  hideCapturedSystemCursor?: boolean;
   onProgress?: (progress: ExportProgress) => void;
 }
 
@@ -453,7 +452,6 @@ export class VideoExporter {
         previewHeight: this.config.previewHeight,
         cursorTrack: this.config.cursorTrack,
         cursorStyle: this.config.cursorStyle,
-        hideCapturedSystemCursor: this.config.hideCapturedSystemCursor,
       });
       await this.renderer.initialize();
 

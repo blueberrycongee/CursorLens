@@ -18,9 +18,7 @@ import { getPreviewBackgroundFilter } from "@/lib/rendering/backgroundBlur";
 import {
   DEFAULT_CURSOR_STYLE,
   drawCompositedCursor,
-  occludeCapturedCursorArtifact,
   projectCursorToViewport,
-  resolveCursorOcclusionState,
   resolveCursorState,
   type CursorStyleConfig,
   type CursorTrack,
@@ -56,7 +54,6 @@ interface VideoPlaybackProps {
   preferredFps?: number;
   cursorTrack?: CursorTrack | null;
   cursorStyle?: Partial<CursorStyleConfig>;
-  hideCapturedSystemCursor?: boolean;
 }
 
 export interface VideoPlaybackRef {
@@ -99,7 +96,6 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
   preferredFps = 60,
   cursorTrack = null,
   cursorStyle,
-  hideCapturedSystemCursor = false,
 }, ref) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -138,7 +134,6 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
   const cursorCanvasCtxRef = useRef<CanvasRenderingContext2D | null>(null);
   const cursorTrackRef = useRef<CursorTrack | null>(cursorTrack);
   const cursorStyleRef = useRef<Partial<CursorStyleConfig>>(cursorStyle ?? DEFAULT_CURSOR_STYLE);
-  const hideCapturedSystemCursorRef = useRef<boolean>(hideCapturedSystemCursor);
   const cropRegionRef = useRef(cropRegion);
 
   const normalizeTickerFps = useCallback((fps: number) => {
@@ -364,10 +359,6 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
   }, [cursorStyle]);
 
   useEffect(() => {
-    hideCapturedSystemCursorRef.current = hideCapturedSystemCursor;
-  }, [hideCapturedSystemCursor]);
-
-  useEffect(() => {
     cropRegionRef.current = cropRegion;
   }, [cropRegion]);
 
@@ -526,51 +517,6 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
       style: cursorStyleRef.current,
     });
 
-    const occlusionCursorState = hideCapturedSystemCursorRef.current
-      ? resolveCursorOcclusionState({
-          timeMs,
-          track: cursorTrackRef.current,
-          zoomRegions: zoomRegionsRef.current,
-          fallbackFocus: { cx: animationStateRef.current.focusX, cy: animationStateRef.current.focusY },
-          style: cursorStyleRef.current,
-        })
-      : null;
-
-    if (hideCapturedSystemCursorRef.current && occlusionCursorState) {
-      const occlusionProjected = projectCursorToViewport({
-        normalizedX: occlusionCursorState.x,
-        normalizedY: occlusionCursorState.y,
-        cropRegion: cropRegionRef.current ?? { x: 0, y: 0, width: 1, height: 1 },
-        baseOffset: layout.baseOffset,
-        maskRect: layout.maskRect,
-        cameraScale: {
-          x: cameraContainer.scale.x,
-          y: cameraContainer.scale.y,
-        },
-        cameraPosition: {
-          x: cameraContainer.position.x,
-          y: cameraContainer.position.y,
-        },
-        stageSize: layout.stageSize,
-      });
-
-      if (occlusionProjected.inViewport) {
-        const sourceCanvas = appRef.current?.canvas as HTMLCanvasElement | undefined;
-        if (sourceCanvas) {
-          occludeCapturedCursorArtifact(
-            ctx,
-            { x: occlusionProjected.x, y: occlusionProjected.y },
-            occlusionCursorState,
-            {
-              sourceCanvas,
-              stageSize: layout.stageSize,
-              contentScale: Math.max(0.1, (Math.abs(cameraContainer.scale.x) + Math.abs(cameraContainer.scale.y)) / 2),
-            },
-          );
-        }
-      }
-    }
-
     if (!drawCursorState.visible) return;
 
     const drawProjected = projectCursorToViewport({
@@ -609,20 +555,9 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
   useEffect(() => {
     const overlayEl = overlayRef.current;
     if (!overlayEl) return;
-    const shouldHideCursor = hideCapturedSystemCursorRef.current;
-    if (shouldHideCursor) {
-      overlayEl.style.cursor = 'none';
-    } else {
-      overlayEl.style.cursor = selectedZoom ? (isPlaying ? 'not-allowed' : 'grab') : 'default';
-    }
+    overlayEl.style.cursor = selectedZoom ? (isPlaying ? 'not-allowed' : 'grab') : 'default';
     overlayEl.style.pointerEvents = selectedZoom ? (isPlaying ? 'none' : 'auto') : 'none';
-  }, [selectedZoom, isPlaying, hideCapturedSystemCursor]);
-
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-    container.style.cursor = hideCapturedSystemCursor ? 'none' : 'default';
-  }, [hideCapturedSystemCursor]);
+  }, [selectedZoom, isPlaying]);
 
   useEffect(() => {
     const container = containerRef.current;

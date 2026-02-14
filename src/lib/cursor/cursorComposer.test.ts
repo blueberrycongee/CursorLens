@@ -3,9 +3,7 @@ import { DEFAULT_CURSOR_STYLE, type CursorTrack } from './types';
 import {
   drawCompositedCursor,
   normalizePointerSample,
-  occludeCapturedCursorArtifact,
   projectCursorToViewport,
-  resolveCursorOcclusionState,
   resolveCursorState,
 } from './cursorComposer';
 
@@ -109,62 +107,6 @@ describe('cursorComposer', () => {
 
     expect(withoutOffset.x).toBeCloseTo(0.1, 3);
     expect(withOffset.x).toBeCloseTo(0.5, 3);
-  });
-
-  it('resolves occlusion state even when cursor composer visuals are disabled', () => {
-    const track: CursorTrack = {
-      source: 'recorded',
-      samples: [
-        { timeMs: 0, x: 0.45, y: 0.5, visible: true },
-        { timeMs: 80, x: 0.52, y: 0.55, visible: true },
-      ],
-    };
-
-    const occlusionState = resolveCursorOcclusionState({
-      timeMs: 80,
-      track,
-      style: {
-        ...DEFAULT_CURSOR_STYLE,
-        enabled: false,
-      },
-    });
-
-    expect(occlusionState).not.toBeNull();
-    expect(occlusionState?.visible).toBe(true);
-    expect(occlusionState?.x).toBeCloseTo(0.52, 3);
-  });
-
-  it('keeps occlusion visible during static periods even with auto-hide style enabled', () => {
-    const track: CursorTrack = {
-      source: 'recorded',
-      samples: [
-        { timeMs: 0, x: 0.4, y: 0.4, visible: true },
-        { timeMs: 120, x: 0.4, y: 0.4, visible: true },
-      ],
-    };
-
-    const occlusionState = resolveCursorOcclusionState({
-      timeMs: 280,
-      track,
-      style: {
-        ...DEFAULT_CURSOR_STYLE,
-        autoHideStatic: true,
-        staticHideDelayMs: 100,
-        staticHideFadeMs: 120,
-      },
-    });
-
-    expect(occlusionState).not.toBeNull();
-    expect(occlusionState?.visible).toBe(true);
-  });
-
-  it('returns null occlusion state when cursor track is missing', () => {
-    const occlusionState = resolveCursorOcclusionState({
-      timeMs: 80,
-      track: null,
-    });
-
-    expect(occlusionState).toBeNull();
   });
 
   it('auto-hides static cursor after inactivity window', () => {
@@ -387,44 +329,4 @@ describe('cursorComposer', () => {
     expect(moveCalls[0]).toEqual({ x: 0, y: -10 });
   });
 
-  it('occludes captured cursor artifact by sampling nearby pixels', () => {
-    let drawImageCalls = 0;
-    const context = {
-      save: () => {},
-      restore: () => {},
-      beginPath: () => {},
-      arc: () => {},
-      clip: () => {},
-      drawImage: () => {
-        drawImageCalls += 1;
-      },
-    } as unknown as CanvasRenderingContext2D;
-
-    const sourceCanvas = {
-      width: 1920,
-      height: 1080,
-    } as HTMLCanvasElement;
-
-    occludeCapturedCursorArtifact(
-      context,
-      { x: 300, y: 180 },
-      {
-        visible: true,
-        x: 0.4,
-        y: 0.5,
-        scale: 1,
-        highlightAlpha: 0,
-        rippleScale: 1,
-        rippleAlpha: 0,
-        cursorKind: 'arrow',
-      },
-      {
-        sourceCanvas,
-        stageSize: { width: 1280, height: 720 },
-        contentScale: 1,
-      },
-    );
-
-    expect(drawImageCalls).toBe(1);
-  });
 });
