@@ -538,7 +538,7 @@ export function LaunchWindow() {
   return (
     <div className="w-full h-full flex items-center bg-transparent">
       <div
-        className={`w-full max-w-[860px] mx-auto flex items-center gap-2 px-3 py-2 ${styles.electronDrag}`}
+        className={`w-full max-w-[980px] mx-auto flex items-center gap-2 px-3 py-2 ${styles.electronDrag}`}
         style={{
           borderRadius: 16,
           background: 'linear-gradient(135deg, rgba(30,30,40,0.92) 0%, rgba(20,20,30,0.85) 100%)',
