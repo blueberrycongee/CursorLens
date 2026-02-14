@@ -1,10 +1,11 @@
-import { app, BrowserWindow, Tray, Menu, nativeImage, session, desktopCapturer, globalShortcut, ipcMain } from 'electron'
+import { app, BrowserWindow, Tray, Menu, nativeImage, session, desktopCapturer, globalShortcut, ipcMain, dialog, shell } from 'electron'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import fs from 'node:fs/promises'
 import { createHudOverlayWindow, createEditorWindow, createSourceSelectorWindow } from './windows'
 import { registerIpcHandlers } from './ipc/handlers'
 import { scheduleRecordingsCleanup } from './recordingsCleanup'
+import { buildIssueReportUrl } from '../src/lib/supportLinks'
 
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -52,6 +53,7 @@ let stopRecordingShortcut = DEFAULT_STOP_RECORDING_SHORTCUT
 let shutdownInProgress = false
 let shutdownFinished = false
 let ipcRuntime: { shutdown: () => Promise<void> } | null = null
+let runtimeErrorDialogOpen = false
 
 // Tray Icons
 const defaultTrayIcon = getTrayIcon('openscreen.png');
@@ -75,6 +77,117 @@ function getTrayIcon(filename: string) {
 
 function currentLocale(): 'en' | 'zh-CN' {
   return app.getLocale().toLowerCase().startsWith('zh') ? 'zh-CN' : 'en'
+}
+
+function runtimeErrorText(
+  locale: 'en' | 'zh-CN',
+  key: 'message' | 'detailPrefix' | 'report' | 'close',
+): string {
+  const zh: Record<'message' | 'detailPrefix' | 'report' | 'close', string> = {
+    message: '程序发生了内部错误，建议反馈问题以便排查。',
+    detailPrefix: '错误编号',
+    report: '反馈问题',
+    close: '关闭',
+  }
+  const en: Record<'message' | 'detailPrefix' | 'report' | 'close', string> = {
+    message: 'CursorLens hit an internal error. Please report this issue so we can fix it.',
+    detailPrefix: 'Reference',
+    report: 'Report Bug',
+    close: 'Close',
+  }
+  return (locale === 'zh-CN' ? zh : en)[key]
+}
+
+function normalizeRuntimeErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message.trim().length > 0) {
+    return error.message.trim()
+  }
+  if (typeof error === 'string' && error.trim().length > 0) {
+    return error.trim()
+  }
+  if (error === null || error === undefined) {
+    return 'Unknown error'
+  }
+  try {
+    return JSON.stringify(error)
+  } catch {
+    return String(error)
+  }
+}
+
+function normalizeRuntimeErrorStack(error: unknown): string | null {
+  if (error instanceof Error && typeof error.stack === 'string' && error.stack.trim().length > 0) {
+    return error.stack
+  }
+  return null
+}
+
+async function showRuntimeErrorDialog(context: string, error: unknown): Promise<void> {
+  if (runtimeErrorDialogOpen || !app.isReady()) {
+    return
+  }
+  runtimeErrorDialogOpen = true
+
+  const locale = currentLocale()
+  const now = Date.now()
+  const errorId = `CL-MAIN-${now.toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`
+  const message = normalizeRuntimeErrorMessage(error)
+  const stack = normalizeRuntimeErrorStack(error)
+  const details = [
+    `${runtimeErrorText(locale, 'detailPrefix')}: ${errorId}`,
+    `Context: ${context}`,
+    `Time: ${new Date(now).toISOString()}`,
+    `Message: ${message}`,
+    stack ? `Stack:\n${stack}` : null,
+  ].filter((line): line is string => Boolean(line))
+
+  const issueUrl = buildIssueReportUrl({
+    title: `[Bug] Runtime error (${context})`,
+    bodyLines: [
+      '## Summary',
+      runtimeErrorText(locale, 'message'),
+      '',
+      '## Reference',
+      `- Error ID: ${errorId}`,
+      `- Context: ${context}`,
+      `- Time: ${new Date(now).toISOString()}`,
+      `- Platform: ${process.platform}`,
+      `- Version: ${app.getVersion()}`,
+      '',
+      '## Error Message',
+      message,
+      ...(stack ? ['', '## Stack', '```', stack, '```'] : []),
+    ],
+  })
+
+  try {
+    const messageBoxOptions: Electron.MessageBoxOptions = {
+      type: 'error',
+      title: 'CursorLens',
+      message: runtimeErrorText(locale, 'message'),
+      detail: details.join('\n\n'),
+      buttons: [runtimeErrorText(locale, 'report'), runtimeErrorText(locale, 'close')],
+      defaultId: 0,
+      cancelId: 1,
+      noLink: true,
+    }
+    const focusedWindow = BrowserWindow.getFocusedWindow()
+    const result = focusedWindow
+      ? await dialog.showMessageBox(focusedWindow, messageBoxOptions)
+      : await dialog.showMessageBox(messageBoxOptions)
+    if (result.response === 0) {
+      await shell.openExternal(issueUrl)
+    }
+  } catch (dialogError) {
+    console.error('Failed to display runtime error dialog:', dialogError)
+  } finally {
+    runtimeErrorDialogOpen = false
+  }
+}
+
+function reportRuntimeError(context: string, error: unknown): void {
+  console.error(`[runtime-error] ${context}`, error)
+  void showRuntimeErrorDialog(context, error)
 }
 
 function trayText(locale: 'en' | 'zh-CN', key: 'app' | 'recording' | 'stop' | 'open' | 'quit', source?: string): string {
@@ -212,6 +325,14 @@ app.on('will-quit', () => {
   globalShortcut.unregisterAll()
 })
 
+process.on('uncaughtException', (error) => {
+  reportRuntimeError('main.uncaughtException', error)
+})
+
+process.on('unhandledRejection', (reason) => {
+  reportRuntimeError('main.unhandledRejection', reason)
+})
+
 app.on('before-quit', (event) => {
   if (shutdownFinished) {
     return
@@ -247,6 +368,15 @@ app.on('before-quit', (event) => {
 
 // Register all IPC handlers when app is ready
 app.whenReady().then(async () => {
+  app.on('web-contents-created', (_event, contents) => {
+    contents.on('render-process-gone', (_goneEvent, details) => {
+      reportRuntimeError(
+        'renderer.render-process-gone',
+        new Error(`reason=${details.reason}; exitCode=${details.exitCode}`),
+      )
+    })
+  })
+
   session.defaultSession.setDisplayMediaRequestHandler(async (_request, callback) => {
     try {
       if (!selectedDesktopSourceId) {
