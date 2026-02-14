@@ -21,6 +21,19 @@ const CURSOR_GLYPH_HOTSPOT: Record<CursorKind, { x: number; y: number }> = {
 const SUPPORTED_MOVEMENT_STYLES: CursorMovementStyle[] = ['rapid', 'quick', 'default', 'slow', 'custom'];
 const POINTER_ACTIVITY_THRESHOLD = 0.0009;
 
+interface PreparedCursorTrack {
+  samplesRef: CursorSample[];
+  sampleCount: number;
+  firstTimeMs: number;
+  lastTimeMs: number;
+  sortedSamples: CursorSample[];
+  activityTimes: number[];
+  trackClickTimes: number[];
+  clickTimesByZoomRegions: WeakMap<ReadonlyArray<ZoomRegion>, number[]>;
+}
+
+const PREPARED_CURSOR_TRACK_CACHE = new WeakMap<CursorTrack, PreparedCursorTrack>();
+
 function toFiniteNumber(value: unknown, fallback: number): number {
   return Number.isFinite(value) ? Number(value) : fallback;
 }
@@ -103,6 +116,60 @@ function getFallbackFocus(timeMs: number, zoomRegions?: ZoomRegion[], fallbackFo
   };
 }
 
+function lowerBoundSampleIndex(samples: CursorSample[], timeMs: number): number {
+  let low = 0;
+  let high = samples.length;
+
+  while (low < high) {
+    const mid = (low + high) >> 1;
+    if (samples[mid].timeMs < timeMs) {
+      low = mid + 1;
+    } else {
+      high = mid;
+    }
+  }
+
+  return low;
+}
+
+function upperBoundSampleIndex(samples: CursorSample[], timeMs: number): number {
+  let low = 0;
+  let high = samples.length;
+
+  while (low < high) {
+    const mid = (low + high) >> 1;
+    if (samples[mid].timeMs <= timeMs) {
+      low = mid + 1;
+    } else {
+      high = mid;
+    }
+  }
+
+  return low;
+}
+
+function findLastTimestampAtOrBefore(timestamps: number[], timeMs: number): number | null {
+  if (timestamps.length === 0 || timeMs < timestamps[0]) {
+    return null;
+  }
+
+  let low = 0;
+  let high = timestamps.length - 1;
+
+  while (low <= high) {
+    const mid = (low + high) >> 1;
+    const value = timestamps[mid];
+    if (value <= timeMs) {
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
+  }
+
+  if (high < 0) return null;
+  return timestamps[high];
+}
+
 function findSurroundingSamples(samples: CursorSample[], timeMs: number): {
   prev: CursorSample;
   next: CursorSample;
@@ -119,21 +186,9 @@ function findSurroundingSamples(samples: CursorSample[], timeMs: number): {
     return { prev: last, next: last, alpha: 0 };
   }
 
-  let low = 0;
-  let high = samples.length - 1;
-
-  while (low <= high) {
-    const mid = (low + high) >> 1;
-    const value = samples[mid].timeMs;
-    if (value < timeMs) {
-      low = mid + 1;
-    } else {
-      high = mid - 1;
-    }
-  }
-
-  const next = samples[Math.min(samples.length - 1, low)];
-  const prev = samples[Math.max(0, low - 1)];
+  const nextIndex = lowerBoundSampleIndex(samples, timeMs);
+  const next = samples[Math.min(samples.length - 1, nextIndex)];
+  const prev = samples[Math.max(0, nextIndex - 1)];
   const duration = next.timeMs - prev.timeMs;
   const alpha = duration > 0 ? clamp01((timeMs - prev.timeMs) / duration) : 0;
 
@@ -173,6 +228,8 @@ function smoothFromTrack(
   const start = timeMs - windowMs;
   const end = timeMs + windowMs;
   const sigma = Math.max(1, windowMs / 2.2);
+  const startIndex = lowerBoundSampleIndex(samples, start);
+  const endIndex = upperBoundSampleIndex(samples, end);
 
   let sumX = 0;
   let sumY = 0;
@@ -181,10 +238,8 @@ function smoothFromTrack(
   let arrowWeight = 0;
   let ibeamWeight = 0;
 
-  for (const sample of samples) {
-    if (sample.timeMs < start) continue;
-    if (sample.timeMs > end) break;
-
+  for (let i = startIndex; i < endIndex; i += 1) {
+    const sample = samples[i];
     const delta = sample.timeMs - timeMs;
     const weight = Math.exp(-((delta * delta) / (2 * sigma * sigma)));
     sumX += sample.x * weight;
@@ -221,36 +276,110 @@ function sampleActivityDetected(prev: CursorSample, next: CursorSample): boolean
   return distance >= POINTER_ACTIVITY_THRESHOLD;
 }
 
+function buildActivityTimes(samples: CursorSample[]): number[] {
+  if (samples.length === 0) return [];
+
+  const activityTimes: number[] = [samples[0].timeMs];
+
+  for (let i = 1; i < samples.length; i += 1) {
+    if (sampleActivityDetected(samples[i - 1], samples[i])) {
+      activityTimes.push(samples[i].timeMs);
+    }
+  }
+
+  return activityTimes;
+}
+
+function getPreparedCursorTrack(track?: CursorTrack | null): PreparedCursorTrack | null {
+  if (!track?.samples?.length) return null;
+
+  const samplesRef = track.samples;
+  const sampleCount = samplesRef.length;
+  const firstTimeMs = Number.isFinite(samplesRef[0]?.timeMs) ? samplesRef[0].timeMs : Number.NaN;
+  const lastTimeMs = Number.isFinite(samplesRef[sampleCount - 1]?.timeMs)
+    ? samplesRef[sampleCount - 1].timeMs
+    : Number.NaN;
+
+  const cached = PREPARED_CURSOR_TRACK_CACHE.get(track);
+  if (
+    cached
+    && cached.samplesRef === samplesRef
+    && cached.sampleCount === sampleCount
+    && cached.firstTimeMs === firstTimeMs
+    && cached.lastTimeMs === lastTimeMs
+  ) {
+    return cached;
+  }
+
+  const sortedSamples = samplesRef
+    .filter((sample) => Number.isFinite(sample.timeMs))
+    .slice()
+    .sort((a, b) => a.timeMs - b.timeMs);
+  const activityTimes = buildActivityTimes(sortedSamples);
+  const trackClickTimes = sortedSamples
+    .filter((sample) => sample.click)
+    .map((sample) => sample.timeMs);
+
+  const prepared: PreparedCursorTrack = {
+    samplesRef,
+    sampleCount,
+    firstTimeMs,
+    lastTimeMs,
+    sortedSamples,
+    activityTimes,
+    trackClickTimes,
+    clickTimesByZoomRegions: new WeakMap(),
+  };
+
+  PREPARED_CURSOR_TRACK_CACHE.set(track, prepared);
+  return prepared;
+}
+
+function getClickTimesFromPreparedTrack(
+  prepared: PreparedCursorTrack | null,
+  zoomRegions?: ZoomRegion[],
+): number[] {
+  if (!prepared) {
+    return [];
+  }
+
+  if (!zoomRegions?.length) {
+    return prepared.trackClickTimes;
+  }
+
+  const cached = prepared.clickTimesByZoomRegions.get(zoomRegions);
+  if (cached) {
+    return cached;
+  }
+
+  const merged = [...prepared.trackClickTimes];
+  for (const region of zoomRegions) {
+    merged.push(region.startMs);
+  }
+  merged.sort((a, b) => a - b);
+
+  prepared.clickTimesByZoomRegions.set(zoomRegions, merged);
+  return merged;
+}
+
 function resolveStaticVisibilityFactor(
   samples: CursorSample[],
   timeMs: number,
   style: CursorStyleConfig,
+  activityTimes?: number[],
 ): number {
   if (!style.autoHideStatic || samples.length < 2) {
     return 1;
   }
 
-  let previous: CursorSample | null = null;
-  let observedSample = false;
-  let lastActivityTime = samples[0].timeMs;
-
-  for (const sample of samples) {
-    if (sample.timeMs > timeMs) break;
-    observedSample = true;
-    if (!previous) {
-      previous = sample;
-      if (sample.click) {
-        lastActivityTime = sample.timeMs;
-      }
-      continue;
-    }
-    if (sampleActivityDetected(previous, sample)) {
-      lastActivityTime = sample.timeMs;
-    }
-    previous = sample;
+  if (timeMs < samples[0].timeMs) {
+    return 1;
   }
 
-  if (!observedSample) return 1;
+  const normalizedActivityTimes = activityTimes && activityTimes.length > 0
+    ? activityTimes
+    : buildActivityTimes(samples);
+  const lastActivityTime = findLastTimestampAtOrBefore(normalizedActivityTimes, timeMs) ?? samples[0].timeMs;
 
   const surrounding = findSurroundingSamples(samples, timeMs);
   if (
@@ -365,10 +494,8 @@ export function resolveCursorState(params: CursorResolveParams): CursorResolvedS
   }
 
   const sampleTimeMs = params.timeMs + style.timeOffsetMs;
-  const sortedSamples = (params.track?.samples || [])
-    .filter((sample) => Number.isFinite(sample.timeMs))
-    .slice()
-    .sort((a, b) => a.timeMs - b.timeMs);
+  const preparedTrack = getPreparedCursorTrack(params.track);
+  const sortedSamples = preparedTrack?.sortedSamples ?? [];
 
   const fromTrackRaw = sortedSamples.length
     ? smoothFromTrack(sortedSamples, sampleTimeMs, style.smoothingMs)
@@ -382,12 +509,15 @@ export function resolveCursorState(params: CursorResolveParams): CursorResolvedS
 
   const fallbackVisible = Boolean(params.zoomRegions?.length);
   const staticVisibilityFactor = fromTrack
-    ? resolveStaticVisibilityFactor(sortedSamples, sampleTimeMs, style)
+    ? resolveStaticVisibilityFactor(sortedSamples, sampleTimeMs, style, preparedTrack?.activityTimes)
     : 1;
   const visibleFromTrack = fromTrack?.visible ?? fallbackVisible;
   const visible = visibleFromTrack && staticVisibilityFactor > 0.001;
 
-  const clickPulse = resolveClickPulse(sampleTimeMs, collectClickTimes(params.track, params.zoomRegions));
+  const clickTimes = preparedTrack
+    ? getClickTimesFromPreparedTrack(preparedTrack, params.zoomRegions)
+    : collectClickTimes(params.track, params.zoomRegions);
+  const clickPulse = resolveClickPulse(sampleTimeMs, clickTimes);
   const clickAccent = easeOutCubic(clickPulse);
   const cursorKind = fromTrack?.cursorKind ?? 'arrow';
 
