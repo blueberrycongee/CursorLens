@@ -1,9 +1,9 @@
 // @see - https://www.electron.build/configuration/configuration
 {
   "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
-  "appId": "com.siddharthvaddem.openscreen",
+  "appId": "com.blueberrycongee.cursorlens",
   "asar": true,
-  "productName": "Openscreen",
+  "productName": "CursorLens",
   "npmRebuild": true,
   "buildDependenciesFromSource": true,
   "compression": "normal",
@@ -37,8 +37,8 @@
 
   "mac": {
     "extendInfo": {
-      "NSCameraUsageDescription": "Openscreen needs camera access to render camera overlays while recording.",
-      "NSMicrophoneUsageDescription": "Openscreen needs microphone access to record your voice during screen capture."
+      "NSCameraUsageDescription": "CursorLens needs camera access to render camera overlays while recording.",
+      "NSMicrophoneUsageDescription": "CursorLens needs microphone access to record your voice during screen capture."
     },
     "target": [
       {
