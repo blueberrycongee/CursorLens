@@ -52,6 +52,15 @@ import type { RoughCutSuggestion, SubtitleCue } from "@/lib/analysis/types";
 import { normalizeSubtitleCues } from "@/lib/analysis/subtitleTrack";
 import { normalizeRoughCutSuggestions } from "@/lib/analysis/roughCutEngine";
 import { applyRoughCutSuggestionsToAudioEdits } from "@/lib/analysis/roughCutApply";
+import {
+  clearStaleSelectedZoomIdForAspect,
+  getSelectedZoomIdForAspect,
+  getZoomRegionsForAspect,
+  setSelectedZoomIdForAspect,
+  setZoomRegionsForAspect,
+  type SelectedZoomIdByAspect,
+  type ZoomRegionsByAspect,
+} from "@/lib/zoom/aspectZoomState";
 
 const WALLPAPER_COUNT = 18;
 const WALLPAPER_PATHS = Array.from({ length: WALLPAPER_COUNT }, (_, i) => `/wallpapers/wallpaper${i + 1}.jpg`);
@@ -203,8 +212,8 @@ export default function VideoEditor() {
   const [cropRegionsByAspect, setCropRegionsByAspect] = useState<Partial<Record<AspectRatio, CropRegion>>>({
     '16:9': DEFAULT_CROP_REGION,
   });
-  const [zoomRegions, setZoomRegions] = useState<ZoomRegion[]>([]);
-  const [selectedZoomId, setSelectedZoomId] = useState<string | null>(null);
+  const [zoomRegionsByAspect, setZoomRegionsByAspect] = useState<ZoomRegionsByAspect>({});
+  const [selectedZoomIdByAspect, setSelectedZoomIdByAspect] = useState<SelectedZoomIdByAspect>({});
   const [trimRegions, setTrimRegions] = useState<TrimRegion[]>([]);
   const [audioEditRegions, setAudioEditRegions] = useState<AudioEditRegion[]>([]);
   const [selectedTrimId, setSelectedTrimId] = useState<string | null>(null);
@@ -246,7 +255,7 @@ export default function VideoEditor() {
   const exporterRef = useRef<{ cancel: () => void } | null>(null);
   const exportCancelledRef = useRef(false);
   const previousAspectRatioRef = useRef<AspectRatio>('16:9');
-  const autoEditInitializedRef = useRef(false);
+  const autoEditInitializedAspectsRef = useRef<Set<AspectRatio>>(new Set());
   const sourceAspectRatio = useMemo(() => {
     const fallback = 16 / 9;
     if (sourceVideoDimensions && sourceVideoDimensions.width > 0 && sourceVideoDimensions.height > 0) {
@@ -266,7 +275,29 @@ export default function VideoEditor() {
     () => resolveAspectCropRegion(cropRegionsByAspect, aspectRatio, sourceAspectRatio),
     [aspectRatio, cropRegionsByAspect, sourceAspectRatio],
   );
+  const zoomRegions = useMemo(
+    () => getZoomRegionsForAspect(zoomRegionsByAspect, aspectRatio),
+    [zoomRegionsByAspect, aspectRatio],
+  );
+  const selectedZoomId = useMemo(
+    () => getSelectedZoomIdForAspect(selectedZoomIdByAspect, aspectRatio),
+    [selectedZoomIdByAspect, aspectRatio],
+  );
   const showAspectCropOverlay = exportFormat === "mp4" && normalizedExportAspectRatios.includes(aspectRatio);
+
+  const setZoomRegionsForActiveAspect = useCallback((updater: (regions: ZoomRegion[]) => ZoomRegion[]) => {
+    setZoomRegionsByAspect((previous) => {
+      const current = getZoomRegionsForAspect(previous, aspectRatio);
+      const next = updater(current);
+      return setZoomRegionsForAspect(previous, aspectRatio, next);
+    });
+  }, [aspectRatio]);
+
+  const setSelectedZoomIdForActiveAspect = useCallback((nextSelectedZoomId: string | null) => {
+    setSelectedZoomIdByAspect((previous) =>
+      setSelectedZoomIdForAspect(previous, aspectRatio, nextSelectedZoomId),
+    );
+  }, [aspectRatio]);
 
   const setCropRegionForAspect = useCallback((ratio: AspectRatio, region: CropRegion) => {
     setCropRegionsByAspect((previous) => {
@@ -383,25 +414,25 @@ export default function VideoEditor() {
   }
 
   const handleSelectZoom = useCallback((id: string | null) => {
-    setSelectedZoomId(id);
+    setSelectedZoomIdForActiveAspect(id);
     if (id) setSelectedTrimId(null);
-  }, []);
+  }, [setSelectedZoomIdForActiveAspect]);
 
   const handleSelectTrim = useCallback((id: string | null) => {
     setSelectedTrimId(id);
     if (id) {
-      setSelectedZoomId(null);
+      setSelectedZoomIdForActiveAspect(null);
       setSelectedAnnotationId(null);
     }
-  }, []);
+  }, [setSelectedZoomIdForActiveAspect]);
 
   const handleSelectAnnotation = useCallback((id: string | null) => {
     setSelectedAnnotationId(id);
     if (id) {
-      setSelectedZoomId(null);
+      setSelectedZoomIdForActiveAspect(null);
       setSelectedTrimId(null);
     }
-  }, []);
+  }, [setSelectedZoomIdForActiveAspect]);
 
   const handleZoomAdded = useCallback((span: Span) => {
     const id = `zoom-${nextZoomIdRef.current++}`;
@@ -412,11 +443,11 @@ export default function VideoEditor() {
       depth: DEFAULT_ZOOM_DEPTH,
       focus: { cx: 0.5, cy: 0.5 },
     };
-    setZoomRegions((prev) => [...prev, newRegion]);
-    setSelectedZoomId(id);
+    setZoomRegionsForActiveAspect((prev) => [...prev, newRegion]);
+    setSelectedZoomIdForActiveAspect(id);
     setSelectedTrimId(null);
     setSelectedAnnotationId(null);
-  }, []);
+  }, [setSelectedZoomIdForActiveAspect, setZoomRegionsForActiveAspect]);
 
   const handleTrimAdded = useCallback((span: Span) => {
     const id = `trim-${nextTrimIdRef.current++}`;
@@ -427,12 +458,12 @@ export default function VideoEditor() {
     };
     setTrimRegions((prev) => [...prev, newRegion]);
     setSelectedTrimId(id);
-    setSelectedZoomId(null);
+    setSelectedZoomIdForActiveAspect(null);
     setSelectedAnnotationId(null);
-  }, []);
+  }, [setSelectedZoomIdForActiveAspect]);
 
   const handleZoomSpanChange = useCallback((id: string, span: Span) => {
-    setZoomRegions((prev) =>
+    setZoomRegionsForActiveAspect((prev) =>
       prev.map((region) =>
         region.id === id
           ? {
@@ -443,7 +474,7 @@ export default function VideoEditor() {
           : region,
       ),
     );
-  }, []);
+  }, [setZoomRegionsForActiveAspect]);
 
   const handleTrimSpanChange = useCallback((id: string, span: Span) => {
     setTrimRegions((prev) =>
@@ -460,7 +491,7 @@ export default function VideoEditor() {
   }, []);
 
   const handleZoomFocusChange = useCallback((id: string, focus: ZoomFocus) => {
-    setZoomRegions((prev) =>
+    setZoomRegionsForActiveAspect((prev) =>
       prev.map((region) =>
         region.id === id
           ? {
@@ -470,11 +501,11 @@ export default function VideoEditor() {
           : region,
       ),
     );
-  }, []);
+  }, [setZoomRegionsForActiveAspect]);
 
   const handleZoomDepthChange = useCallback((depth: ZoomDepth) => {
     if (!selectedZoomId) return;
-    setZoomRegions((prev) =>
+    setZoomRegionsForActiveAspect((prev) =>
       prev.map((region) =>
         region.id === selectedZoomId
           ? {
@@ -485,14 +516,14 @@ export default function VideoEditor() {
           : region,
       ),
     );
-  }, [selectedZoomId]);
+  }, [selectedZoomId, setZoomRegionsForActiveAspect]);
 
   const handleZoomDelete = useCallback((id: string) => {
-    setZoomRegions((prev) => prev.filter((region) => region.id !== id));
+    setZoomRegionsForActiveAspect((prev) => prev.filter((region) => region.id !== id));
     if (selectedZoomId === id) {
-      setSelectedZoomId(null);
+      setSelectedZoomIdForActiveAspect(null);
     }
-  }, [selectedZoomId]);
+  }, [selectedZoomId, setSelectedZoomIdForActiveAspect, setZoomRegionsForActiveAspect]);
 
   const applyAutoZoomEdits = useCallback((options?: { silent?: boolean }) => {
     const durationMs = Math.round(duration * 1000);
@@ -523,8 +554,10 @@ export default function VideoEditor() {
       focus: clampFocusToDepth(draft.focus, draft.depth),
     }));
 
-    setZoomRegions(generatedZoomRegions);
-    setSelectedZoomId(generatedZoomRegions[0]?.id ?? null);
+    setZoomRegionsByAspect((previous) =>
+      setZoomRegionsForAspect(previous, aspectRatio, generatedZoomRegions),
+    );
+    setSelectedZoomIdForActiveAspect(generatedZoomRegions[0]?.id ?? null);
     setSelectedTrimId(null);
     setSelectedAnnotationId(null);
 
@@ -533,12 +566,12 @@ export default function VideoEditor() {
     }
 
     return generatedZoomRegions.length;
-  }, [cursorTrack, duration, t]);
+  }, [aspectRatio, cursorTrack, duration, setSelectedZoomIdForActiveAspect, t]);
 
   const handleAutoEdit = useCallback(() => {
-    autoEditInitializedRef.current = true;
+    autoEditInitializedAspectsRef.current.add(aspectRatio);
     applyAutoZoomEdits();
-  }, [applyAutoZoomEdits]);
+  }, [applyAutoZoomEdits, aspectRatio]);
 
   const handleTrimDelete = useCallback((id: string) => {
     setTrimRegions((prev) => prev.filter((region) => region.id !== id));
@@ -563,9 +596,9 @@ export default function VideoEditor() {
     };
     setAnnotationRegions((prev) => [...prev, newRegion]);
     setSelectedAnnotationId(id);
-    setSelectedZoomId(null);
+    setSelectedZoomIdForActiveAspect(null);
     setSelectedTrimId(null);
-  }, []);
+  }, [setSelectedZoomIdForActiveAspect]);
 
   const handleAnnotationSpanChange = useCallback((id: string, span: Span) => {
     setAnnotationRegions((prev) =>
@@ -705,10 +738,10 @@ export default function VideoEditor() {
   }, []);
 
   useEffect(() => {
-    if (selectedZoomId && !zoomRegions.some((region) => region.id === selectedZoomId)) {
-      setSelectedZoomId(null);
-    }
-  }, [selectedZoomId, zoomRegions]);
+    setSelectedZoomIdByAspect((previous) =>
+      clearStaleSelectedZoomIdForAspect(previous, zoomRegionsByAspect, aspectRatio),
+    );
+  }, [aspectRatio, zoomRegionsByAspect]);
 
   useEffect(() => {
     if (selectedTrimId && !trimRegions.some((region) => region.id === selectedTrimId)) {
@@ -749,20 +782,20 @@ export default function VideoEditor() {
 
   useEffect(() => {
     if (loading) return;
-    if (autoEditInitializedRef.current) return;
+    if (autoEditInitializedAspectsRef.current.has(aspectRatio)) return;
     if (zoomRegions.length > 0) {
-      autoEditInitializedRef.current = true;
+      autoEditInitializedAspectsRef.current.add(aspectRatio);
       return;
     }
     if (!cursorTrack?.samples?.length) {
-      autoEditInitializedRef.current = true;
+      autoEditInitializedAspectsRef.current.add(aspectRatio);
       return;
     }
     if (!Number.isFinite(duration) || duration <= 0) return;
 
-    autoEditInitializedRef.current = true;
+    autoEditInitializedAspectsRef.current.add(aspectRatio);
     applyAutoZoomEdits({ silent: true });
-  }, [applyAutoZoomEdits, cursorTrack, duration, loading, zoomRegions.length]);
+  }, [applyAutoZoomEdits, aspectRatio, cursorTrack, duration, loading, zoomRegions.length]);
 
   const stopAnalysisPolling = useCallback(() => {
     if (analysisPollingTimerRef.current) {
@@ -954,14 +987,14 @@ export default function VideoEditor() {
       Math.max(0, Math.round(duration * 1000)),
     );
     setAudioEditRegions(nextAudioEditRegions);
-    setSelectedZoomId(null);
+    setSelectedZoomIdForActiveAspect(null);
     setSelectedTrimId(null);
     setSelectedAnnotationId(null);
 
     toast.success(t('editor.analysisApplyRoughCutSuccess', {
       count: roughCutSuggestions.length,
     }));
-  }, [audioEditRegions, duration, roughCutSuggestions, t]);
+  }, [audioEditRegions, duration, roughCutSuggestions, setSelectedZoomIdForActiveAspect, t]);
 
   const handleExport = useCallback(async (settings: ExportSettings) => {
     if (!videoPath) {
@@ -1108,6 +1141,7 @@ export default function VideoEditor() {
             toast.info(t('editor.exportResolutionLimited', { width: exportWidth, height: exportHeight }));
           }
 
+          const zoomRegionsForRatio = getZoomRegionsForAspect(zoomRegionsByAspect, currentRatio);
           const exporter = new VideoExporter({
             videoUrl: videoPath,
             width: exportWidth,
@@ -1116,7 +1150,7 @@ export default function VideoEditor() {
             bitrate,
             codec: 'avc1.640033',
             wallpaper,
-            zoomRegions,
+            zoomRegions: zoomRegionsForRatio,
             trimRegions,
             showShadow: shadowIntensity > 0,
             shadowIntensity,
@@ -1207,7 +1241,7 @@ export default function VideoEditor() {
       setShowExportDialog(false);
       setExportProgress(null);
     }
-  }, [videoPath, wallpaper, zoomRegions, trimRegions, shadowIntensity, showBlur, motionBlurEnabled, borderRadius, padding, activeCropRegion, cropRegionsByAspect, sourceAspectRatio, annotationRegions, subtitleCues, isPlaying, normalizedExportAspectRatios, exportQuality, locale, sourceFrameRate, sourceHasAudio, audioEnabled, audioGain, audioEditRegions, cursorTrack, cursorStyle, t]);
+  }, [videoPath, wallpaper, zoomRegions, zoomRegionsByAspect, trimRegions, shadowIntensity, showBlur, motionBlurEnabled, borderRadius, padding, activeCropRegion, cropRegionsByAspect, sourceAspectRatio, annotationRegions, subtitleCues, isPlaying, normalizedExportAspectRatios, exportQuality, locale, sourceFrameRate, sourceHasAudio, audioEnabled, audioGain, audioEditRegions, cursorTrack, cursorStyle, t]);
 
   const handleOpenExportDialog = useCallback(() => {
     if (!videoPath) {
