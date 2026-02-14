@@ -24,6 +24,22 @@ declare namespace NodeJS {
 type CursorTrackMetadata = {
   source?: 'recorded' | 'synthetic'
   samples: Array<{ timeMs: number; x: number; y: number; click?: boolean; visible?: boolean; cursorKind?: 'arrow' | 'ibeam' }>
+  events?: Array<{
+    type: 'click' | 'selection'
+    startMs: number
+    endMs: number
+    point: { x: number; y: number }
+    startPoint?: { x: number; y: number }
+    endPoint?: { x: number; y: number }
+    bounds?: {
+      minX: number
+      minY: number
+      maxX: number
+      maxY: number
+      width: number
+      height: number
+    }
+  }>
   space?: {
     mode?: 'source-display' | 'virtual-desktop'
     displayId?: string

@@ -35,6 +35,15 @@ const helpers = [
     ],
   },
   {
+    label: 'mouse button monitor helper',
+    sourcePath: path.join(projectRoot, 'electron/native/macos/mouse-button-monitor.swift'),
+    outputPath: path.join(projectRoot, 'electron/native/bin/mouse-button-monitor'),
+    frameworks: [
+      'Foundation',
+      'AppKit',
+    ],
+  },
+  {
     label: 'speech transcriber helper',
     sourcePath: path.join(projectRoot, 'electron/native/macos/speech-transcriber.swift'),
     outputPath: path.join(projectRoot, 'electron/native/bin/speech-transcriber'),

@@ -34,6 +34,10 @@
       "to": "native/cursor-kind-monitor"
     },
     {
+      "from": "electron/native/bin/mouse-button-monitor",
+      "to": "native/mouse-button-monitor"
+    },
+    {
       "from": "electron/native/bin/speech-transcriber",
       "to": "native/speech-transcriber"
     }

@@ -26,6 +26,10 @@ interface PreparedCursorTrack {
   sampleCount: number;
   firstTimeMs: number;
   lastTimeMs: number;
+  eventsRef: CursorTrack['events'];
+  eventCount: number;
+  firstEventTimeMs: number;
+  lastEventTimeMs: number;
   sortedSamples: CursorSample[];
   activityTimes: number[];
   trackClickTimes: number[];
@@ -299,6 +303,14 @@ function getPreparedCursorTrack(track?: CursorTrack | null): PreparedCursorTrack
   const lastTimeMs = Number.isFinite(samplesRef[sampleCount - 1]?.timeMs)
     ? samplesRef[sampleCount - 1].timeMs
     : Number.NaN;
+  const eventsRef = track.events;
+  const eventCount = Array.isArray(eventsRef) ? eventsRef.length : 0;
+  const firstEventTimeMs = eventCount > 0 && Number.isFinite(eventsRef?.[0]?.startMs)
+    ? Number(eventsRef?.[0]?.startMs)
+    : Number.NaN;
+  const lastEventTimeMs = eventCount > 0 && Number.isFinite(eventsRef?.[eventCount - 1]?.endMs)
+    ? Number(eventsRef?.[eventCount - 1]?.endMs)
+    : Number.NaN;
 
   const cached = PREPARED_CURSOR_TRACK_CACHE.get(track);
   if (
@@ -307,6 +319,10 @@ function getPreparedCursorTrack(track?: CursorTrack | null): PreparedCursorTrack
     && cached.sampleCount === sampleCount
     && cached.firstTimeMs === firstTimeMs
     && cached.lastTimeMs === lastTimeMs
+    && cached.eventsRef === eventsRef
+    && cached.eventCount === eventCount
+    && cached.firstEventTimeMs === firstEventTimeMs
+    && cached.lastEventTimeMs === lastEventTimeMs
   ) {
     return cached;
   }
@@ -316,15 +332,23 @@ function getPreparedCursorTrack(track?: CursorTrack | null): PreparedCursorTrack
     .slice()
     .sort((a, b) => a.timeMs - b.timeMs);
   const activityTimes = buildActivityTimes(sortedSamples);
-  const trackClickTimes = sortedSamples
+  const sampleClickTimes = sortedSamples
     .filter((sample) => sample.click)
     .map((sample) => sample.timeMs);
+  const eventClickTimes = (Array.isArray(eventsRef) ? eventsRef : [])
+    .filter((event) => event.type === 'click' && Number.isFinite(event.endMs))
+    .map((event) => Number(event.endMs));
+  const trackClickTimes = [...sampleClickTimes, ...eventClickTimes].sort((a, b) => a - b);
 
   const prepared: PreparedCursorTrack = {
     samplesRef,
     sampleCount,
     firstTimeMs,
     lastTimeMs,
+    eventsRef,
+    eventCount,
+    firstEventTimeMs,
+    lastEventTimeMs,
     sortedSamples,
     activityTimes,
     trackClickTimes,

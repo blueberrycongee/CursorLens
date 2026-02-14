@@ -45,7 +45,7 @@ import {
 import { ASPECT_RATIOS, type AspectRatio, getAspectRatioValue } from "@/utils/aspectRatioUtils";
 import { getAssetPath } from "@/lib/assetPath";
 import { useI18n } from "@/i18n";
-import { DEFAULT_CURSOR_STYLE, type CursorStyleConfig, type CursorTrack } from "@/lib/cursor";
+import { DEFAULT_CURSOR_STYLE, type CursorStyleConfig, type CursorTrack, type CursorTrackEvent } from "@/lib/cursor";
 import { cropRegionEquals, getCenteredAspectCropRegion, normalizeAspectCropRegion } from "@/lib/crop/aspectCrop";
 import { generateAutoZoomDrafts } from "@/lib/autoEdit/screenStudioAutoZoom";
 import type { RoughCutSuggestion, SubtitleCue } from "@/lib/analysis/types";
@@ -108,6 +108,7 @@ function normalizeCursorTrack(input: unknown): CursorTrack | null {
   if (!input || typeof input !== "object") return null;
   const raw = input as {
     samples?: unknown[];
+    events?: unknown[];
     source?: unknown;
     space?: unknown;
     stats?: unknown;
@@ -183,8 +184,94 @@ function normalizeCursorTrack(input: unknown): CursorTrack | null {
       }
     : undefined;
 
+  const parsedEvents = Array.isArray(raw.events)
+    ? raw.events
+      .map((event) => {
+        if (!event || typeof event !== "object") return null;
+        const row = event as {
+          type?: unknown;
+          startMs?: unknown;
+          endMs?: unknown;
+          point?: unknown;
+          startPoint?: unknown;
+          endPoint?: unknown;
+          bounds?: unknown;
+        };
+
+        const eventType: CursorTrackEvent["type"] | null = row.type === "selection" ? "selection" : row.type === "click" ? "click" : null;
+        const startMs = Number(row.startMs);
+        const endMs = Number(row.endMs);
+        const point = row.point as { x?: unknown; y?: unknown } | undefined;
+        const pointX = Number(point?.x);
+        const pointY = Number(point?.y);
+        if (!eventType || !Number.isFinite(startMs) || !Number.isFinite(endMs) || !Number.isFinite(pointX) || !Number.isFinite(pointY)) {
+          return null;
+        }
+
+        const normalizePoint = (source?: { x?: unknown; y?: unknown }) => {
+          const x = Number(source?.x);
+          const y = Number(source?.y);
+          if (!Number.isFinite(x) || !Number.isFinite(y)) return undefined;
+          return {
+            x: Math.min(1, Math.max(0, x)),
+            y: Math.min(1, Math.max(0, y)),
+          };
+        };
+
+        const bounds = row.bounds as {
+          minX?: unknown;
+          minY?: unknown;
+          maxX?: unknown;
+          maxY?: unknown;
+        } | undefined;
+        const minX = Number(bounds?.minX);
+        const minY = Number(bounds?.minY);
+        const maxX = Number(bounds?.maxX);
+        const maxY = Number(bounds?.maxY);
+        const parsedBounds = [minX, minY, maxX, maxY].every(Number.isFinite)
+          ? {
+            minX: Math.min(1, Math.max(0, minX)),
+            minY: Math.min(1, Math.max(0, minY)),
+            maxX: Math.max(Math.min(1, Math.max(0, minX)), Math.min(1, Math.max(0, maxX))),
+            maxY: Math.max(Math.min(1, Math.max(0, minY)), Math.min(1, Math.max(0, maxY))),
+            width: 0,
+            height: 0,
+          }
+          : undefined;
+        if (parsedBounds) {
+          parsedBounds.width = parsedBounds.maxX - parsedBounds.minX;
+          parsedBounds.height = parsedBounds.maxY - parsedBounds.minY;
+        }
+
+        const normalizedEvent: CursorTrackEvent = {
+          type: eventType,
+          startMs: Math.max(0, Math.round(startMs)),
+          endMs: Math.max(Math.max(0, Math.round(startMs)), Math.round(endMs)),
+          point: {
+            x: Math.min(1, Math.max(0, pointX)),
+            y: Math.min(1, Math.max(0, pointY)),
+          },
+        };
+        const parsedStartPoint = normalizePoint(row.startPoint as { x?: unknown; y?: unknown } | undefined);
+        if (parsedStartPoint) {
+          normalizedEvent.startPoint = parsedStartPoint;
+        }
+        const parsedEndPoint = normalizePoint(row.endPoint as { x?: unknown; y?: unknown } | undefined);
+        if (parsedEndPoint) {
+          normalizedEvent.endPoint = parsedEndPoint;
+        }
+        if (parsedBounds) {
+          normalizedEvent.bounds = parsedBounds;
+        }
+        return normalizedEvent;
+      })
+      .filter((event): event is NonNullable<typeof event> => Boolean(event))
+      .sort((a, b) => a.startMs - b.startMs)
+    : undefined;
+
   return {
     samples,
+    events: parsedEvents,
     source: raw.source === "synthetic" ? "synthetic" : "recorded",
     space: parsedSpace,
     stats: parsedStats,

@@ -12,8 +12,30 @@ export interface CursorSample {
   cursorKind?: CursorKind;
 }
 
+export type CursorTrackEventType = 'click' | 'selection';
+
+export interface CursorTrackEventBounds {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+  width: number;
+  height: number;
+}
+
+export interface CursorTrackEvent {
+  type: CursorTrackEventType;
+  startMs: number;
+  endMs: number;
+  point: { x: number; y: number };
+  startPoint?: { x: number; y: number };
+  endPoint?: { x: number; y: number };
+  bounds?: CursorTrackEventBounds;
+}
+
 export interface CursorTrack {
   samples: CursorSample[];
+  events?: CursorTrackEvent[];
   source?: 'recorded' | 'synthetic';
   space?: {
     mode?: 'source-display' | 'virtual-desktop';

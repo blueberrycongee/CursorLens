@@ -11,6 +11,11 @@ import {
   stopNativeMacRecorder,
 } from '../native/sckRecorder'
 import { getNativeCursorKind, startNativeCursorKindMonitor, stopNativeCursorKindMonitor } from '../native/cursorKindMonitor'
+import {
+  drainNativeMouseButtonTransitions,
+  startNativeMouseButtonMonitor,
+  stopNativeMouseButtonMonitor,
+} from '../native/mouseButtonMonitor'
 import { getWindowBoundsById, parseWindowIdFromSourceId } from './windowBounds'
 import {
   isPointInsideBounds,
@@ -51,6 +56,22 @@ type CurrentVideoMetadata = {
       click?: boolean
       visible?: boolean
       cursorKind?: 'arrow' | 'ibeam'
+    }>
+    events?: Array<{
+      type: 'click' | 'selection'
+      startMs: number
+      endMs: number
+      point: { x: number; y: number }
+      startPoint?: { x: number; y: number }
+      endPoint?: { x: number; y: number }
+      bounds?: {
+        minX: number
+        minY: number
+        maxX: number
+        maxY: number
+        width: number
+        height: number
+      }
     }>
     space?: {
       mode?: CaptureBoundsMode
@@ -452,6 +473,7 @@ type CursorTrackerRuntime = {
   refreshingBounds: boolean
   startedAt: number
   samples: CursorTrackPayload['samples']
+  events: NonNullable<CursorTrackPayload['events']>
   bounds: CaptureBounds
   boundsMode: CaptureBoundsMode
   displayId?: string
@@ -464,8 +486,29 @@ type CursorTrackerRuntime = {
   lastSpeed: number
   stillFrames: number
   lastClickAt: number
+  useHeuristicClick: boolean
+  leftButtonDown: boolean
+  activeGesture: ActiveSelectionGesture | null
   clickCount: number
 }
+
+type CursorTrackEventPayload = NonNullable<CursorTrackPayload['events']>[number]
+
+type ActiveSelectionGesture = {
+  startMs: number
+  startPoint: { x: number; y: number }
+  endPoint: { x: number; y: number }
+  minX: number
+  minY: number
+  maxX: number
+  maxY: number
+  maxDistance: number
+  hasVisiblePoint: boolean
+}
+
+const GESTURE_EVENT_BUFFER_LIMIT = 4_000
+const SELECTION_MIN_DISTANCE_NORM = 0.022
+const SELECTION_MIN_DIMENSION_NORM = 0.012
 
 function pushCursorSample(
   tracker: CursorTrackerRuntime,
@@ -497,6 +540,117 @@ function pushCursorSample(
   }
 
   tracker.lastSampleAt = now
+}
+
+function normalizeEventPoint(point: { x: number; y: number }): { x: number; y: number } {
+  return {
+    x: Math.max(0, Math.min(1, Number.isFinite(point.x) ? point.x : 0)),
+    y: Math.max(0, Math.min(1, Number.isFinite(point.y) ? point.y : 0)),
+  }
+}
+
+function appendCursorEvent(tracker: CursorTrackerRuntime, event: CursorTrackEventPayload): void {
+  tracker.events.push(event)
+  if (tracker.events.length > GESTURE_EVENT_BUFFER_LIMIT) {
+    tracker.events.splice(0, 500)
+  }
+}
+
+function startSelectionGesture(
+  tracker: CursorTrackerRuntime,
+  now: number,
+  point: { x: number; y: number },
+): void {
+  const normalized = normalizeEventPoint(normalizePointToBounds(point, tracker.bounds))
+  const hasVisiblePoint = tracker.boundsMode === 'virtual-desktop' || isPointInsideBounds(point, tracker.bounds, 0.5)
+  tracker.activeGesture = {
+    startMs: Math.max(0, now - tracker.startedAt),
+    startPoint: normalized,
+    endPoint: normalized,
+    minX: normalized.x,
+    minY: normalized.y,
+    maxX: normalized.x,
+    maxY: normalized.y,
+    maxDistance: 0,
+    hasVisiblePoint,
+  }
+}
+
+function updateSelectionGesture(
+  tracker: CursorTrackerRuntime,
+  point: { x: number; y: number },
+): void {
+  if (!tracker.activeGesture) return
+  const gesture = tracker.activeGesture
+  const normalized = normalizeEventPoint(normalizePointToBounds(point, tracker.bounds))
+  gesture.endPoint = normalized
+  gesture.minX = Math.min(gesture.minX, normalized.x)
+  gesture.minY = Math.min(gesture.minY, normalized.y)
+  gesture.maxX = Math.max(gesture.maxX, normalized.x)
+  gesture.maxY = Math.max(gesture.maxY, normalized.y)
+  const distanceFromStart = Math.hypot(normalized.x - gesture.startPoint.x, normalized.y - gesture.startPoint.y)
+  gesture.maxDistance = Math.max(gesture.maxDistance, distanceFromStart)
+  if (!gesture.hasVisiblePoint) {
+    gesture.hasVisiblePoint = tracker.boundsMode === 'virtual-desktop' || isPointInsideBounds(point, tracker.bounds, 0.5)
+  }
+}
+
+function finalizeSelectionGesture(
+  tracker: CursorTrackerRuntime,
+  now: number,
+  point: { x: number; y: number },
+  cursorKind: 'arrow' | 'ibeam',
+): void {
+  if (!tracker.activeGesture) return
+  updateSelectionGesture(tracker, point)
+  const gesture = tracker.activeGesture
+  tracker.activeGesture = null
+
+  if (!gesture.hasVisiblePoint) return
+
+  const endMs = Math.max(gesture.startMs, now - tracker.startedAt)
+  const width = Math.max(0, gesture.maxX - gesture.minX)
+  const height = Math.max(0, gesture.maxY - gesture.minY)
+  const isSelection = (
+    gesture.maxDistance >= SELECTION_MIN_DISTANCE_NORM
+    || width >= SELECTION_MIN_DIMENSION_NORM
+    || height >= SELECTION_MIN_DIMENSION_NORM
+  )
+
+  if (!isSelection) {
+    appendCursorEvent(tracker, {
+      type: 'click',
+      startMs: gesture.startMs,
+      endMs,
+      point: gesture.endPoint,
+      startPoint: gesture.startPoint,
+      endPoint: gesture.endPoint,
+    })
+    pushCursorSample(tracker, now, point, cursorKind, true)
+    return
+  }
+
+  const centerPoint = normalizeEventPoint({
+    x: (gesture.minX + gesture.maxX) / 2,
+    y: (gesture.minY + gesture.maxY) / 2,
+  })
+
+  appendCursorEvent(tracker, {
+    type: 'selection',
+    startMs: gesture.startMs,
+    endMs,
+    point: centerPoint,
+    startPoint: gesture.startPoint,
+    endPoint: gesture.endPoint,
+    bounds: {
+      minX: gesture.minX,
+      minY: gesture.minY,
+      maxX: gesture.maxX,
+      maxY: gesture.maxY,
+      width,
+      height,
+    },
+  })
 }
 
 function normalizeSourceRef(input?: CaptureSourceRef | SelectedSource | null): CaptureSourceRef | undefined {
@@ -621,9 +775,99 @@ function sanitizeCursorTrack(input?: CurrentVideoMetadata['cursorTrack'] | null)
     .sort((a, b) => a.timeMs - b.timeMs)
 
   if (samples.length === 0) return undefined
+  const events = Array.isArray(input.events)
+    ? input.events
+      .slice(0, 1_200)
+      .map((event) => {
+        if (!event || typeof event !== 'object') return null
+        const type: 'click' | 'selection' | null = event.type === 'selection' ? 'selection' : event.type === 'click' ? 'click' : null
+        if (!type) return null
+
+        const startMs = Number(event.startMs)
+        const endMs = Number(event.endMs)
+        const pointX = Number(event.point?.x)
+        const pointY = Number(event.point?.y)
+        if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || !Number.isFinite(pointX) || !Number.isFinite(pointY)) {
+          return null
+        }
+
+        const normalizedStartMs = Math.max(0, Math.round(startMs))
+        const normalizedEndMs = Math.max(normalizedStartMs, Math.round(endMs))
+        const normalizedPoint = {
+          x: Math.min(1, Math.max(0, pointX)),
+          y: Math.min(1, Math.max(0, pointY)),
+        }
+
+        const startPointX = Number(event.startPoint?.x)
+        const startPointY = Number(event.startPoint?.y)
+        const normalizedStartPoint = Number.isFinite(startPointX) && Number.isFinite(startPointY)
+          ? {
+            x: Math.min(1, Math.max(0, startPointX)),
+            y: Math.min(1, Math.max(0, startPointY)),
+          }
+          : undefined
+
+        const endPointX = Number(event.endPoint?.x)
+        const endPointY = Number(event.endPoint?.y)
+        const normalizedEndPoint = Number.isFinite(endPointX) && Number.isFinite(endPointY)
+          ? {
+            x: Math.min(1, Math.max(0, endPointX)),
+            y: Math.min(1, Math.max(0, endPointY)),
+          }
+          : undefined
+
+        const boundsMinX = Number(event.bounds?.minX)
+        const boundsMinY = Number(event.bounds?.minY)
+        const boundsMaxX = Number(event.bounds?.maxX)
+        const boundsMaxY = Number(event.bounds?.maxY)
+        const normalizedBounds = [boundsMinX, boundsMinY, boundsMaxX, boundsMaxY].every(Number.isFinite)
+          ? (() => {
+            const minX = Math.min(1, Math.max(0, boundsMinX))
+            const minY = Math.min(1, Math.max(0, boundsMinY))
+            const maxX = Math.max(minX, Math.min(1, Math.max(0, boundsMaxX)))
+            const maxY = Math.max(minY, Math.min(1, Math.max(0, boundsMaxY)))
+            return {
+              minX,
+              minY,
+              maxX,
+              maxY,
+              width: maxX - minX,
+              height: maxY - minY,
+            }
+          })()
+          : undefined
+
+        const normalizedEvent: CursorTrackEventPayload = {
+          type,
+          startMs: normalizedStartMs,
+          endMs: normalizedEndMs,
+          point: normalizedPoint,
+        }
+        if (normalizedStartPoint) {
+          normalizedEvent.startPoint = normalizedStartPoint
+        }
+        if (normalizedEndPoint) {
+          normalizedEvent.endPoint = normalizedEndPoint
+        }
+        if (normalizedBounds) {
+          normalizedEvent.bounds = normalizedBounds
+        }
+        return normalizedEvent
+      })
+      .filter((event): event is NonNullable<typeof event> => Boolean(event))
+      .sort((a, b) => a.startMs - b.startMs)
+    : []
+
+  const clickCountFromEvents = events.reduce((count, event) => count + (event.type === 'click' ? 1 : 0), 0)
+  const clickCountFromSamples = samples.filter((sample) => sample.click).length
+  const clickCountFallback = Math.max(clickCountFromSamples, clickCountFromEvents)
   const normalized: NonNullable<CurrentVideoMetadata['cursorTrack']> = {
     source: input.source === 'synthetic' ? 'synthetic' : 'recorded',
     samples,
+  }
+
+  if (events.length > 0) {
+    normalized.events = events
   }
 
   if (input.space) {
@@ -653,7 +897,7 @@ function sanitizeCursorTrack(input?: CurrentVideoMetadata['cursorTrack'] | null)
     const clickCount = Number(input.stats.clickCount)
     normalized.stats = {
       sampleCount: Number.isFinite(sampleCount) && sampleCount >= 0 ? Math.floor(sampleCount) : samples.length,
-      clickCount: Number.isFinite(clickCount) && clickCount >= 0 ? Math.floor(clickCount) : samples.filter((sample) => sample.click).length,
+      clickCount: Number.isFinite(clickCount) && clickCount >= 0 ? Math.floor(clickCount) : clickCountFallback,
     }
   }
 
@@ -768,10 +1012,17 @@ export function registerIpcHandlers(
       globalThis.clearInterval(cursorTracker.boundsRefreshTimer)
       cursorTracker.boundsRefreshTimer = null
     }
+    if (cursorTracker.activeGesture) {
+      const point = cursorTracker.lastPoint ?? screen.getCursorScreenPoint()
+      finalizeSelectionGesture(cursorTracker, Date.now(), point, getNativeCursorKind())
+      cursorTracker.leftButtonDown = false
+    }
     stopNativeCursorKindMonitor()
+    stopNativeMouseButtonMonitor()
     const payload = sanitizeCursorTrack({
       source: 'recorded',
       samples: cursorTracker.samples,
+      events: cursorTracker.events,
       space: {
         mode: cursorTracker.boundsMode,
         displayId: cursorTracker.displayId,
@@ -794,6 +1045,7 @@ export function registerIpcHandlers(
   ipcMain.handle('cursor-tracker-start', async (_, options?: CursorTrackerStartOptions) => {
     stopCursorTracker()
     await startNativeCursorKindMonitor()
+    const nativeMouseMonitorReady = await startNativeMouseButtonMonitor()
 
     const startedAt = Date.now()
     const initialPoint = screen.getCursorScreenPoint()
@@ -852,11 +1104,32 @@ export function registerIpcHandlers(
 
         const now = Date.now()
         const point = screen.getCursorScreenPoint()
+        const cursorKind = getNativeCursorKind()
+
+        const transitions = drainNativeMouseButtonTransitions()
+        for (const transition of transitions) {
+          if (transition.pressed) {
+            if (!cursorTracker.leftButtonDown) {
+              cursorTracker.leftButtonDown = true
+              startSelectionGesture(cursorTracker, now, point)
+            }
+            continue
+          }
+
+          if (cursorTracker.leftButtonDown) {
+            cursorTracker.leftButtonDown = false
+            finalizeSelectionGesture(cursorTracker, now, point, cursorKind)
+          }
+        }
+
+        if (cursorTracker.leftButtonDown) {
+          updateSelectionGesture(cursorTracker, point)
+        }
 
         if (!cursorTracker.lastPoint) {
           cursorTracker.lastPoint = { x: point.x, y: point.y }
           cursorTracker.lastTickAt = now
-          pushCursorSample(cursorTracker, now, point, getNativeCursorKind(), false)
+          pushCursorSample(cursorTracker, now, point, cursorKind, false)
           return
         }
 
@@ -873,19 +1146,27 @@ export function registerIpcHandlers(
         }
 
         let click = false
-        if (
-          cursorTracker.stillFrames >= 2
-          && cursorTracker.lastSpeed > 950
-          && now - cursorTracker.lastClickAt > 240
-        ) {
-          click = true
-          cursorTracker.lastClickAt = now
-          cursorTracker.stillFrames = 0
+        if (cursorTracker.useHeuristicClick) {
+          if (
+            cursorTracker.stillFrames >= 2
+            && cursorTracker.lastSpeed > 950
+            && now - cursorTracker.lastClickAt > 240
+          ) {
+            click = true
+            cursorTracker.lastClickAt = now
+            cursorTracker.stillFrames = 0
+            appendCursorEvent(cursorTracker, {
+              type: 'click',
+              startMs: Math.max(0, now - cursorTracker.startedAt),
+              endMs: Math.max(0, now - cursorTracker.startedAt),
+              point: normalizeEventPoint(normalizePointToBounds(point, cursorTracker.bounds)),
+            })
+          }
         }
 
         const shouldStore = click || distance >= 0.2 || now - cursorTracker.lastSampleAt >= 33
         if (shouldStore) {
-          pushCursorSample(cursorTracker, now, point, getNativeCursorKind(), click)
+          pushCursorSample(cursorTracker, now, point, cursorKind, click)
         }
 
         cursorTracker.lastSpeed = speed
@@ -896,6 +1177,7 @@ export function registerIpcHandlers(
       refreshingBounds: false,
       startedAt,
       samples: [],
+      events: [],
       bounds: captureBounds,
       boundsMode: captureMode,
       displayId: captureDisplayId,
@@ -908,6 +1190,9 @@ export function registerIpcHandlers(
       lastSpeed: 0,
       stillFrames: 0,
       lastClickAt: 0,
+      useHeuristicClick: !nativeMouseMonitorReady,
+      leftButtonDown: false,
+      activeGesture: null,
       clickCount: 0,
     }
 
@@ -964,12 +1249,21 @@ export function registerIpcHandlers(
     }
     pushCursorSample(tracker, startedAt, initialPoint, getNativeCursorKind(), false)
 
+    const warningMessages: string[] = []
+    const warningCodes: string[] = []
+    if (usingWindowBoundsFallback) {
+      warningCodes.push('window_bounds_fallback')
+      warningMessages.push('Window capture is using fallback bounds mapping. Cursor alignment may be less accurate.')
+    }
+    if (!nativeMouseMonitorReady) {
+      warningCodes.push('mouse_button_fallback')
+      warningMessages.push('Native mouse button monitor is unavailable. Selection-aware auto zoom will fall back to click heuristics.')
+    }
+
     return {
       success: true,
-      warningCode: usingWindowBoundsFallback ? 'window_bounds_fallback' : undefined,
-      warningMessage: usingWindowBoundsFallback
-        ? 'Window capture is using fallback bounds mapping. Cursor alignment may be less accurate.'
-        : undefined,
+      warningCode: warningCodes.length > 0 ? warningCodes.join('+') : undefined,
+      warningMessage: warningMessages.length > 0 ? warningMessages.join(' ') : undefined,
     }
   })
 
