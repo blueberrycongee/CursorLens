@@ -4,8 +4,7 @@
 [简体中文](./README.zh-CN.md)
 
 <p align="center">
-  <img src="public/openscreen.png" alt="CursorLens Logo" width="64" />
-  <br />
+  <img src="icons/icons/png/CursorLens.png" alt="CursorLens Banner" width="720" />
   <br />
   <a href="https://github.com/blueberrycongee/CursorLens">
     <img src="https://img.shields.io/badge/GitHub-CursorLens-181717?logo=github" alt="CursorLens on GitHub" />
