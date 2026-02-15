@@ -1,53 +1,69 @@
-# CursorLens
+> [!WARNING]
+> CursorLens 目前仍处于 Beta 阶段，部分机器上某些流程可能不稳定。
 
 [English](./README.md)
 
-CursorLens 是一个开源桌面录屏与编辑工具，适用于产品演示、教程和讲解视频制作。
+<p align="center">
+  <img src="public/openscreen.png" alt="CursorLens Logo" width="64" />
+  <br />
+  <br />
+  <a href="https://github.com/blueberrycongee/CursorLens">
+    <img src="https://img.shields.io/badge/GitHub-CursorLens-181717?logo=github" alt="CursorLens on GitHub" />
+  </a>
+</p>
 
-本项目基于 [OpenScreen](https://github.com/siddharthvaddem/openscreen) 演进，重点增强了 macOS 原生采集链路、光标工作流与音频录制/导出能力。
+# <p align="center">CursorLens</p>
 
-## 主要改进
+<p align="center"><strong>CursorLens 是一款免费、开源的录屏与编辑工具，面向开发者、创作者和产品团队，用于快速制作产品演示与讲解视频。</strong></p>
 
-- 接入 macOS 原生录制 helper（基于 ScreenCaptureKit 工作流）。
-- 支持采集阶段的原生光标可见性控制。
-- 提升 macOS 窗口录制稳定性。
-- 强化光标元数据与渲染能力（含光标类型支持）。
-- 相机叠加录制走 macOS 原生链路。
-- 录制阶段支持麦克风采集。
-- MP4 导出保留源音轨。
-- 编辑器支持音频开关、音量调节与时间线音频状态显示。
-- 持续优化交互体验、稳定性和多语言支持。
+CursorLens 基于优秀的 [OpenScreen](https://github.com/siddharthvaddem/openscreen) 继续演进，并在 macOS 原生采集与编辑链路上做了大量重构和增强。
 
-## 功能特性
+<p align="center">
+  <img src="public/preview.png" alt="CursorLens 预览 1" style="height: 320px; margin-right: 12px;" />
+  <img src="public/preview2.png" alt="CursorLens 预览 2" style="height: 320px; margin-right: 12px;" />
+  <img src="public/preview3.png" alt="CursorLens 预览 3" style="height: 320px; margin-right: 12px;" />
+  <img src="public/preview4.png" alt="CursorLens 预览 4" style="height: 320px; margin-right: 12px;" />
+</p>
 
-- 录制整个屏幕或指定窗口。
-- 可选相机叠加录制。
-- 可选麦克风录制。
-- 光标感知预览与导出。
-- 支持缩放片段、裁剪片段、画面裁切与注释编辑。
-- 支持 MP4 / GIF 导出。
-- 支持多种画幅比例与质量档位。
+## 核心功能
+
+- 录制整个屏幕或指定应用窗口。
+- macOS 原生录制 helper，支持原生级光标隐藏/显示采集。
+- 相机叠加走原生录制链路。
+- 支持麦克风人声录制，并可在编辑阶段调整增益。
+- 时间线编辑：剪切、裁剪、缩放、光标效果与注释。
+- 编辑器内支持字幕生成与粗剪流程。
+- 支持多画幅导出（16:9、9:16、1:1 等），并支持批量导出。
+- 导出音频支持音轨开关、增益、响度标准化、限幅。
+- 录制体验支持倒计时、自动隐藏启动栏、自定义结束快捷键、权限诊断。
 
 ## 安装
 
-从以下页面下载构建产物：
-
-- [CursorLens Releases](https://github.com/blueberrycongee/CursorLens/releases)
+请从 [GitHub Releases](https://github.com/blueberrycongee/CursorLens/releases) 下载对应平台的最新安装包。
 
 ### macOS
 
-本地未签名构建可能被 Gatekeeper 拦截，必要时可执行：
+如果未签名构建被 Gatekeeper 拦截，可执行：
 
 ```bash
-xattr -rd com.apple.quarantine /Applications/Openscreen.app
+xattr -rd com.apple.quarantine /Applications/CursorLens.app
 ```
 
-随后在 **系统设置 -> 隐私与安全性** 中授予权限：
+然后在 **系统设置 -> 隐私与安全性** 中授予必要权限：
 
-- 屏幕录制
+- 屏幕录制（新版本 macOS 可能显示为“录屏与系统录音”）
 - 辅助功能
-- 麦克风（需要录制人声时）
-- 摄像头（使用相机叠加时）
+- 麦克风（录制人声）
+- 摄像头（相机叠加）
+
+### Linux
+
+从 Releases 下载 `.AppImage` 后执行：
+
+```bash
+chmod +x CursorLens-Linux-*.AppImage
+./CursorLens-Linux-*.AppImage
+```
 
 ## 开发
 
@@ -57,7 +73,7 @@ xattr -rd com.apple.quarantine /Applications/Openscreen.app
 - npm 10+
 - macOS + Xcode Command Line Tools（用于构建原生 helper）
 
-### 开发运行
+### 本地运行
 
 ```bash
 npm install
@@ -67,8 +83,24 @@ npm run dev
 ### 构建
 
 ```bash
-npm run build:mac
+npm run build
 ```
+
+## 技术栈
+
+- Electron
+- React
+- TypeScript
+- Vite
+- PixiJS
+- dnd-timeline
+
+## 参与贡献
+
+欢迎通过 issue 和 PR 参与贡献。
+
+- Issues: [https://github.com/blueberrycongee/CursorLens/issues](https://github.com/blueberrycongee/CursorLens/issues)
+- Discussions: [https://github.com/blueberrycongee/CursorLens/discussions](https://github.com/blueberrycongee/CursorLens/discussions)
 
 ## 致谢
 
@@ -76,4 +108,4 @@ npm run build:mac
 
 ## 许可证
 
-本仓库采用 [MIT License](./LICENSE)。
+本项目采用 [MIT License](./LICENSE)。
