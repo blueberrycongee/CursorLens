@@ -155,6 +155,7 @@ interface Window {
       source?: { id?: string; display_id?: string | number | null }
       cursorMode?: 'always' | 'never'
       microphoneEnabled?: boolean
+      microphoneGain?: number
       cameraEnabled?: boolean
       cameraShape?: 'rounded' | 'square' | 'circle'
       cameraSizePercent?: number

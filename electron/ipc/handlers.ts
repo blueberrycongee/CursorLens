@@ -103,6 +103,7 @@ type NativeRecorderStartOptions = {
   source?: CaptureSourceRef | SelectedSource | null
   cursorMode?: 'always' | 'never'
   microphoneEnabled?: boolean
+  microphoneGain?: number
   cameraEnabled?: boolean
   cameraShape?: 'rounded' | 'square' | 'circle'
   cameraSizePercent?: number
@@ -1459,6 +1460,9 @@ export function registerIpcHandlers(
       const sourceRef = normalizeSourceRef(options?.source) ?? normalizeSourceRef(selectedSource)
       const cursorMode = options?.cursorMode === 'never' ? 'never' : 'always'
       const microphoneEnabled = options?.microphoneEnabled !== false
+      const microphoneGain = Number.isFinite(options?.microphoneGain)
+        ? Math.max(0.5, Math.min(2, Number(options?.microphoneGain)))
+        : 1
       const cameraEnabled = options?.cameraEnabled === true
       const cameraShape = options?.cameraShape === 'square' || options?.cameraShape === 'circle'
         ? options.cameraShape
@@ -1490,6 +1494,7 @@ export function registerIpcHandlers(
         displayId: sourceRef?.display_id ? String(sourceRef.display_id) : undefined,
         cursorMode,
         microphoneEnabled,
+        microphoneGain,
         cameraEnabled,
         cameraShape,
         cameraSizePercent,

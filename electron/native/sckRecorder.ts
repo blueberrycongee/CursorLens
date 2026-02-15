@@ -11,6 +11,7 @@ export type NativeRecorderStartOptions = {
   displayId?: string
   cursorMode: NativeCursorMode
   microphoneEnabled?: boolean
+  microphoneGain?: number
   cameraEnabled?: boolean
   cameraShape?: 'rounded' | 'square' | 'circle'
   cameraSizePercent?: number
@@ -274,6 +275,9 @@ export async function startNativeMacRecorder(options: NativeRecorderStartOptions
       '--output', options.outputPath,
       '--hide-cursor', options.cursorMode === 'never' ? '1' : '0',
       '--microphone-enabled', options.microphoneEnabled === false ? '0' : '1',
+      '--microphone-gain', String(
+        Math.max(0.5, Math.min(2, Number.isFinite(options.microphoneGain) ? Number(options.microphoneGain) : 1)),
+      ),
       '--fps', String(Math.max(1, Math.min(120, Math.round(options.frameRate || 60)))),
       '--bitrate-scale', String(
         Math.max(0.5, Math.min(2, Number.isFinite(options.bitrateScale) ? Number(options.bitrateScale) : 1)),

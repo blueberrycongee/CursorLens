@@ -19,6 +19,7 @@ type UseScreenRecorderOptions = {
   captureFrameRate?: CaptureFrameRate;
   captureResolutionPreset?: CaptureResolutionPreset;
   recordSystemCursor?: boolean;
+  microphoneGain?: number;
 };
 
 export type CaptureProfile = "balanced" | "quality" | "ultra";
@@ -69,6 +70,11 @@ function isLikelyVirtualCameraLabel(label: string): boolean {
 
 function dedupe<T>(items: T[]): T[] {
   return Array.from(new Set(items));
+}
+
+function normalizeMicrophoneGain(input?: number): number {
+  if (!Number.isFinite(input)) return 1;
+  return Math.max(0.5, Math.min(2, Number(input)));
 }
 
 function combineVideoAndAudioStream(
@@ -131,12 +137,15 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
   const captureFrameRate = options.captureFrameRate;
   const captureResolutionPreset = options.captureResolutionPreset;
   const recordSystemCursor = options.recordSystemCursor ?? true;
+  const microphoneGain = normalizeMicrophoneGain(options.microphoneGain);
   const [recording, setRecording] = useState(false);
   const [recordingState, setRecordingPhase] = useState<"idle" | "starting" | "recording" | "stopping">("idle");
   const mediaRecorder = useRef<MediaRecorder | null>(null);
   const stream = useRef<MediaStream | null>(null);
   const cameraStream = useRef<MediaStream | null>(null);
   const microphoneStream = useRef<MediaStream | null>(null);
+  const microphoneSourceStream = useRef<MediaStream | null>(null);
+  const microphoneAudioContext = useRef<AudioContext | null>(null);
   const chunks = useRef<Blob[]>([]);
   const startTime = useRef<number>(0);
   const compositionCleanup = useRef<(() => void) | null>(null);
@@ -299,9 +308,21 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
       cameraStream.current.getTracks().forEach(track => track.stop());
       cameraStream.current = null;
     }
-    if (microphoneStream.current) {
-      microphoneStream.current.getTracks().forEach(track => track.stop());
+    const processedMicStream = microphoneStream.current;
+    if (processedMicStream) {
+      processedMicStream.getTracks().forEach(track => track.stop());
       microphoneStream.current = null;
+    }
+    const sourceMicStream = microphoneSourceStream.current;
+    if (sourceMicStream && sourceMicStream !== processedMicStream) {
+      sourceMicStream.getTracks().forEach(track => track.stop());
+    }
+    microphoneSourceStream.current = null;
+    if (microphoneAudioContext.current) {
+      void microphoneAudioContext.current.close().catch((error) => {
+        console.warn("Failed to close microphone AudioContext during cleanup.", error);
+      });
+      microphoneAudioContext.current = null;
     }
     if (stream.current) {
       stream.current.getTracks().forEach(track => track.stop());
@@ -727,8 +748,44 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
   };
 
   const captureRequiredMicrophoneStream = async (): Promise<MediaStream> => {
+    const buildAdjustedMicrophoneStream = (sourceStream: MediaStream): MediaStream => {
+      if (Math.abs(microphoneGain - 1) < 0.001) {
+        return sourceStream;
+      }
+
+      const AudioContextConstructor = window.AudioContext
+        || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!AudioContextConstructor) {
+        console.warn("AudioContext is unavailable; microphone gain control is skipped.");
+        return sourceStream;
+      }
+
+      const audioContext = new AudioContextConstructor();
+      const sourceNode = audioContext.createMediaStreamSource(sourceStream);
+      const gainNode = audioContext.createGain();
+      gainNode.gain.value = microphoneGain;
+
+      const limiterNode = audioContext.createDynamicsCompressor();
+      limiterNode.threshold.value = -1;
+      limiterNode.knee.value = 0;
+      limiterNode.ratio.value = 20;
+      limiterNode.attack.value = 0.003;
+      limiterNode.release.value = 0.1;
+
+      const destination = audioContext.createMediaStreamDestination();
+      sourceNode.connect(gainNode);
+      gainNode.connect(limiterNode);
+      limiterNode.connect(destination);
+
+      microphoneAudioContext.current = audioContext;
+      void audioContext.resume().catch((error) => {
+        console.warn("Failed to resume microphone AudioContext for gain processing.", error);
+      });
+      return destination.stream;
+    };
+
     try {
-      return await navigator.mediaDevices.getUserMedia({
+      const sourceStream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
@@ -736,6 +793,8 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
         },
         video: false,
       });
+      microphoneSourceStream.current = sourceStream;
+      return buildAdjustedMicrophoneStream(sourceStream);
     } catch (error) {
       console.error("Failed to acquire microphone stream for recording.", error);
       throw new Error(
@@ -814,6 +873,7 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
             source: sourceRef,
             cursorMode,
             microphoneEnabled: true,
+            microphoneGain,
             cameraEnabled,
             cameraShape,
             cameraSizePercent,
@@ -1163,6 +1223,7 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
           cameraShape,
           cameraSizePercent,
           captureProfile,
+          microphoneGain,
           recordSystemCursor,
           normalizedMessage: message,
         },

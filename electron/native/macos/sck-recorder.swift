@@ -1,6 +1,7 @@
 import Foundation
 import AppKit
 import AVFoundation
+import AudioToolbox
 import CoreGraphics
 import CoreMedia
 import CoreVideo
@@ -32,6 +33,7 @@ struct RecorderArguments {
     let displayId: String?
     let hideCursor: Bool
     let microphoneEnabled: Bool
+    let microphoneGain: Float
     let fps: Int
     let bitrateScale: Double
     let targetWidth: Int?
@@ -46,6 +48,7 @@ struct RecorderArguments {
         var displayId: String?
         var hideCursor = false
         var microphoneEnabled = true
+        var microphoneGain: Float = 1
         var fps = 60
         var bitrateScale = 1.0
         var targetWidth: Int?
@@ -76,6 +79,11 @@ struct RecorderArguments {
             case "--microphone-enabled":
                 guard let value = next else { throw RecorderError.invalidArguments("Missing --microphone-enabled value") }
                 microphoneEnabled = value == "1" || value.lowercased() == "true"
+                idx += 2
+            case "--microphone-gain":
+                if let value = next, let parsed = Float(value), parsed.isFinite {
+                    microphoneGain = parsed
+                }
                 idx += 2
             case "--fps":
                 guard let value = next, let parsed = Int(value), parsed > 0 else {
@@ -123,6 +131,7 @@ struct RecorderArguments {
 
         let clampedSizePercent = max(14, min(40, cameraSizePercent))
         let clampedBitrateScale = max(0.5, min(2.0, bitrateScale))
+        let clampedMicrophoneGain = max(Float(0.5), min(Float(2), microphoneGain))
 
         return RecorderArguments(
             outputPath: outputPath,
@@ -130,6 +139,7 @@ struct RecorderArguments {
             displayId: displayId,
             hideCursor: hideCursor,
             microphoneEnabled: microphoneEnabled,
+            microphoneGain: clampedMicrophoneGain,
             fps: fps,
             bitrateScale: clampedBitrateScale,
             targetWidth: targetWidth,
@@ -352,6 +362,14 @@ final class MicrophoneCaptureProvider: NSObject, AVCaptureAudioDataOutputSampleB
 
         let input = try AVCaptureDeviceInput(device: device)
         let output = AVCaptureAudioDataOutput()
+        output.audioSettings = [
+            AVFormatIDKey: kAudioFormatLinearPCM,
+            AVLinearPCMBitDepthKey: 32,
+            AVLinearPCMIsFloatKey: true,
+            AVLinearPCMIsNonInterleaved: false,
+            AVSampleRateKey: 44_100,
+            AVNumberOfChannelsKey: 1,
+        ]
         output.setSampleBufferDelegate(self, queue: outputQueue)
 
         session.beginConfiguration()
@@ -386,6 +404,8 @@ final class MicrophoneCaptureProvider: NSObject, AVCaptureAudioDataOutputSampleB
 }
 
 final class ScreenStreamWriter: NSObject, SCStreamOutput {
+    private static let microphoneLimiterCeiling: Float = 0.98
+
     private let writer: AVAssetWriter
     private let input: AVAssetWriterInput
     private let audioInput: AVAssetWriterInput?
@@ -395,6 +415,7 @@ final class ScreenStreamWriter: NSObject, SCStreamOutput {
     ])
     private let colorSpace = CGColorSpaceCreateDeviceRGB()
     private let audioQueue = DispatchQueue(label: "com.cursorlens.sck-recorder.audio-writer")
+    private let microphoneGain: Float
 
     private let videoWidth: Int
     private let videoHeight: Int
@@ -415,6 +436,7 @@ final class ScreenStreamWriter: NSObject, SCStreamOutput {
         fps: Int,
         bitrateScale: Double,
         microphoneEnabled: Bool,
+        microphoneGain: Float,
         cameraProvider: CameraCaptureProvider?,
         cameraShape: CameraOverlayShape,
         cameraSizePercent: Int
@@ -472,6 +494,7 @@ final class ScreenStreamWriter: NSObject, SCStreamOutput {
 
         videoWidth = width
         videoHeight = height
+        self.microphoneGain = max(Float(0.5), min(Float(2), microphoneGain))
         self.cameraProvider = cameraProvider
         hasMicrophoneAudio = microphoneEnabled
 
@@ -565,8 +588,88 @@ final class ScreenStreamWriter: NSObject, SCStreamOutput {
             guard relativePTS >= .zero else { return }
 
             guard let shiftedSampleBuffer = self.shiftSampleBufferTiming(sampleBuffer, by: firstPTS) else { return }
-            _ = audioInput.append(shiftedSampleBuffer)
+            let processedSampleBuffer = self.applyMicrophoneGainAndLimiter(to: shiftedSampleBuffer)
+            _ = audioInput.append(processedSampleBuffer)
         }
+    }
+
+    private func applyMicrophoneGainAndLimiter(to sampleBuffer: CMSampleBuffer) -> CMSampleBuffer {
+        if abs(microphoneGain - 1) < 0.0001 {
+            return sampleBuffer
+        }
+
+        var mutableSampleBuffer: CMSampleBuffer?
+        let copyStatus = CMSampleBufferCreateCopy(
+            allocator: kCFAllocatorDefault,
+            sampleBuffer: sampleBuffer,
+            sampleBufferOut: &mutableSampleBuffer
+        )
+        guard copyStatus == noErr, let mutableSampleBuffer else {
+            return sampleBuffer
+        }
+
+        guard let formatDescription = CMSampleBufferGetFormatDescription(mutableSampleBuffer),
+              let asbdPtr = CMAudioFormatDescriptionGetStreamBasicDescription(formatDescription) else {
+            return mutableSampleBuffer
+        }
+        let asbd = asbdPtr.pointee
+        let isFloat = (asbd.mFormatFlags & kAudioFormatFlagIsFloat) != 0
+        let isSignedInteger = (asbd.mFormatFlags & kAudioFormatFlagIsSignedInteger) != 0
+        let bitsPerChannel = Int(asbd.mBitsPerChannel)
+
+        var blockBuffer: CMBlockBuffer?
+        var audioBufferList = AudioBufferList(
+            mNumberBuffers: 1,
+            mBuffers: AudioBuffer(
+                mNumberChannels: asbd.mChannelsPerFrame,
+                mDataByteSize: 0,
+                mData: nil
+            )
+        )
+
+        let listStatus = CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
+            mutableSampleBuffer,
+            bufferListSizeNeededOut: nil,
+            bufferListOut: &audioBufferList,
+            bufferListSize: MemoryLayout<AudioBufferList>.size,
+            blockBufferAllocator: kCFAllocatorDefault,
+            blockBufferMemoryAllocator: kCFAllocatorDefault,
+            flags: UInt32(kCMSampleBufferFlag_AudioBufferList_Assure16ByteAlignment),
+            blockBufferOut: &blockBuffer
+        )
+        guard listStatus == noErr else {
+            return mutableSampleBuffer
+        }
+
+        let limiterCeiling = Self.microphoneLimiterCeiling
+        let audioBuffers = UnsafeMutableAudioBufferListPointer(&audioBufferList)
+
+        for audioBuffer in audioBuffers {
+            guard let data = audioBuffer.mData else { continue }
+
+            if isFloat && bitsPerChannel == 32 {
+                let sampleCount = Int(audioBuffer.mDataByteSize) / MemoryLayout<Float>.size
+                let pointer = data.bindMemory(to: Float.self, capacity: sampleCount)
+                for sampleIndex in 0..<sampleCount {
+                    let amplified = pointer[sampleIndex] * microphoneGain
+                    pointer[sampleIndex] = max(-limiterCeiling, min(limiterCeiling, amplified))
+                }
+                continue
+            }
+
+            if isSignedInteger && bitsPerChannel == 16 {
+                let sampleCount = Int(audioBuffer.mDataByteSize) / MemoryLayout<Int16>.size
+                let pointer = data.bindMemory(to: Int16.self, capacity: sampleCount)
+                let maxSample = Float(Int16.max) * limiterCeiling
+                for sampleIndex in 0..<sampleCount {
+                    let amplified = Float(pointer[sampleIndex]) * microphoneGain
+                    let limited = max(-maxSample, min(maxSample, amplified))
+                    pointer[sampleIndex] = Int16(limited)
+                }
+            }
+        }
+
+        return mutableSampleBuffer
     }
 
     private func shiftSampleBufferTiming(_ sampleBuffer: CMSampleBuffer, by offset: CMTime) -> CMSampleBuffer? {
@@ -844,6 +947,7 @@ final class SCKRecorder {
                 fps: args.fps,
                 bitrateScale: args.bitrateScale,
                 microphoneEnabled: args.microphoneEnabled,
+                microphoneGain: args.microphoneGain,
                 cameraProvider: cameraProvider,
                 cameraShape: args.cameraShape,
                 cameraSizePercent: args.cameraSizePercent

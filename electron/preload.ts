@@ -84,14 +84,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setRecordingState: (recording: boolean) => {
     return ipcRenderer.invoke('set-recording-state', recording)
   },
-  startNativeScreenRecording: (options?: {
-    source?: { id?: string; display_id?: string | number | null }
-    cursorMode?: 'always' | 'never'
-    microphoneEnabled?: boolean
-    cameraEnabled?: boolean
-    cameraShape?: 'rounded' | 'square' | 'circle'
-    cameraSizePercent?: number
-    frameRate?: number
+    startNativeScreenRecording: (options?: {
+      source?: { id?: string; display_id?: string | number | null }
+      cursorMode?: 'always' | 'never'
+      microphoneEnabled?: boolean
+      microphoneGain?: number
+      cameraEnabled?: boolean
+      cameraShape?: 'rounded' | 'square' | 'circle'
+      cameraSizePercent?: number
+      frameRate?: number
     maxLongEdge?: number
     bitrateScale?: number
     width?: number

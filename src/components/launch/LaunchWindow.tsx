@@ -32,6 +32,7 @@ const AUTO_HIDE_HUD_ON_RECORD_STORAGE_KEY = "openscreen.autoHideHudOnRecord";
 const CAPTURE_MODE_STORAGE_KEY = "openscreen.captureMode";
 const CAPTURE_FRAME_RATE_STORAGE_KEY = "openscreen.captureFrameRate";
 const CAPTURE_RESOLUTION_STORAGE_KEY = "openscreen.captureResolutionPreset";
+const MICROPHONE_GAIN_STORAGE_KEY = "openscreen.microphoneGain";
 type RecordCountdownSeconds = (typeof RECORD_COUNTDOWN_CYCLE)[number];
 type CaptureMode = "standard" | "pro";
 type SelectedSourceSnapshot = {
@@ -183,6 +184,17 @@ export function LaunchWindow() {
     }
     return "auto";
   });
+  const [microphoneGain, setMicrophoneGain] = useState<number>(() => {
+    try {
+      const value = Number(window.localStorage.getItem(MICROPHONE_GAIN_STORAGE_KEY));
+      if (Number.isFinite(value)) {
+        return clamp(value, 0.5, 2);
+      }
+    } catch {
+      // no-op
+    }
+    return 1;
+  });
   const [recordSystemCursor, setRecordSystemCursor] = useState(() => {
     try {
       const value = window.localStorage.getItem("openscreen.recordSystemCursor");
@@ -230,6 +242,7 @@ export function LaunchWindow() {
     captureFrameRate: captureMode === "pro" ? captureFrameRate : undefined,
     captureResolutionPreset: captureMode === "pro" ? captureResolutionPreset : undefined,
     recordSystemCursor,
+    microphoneGain,
   });
   const isTransitioning = recordingState === "starting" || recordingState === "stopping";
   const [countdownRemaining, setCountdownRemaining] = useState<number | null>(null);
@@ -331,6 +344,14 @@ export function LaunchWindow() {
       // no-op
     }
   }, [captureResolutionPreset]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(MICROPHONE_GAIN_STORAGE_KEY, String(microphoneGain));
+    } catch {
+      // no-op
+    }
+  }, [microphoneGain]);
 
   useEffect(() => {
     try {
@@ -948,6 +969,25 @@ export function LaunchWindow() {
                 </div>
               </>
             )}
+
+            <div className="mt-2 border-t border-white/10 pt-2">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-[10px] text-white/65">{t("launch.microphoneGain")}</span>
+                <span className="text-[10px] font-mono text-white/85">{Math.round(microphoneGain * 100)}%</span>
+              </div>
+              <input
+                type="range"
+                min={0.5}
+                max={2}
+                step={0.05}
+                value={microphoneGain}
+                onChange={(event) => setMicrophoneGain(clamp(Number(event.target.value), 0.5, 2))}
+                disabled={controlsLocked}
+                className={`w-full accent-cyan-400 ${styles.electronNoDrag}`}
+                title={t("launch.microphoneGainHint")}
+              />
+              <div className="mt-1 text-[9px] text-white/45">{t("launch.microphoneGainHint")}</div>
+            </div>
           </PopoverContent>
         </Popover>
 
