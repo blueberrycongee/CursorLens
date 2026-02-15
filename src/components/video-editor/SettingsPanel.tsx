@@ -102,6 +102,12 @@ interface SettingsPanelProps {
   onAudioEnabledChange?: (enabled: boolean) => void;
   audioGain?: number;
   onAudioGainChange?: (gain: number) => void;
+  audioNormalizeLoudness?: boolean;
+  onAudioNormalizeLoudnessChange?: (enabled: boolean) => void;
+  audioTargetLufs?: number;
+  onAudioTargetLufsChange?: (value: number) => void;
+  audioLimiterDb?: number;
+  onAudioLimiterDbChange?: (value: number) => void;
   cursorStyle?: CursorStyleConfig;
   onCursorStyleChange?: (style: CursorStyleConfig) => void;
   onAutoEdit?: () => void;
@@ -185,6 +191,12 @@ export function SettingsPanel({
   onAudioEnabledChange,
   audioGain = 1,
   onAudioGainChange,
+  audioNormalizeLoudness = true,
+  onAudioNormalizeLoudnessChange,
+  audioTargetLufs = -16,
+  onAudioTargetLufsChange,
+  audioLimiterDb = -1,
+  onAudioLimiterDbChange,
   cursorStyle = DEFAULT_CURSOR_STYLE,
   onCursorStyleChange,
   onAutoEdit,
@@ -725,7 +737,7 @@ export function SettingsPanel({
                     />
                   </div>
                   {hasAudioTrack ? (
-                    <div>
+                    <div className="space-y-2">
                       <div className="flex items-center justify-between mb-1">
                         <div className="text-[10px] text-slate-400">{t("settings.audioVolume")}</div>
                         <span className="text-[10px] text-slate-500 font-mono">{Math.round(audioGain * 100)}%</span>
@@ -739,6 +751,48 @@ export function SettingsPanel({
                         disabled={!audioEnabled}
                         className="w-full [&_[role=slider]]:bg-[#34B27B] [&_[role=slider]]:border-[#34B27B] [&_[role=slider]]:h-3 [&_[role=slider]]:w-3 disabled:opacity-50"
                       />
+                      <div className="mt-1 rounded-md border border-white/10 bg-black/20 p-2">
+                        <div className="flex items-center justify-between">
+                          <div className="text-[10px] text-slate-300">{t("settings.audioNormalizeLoudness")}</div>
+                          <Switch
+                            checked={audioNormalizeLoudness}
+                            disabled={!audioEnabled}
+                            onCheckedChange={onAudioNormalizeLoudnessChange}
+                            className="data-[state=checked]:bg-[#34B27B] scale-90 disabled:opacity-50"
+                          />
+                        </div>
+                        <div className="mt-1 text-[10px] text-slate-500">{t("settings.audioNormalizeHint")}</div>
+                        <div className="mt-2">
+                          <div className="flex items-center justify-between mb-1">
+                            <div className="text-[10px] text-slate-400">{t("settings.audioTargetLufs")}</div>
+                            <span className="text-[10px] text-slate-500 font-mono">{audioTargetLufs.toFixed(1)} LUFS</span>
+                          </div>
+                          <Slider
+                            value={[audioTargetLufs]}
+                            onValueChange={(values) => onAudioTargetLufsChange?.(values[0])}
+                            min={-24}
+                            max={-12}
+                            step={0.5}
+                            disabled={!audioEnabled || !audioNormalizeLoudness}
+                            className="w-full [&_[role=slider]]:bg-[#34B27B] [&_[role=slider]]:border-[#34B27B] [&_[role=slider]]:h-3 [&_[role=slider]]:w-3 disabled:opacity-50"
+                          />
+                        </div>
+                        <div className="mt-2">
+                          <div className="flex items-center justify-between mb-1">
+                            <div className="text-[10px] text-slate-400">{t("settings.audioLimiterCeiling")}</div>
+                            <span className="text-[10px] text-slate-500 font-mono">{audioLimiterDb.toFixed(1)} dBFS</span>
+                          </div>
+                          <Slider
+                            value={[audioLimiterDb]}
+                            onValueChange={(values) => onAudioLimiterDbChange?.(values[0])}
+                            min={-6}
+                            max={-0.1}
+                            step={0.1}
+                            disabled={!audioEnabled}
+                            className="w-full [&_[role=slider]]:bg-[#34B27B] [&_[role=slider]]:border-[#34B27B] [&_[role=slider]]:h-3 [&_[role=slider]]:w-3 disabled:opacity-50"
+                          />
+                        </div>
+                      </div>
                     </div>
                   ) : (
                     <div className="text-[10px] text-slate-500">{t("settings.audioTrackMissing")}</div>

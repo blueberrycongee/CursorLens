@@ -325,6 +325,9 @@ export default function VideoEditor() {
   const [sourceHasAudio, setSourceHasAudio] = useState(true);
   const [audioEnabled, setAudioEnabled] = useState(true);
   const [audioGain, setAudioGain] = useState(1);
+  const [audioNormalizeLoudness, setAudioNormalizeLoudness] = useState(true);
+  const [audioTargetLufs, setAudioTargetLufs] = useState(-16);
+  const [audioLimiterDb, setAudioLimiterDb] = useState(-1);
   const [cursorTrack, setCursorTrack] = useState<CursorTrack | null>(null);
   const [cursorStyle, setCursorStyle] = useState<CursorStyleConfig>(DEFAULT_CURSOR_STYLE);
   const [subtitleCues, setSubtitleCues] = useState<SubtitleCue[]>([]);
@@ -1246,6 +1249,11 @@ export default function VideoEditor() {
             audioEditRegions,
             audioEnabled: sourceHasAudio && audioEnabled,
             audioGain,
+            audioProcessing: {
+              normalizeLoudness: audioNormalizeLoudness,
+              targetLufs: audioTargetLufs,
+              limiterDb: audioLimiterDb,
+            },
             onProgress: (progress: ExportProgress) => {
               setExportProgress(progress);
             },
@@ -1319,7 +1327,7 @@ export default function VideoEditor() {
       setShowExportDialog(false);
       setExportProgress(null);
     }
-  }, [videoPath, wallpaper, zoomRegions, zoomRegionsByAspect, trimRegions, shadowIntensity, showBlur, motionBlurEnabled, borderRadius, padding, activeCropRegion, cropRegionsByAspect, sourceAspectRatio, annotationRegions, subtitleCues, isPlaying, normalizedExportAspectRatios, exportQuality, locale, sourceFrameRate, sourceHasAudio, audioEnabled, audioGain, audioEditRegions, cursorTrack, cursorStyle, t]);
+  }, [videoPath, wallpaper, zoomRegions, zoomRegionsByAspect, trimRegions, shadowIntensity, showBlur, motionBlurEnabled, borderRadius, padding, activeCropRegion, cropRegionsByAspect, sourceAspectRatio, annotationRegions, subtitleCues, isPlaying, normalizedExportAspectRatios, exportQuality, locale, sourceFrameRate, sourceHasAudio, audioEnabled, audioGain, audioNormalizeLoudness, audioTargetLufs, audioLimiterDb, audioEditRegions, cursorTrack, cursorStyle, t]);
 
   const handleOpenExportDialog = useCallback(() => {
     if (!videoPath) {
@@ -1567,6 +1575,12 @@ export default function VideoEditor() {
           onAudioEnabledChange={setAudioEnabled}
           audioGain={audioGain}
           onAudioGainChange={setAudioGain}
+          audioNormalizeLoudness={audioNormalizeLoudness}
+          onAudioNormalizeLoudnessChange={setAudioNormalizeLoudness}
+          audioTargetLufs={audioTargetLufs}
+          onAudioTargetLufsChange={setAudioTargetLufs}
+          audioLimiterDb={audioLimiterDb}
+          onAudioLimiterDbChange={setAudioLimiterDb}
           cursorStyle={cursorStyle}
           onCursorStyleChange={setCursorStyle}
           onAutoEdit={handleAutoEdit}
