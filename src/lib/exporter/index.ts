@@ -10,6 +10,7 @@ export type {
   ExportResult, 
   VideoFrameData, 
   ExportQuality,
+  ExportAudioProcessingConfig,
   ExportFormat,
   GifFrameRate,
   GifSizePreset,

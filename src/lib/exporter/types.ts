@@ -1,3 +1,11 @@
+export interface ExportAudioProcessingConfig {
+  normalizeLoudness?: boolean;
+  targetLufs?: number;
+  limiterDb?: number;
+  maxBoostDb?: number;
+  maxCutDb?: number;
+}
+
 export interface ExportConfig {
   width: number;
   height: number;
@@ -6,6 +14,7 @@ export interface ExportConfig {
   codec?: string;
   audioEnabled?: boolean;
   audioGain?: number;
+  audioProcessing?: ExportAudioProcessingConfig;
 }
 
 export interface ExportProgress {

@@ -7,6 +7,12 @@ import type { SubtitleCue } from '@/lib/analysis/types';
 import { frameDurationUs, frameIndexToTimestampUs, normalizeFrameRate } from './frameClock';
 import type { CursorStyleConfig, CursorTrack } from '@/lib/cursor';
 import { getAudioEditGainMultiplierAtTime, normalizeAudioEditRegions } from '@/lib/audio/audioEditRegions';
+import {
+  normalizeExportAudioProcessingConfig,
+  resolveExportAudioNormalizationGain,
+  type AudioEnergyStats,
+  type NormalizedExportAudioProcessingConfig,
+} from '@/lib/audio/exportAudioProcessing';
 import { ALL_FORMATS, AudioBufferSink, BlobSource, Input, UrlSource, type InputAudioTrack } from 'mediabunny';
 
 interface VideoExporterConfig extends ExportConfig {
@@ -40,6 +46,13 @@ type TimeRangeMs = {
 type AudioGainSegment = {
   startMs: number;
   endMs: number;
+  gain: number;
+};
+
+type AudioFrameSlice = {
+  sourceBuffer: AudioBuffer;
+  startFrame: number;
+  endFrame: number;
   gain: number;
 };
 
@@ -249,9 +262,11 @@ export class VideoExporter {
   private sourceAudioInput: Input | null = null;
   private sourceAudioTrack: InputAudioTrack | null = null;
   private readonly warnings = new Set<string>();
+  private readonly audioProcessing: NormalizedExportAudioProcessingConfig;
 
   constructor(config: VideoExporterConfig) {
     const audioGain = clampAudioGain(config.audioGain);
+    this.audioProcessing = normalizeExportAudioProcessingConfig(config.audioProcessing);
     this.config = {
       ...config,
       audioEnabled: config.audioEnabled !== false,
@@ -385,6 +400,7 @@ export class VideoExporter {
     startFrame: number,
     endFrame: number,
     gain: number,
+    limiterLinear: number,
   ): AudioBuffer | null {
     const safeStart = Math.max(0, Math.min(startFrame, sourceBuffer.length));
     const safeEnd = Math.max(safeStart, Math.min(endFrame, sourceBuffer.length));
@@ -404,25 +420,28 @@ export class VideoExporter {
       const source = sourceBuffer.getChannelData(channel);
       const target = sliced.getChannelData(channel);
 
-      if (gain === 1) {
+      if (gain === 1 && limiterLinear >= 0.9999) {
         target.set(source.subarray(safeStart, safeEnd));
         continue;
       }
 
       for (let i = 0; i < frameCount; i += 1) {
-        target[i] = source[safeStart + i] * gain;
+        const scaled = source[safeStart + i] * gain;
+        target[i] = Math.max(-limiterLinear, Math.min(limiterLinear, scaled));
       }
     }
 
     return sliced;
   }
 
-  private async exportAudioTrack(): Promise<void> {
-    if (!this.sourceAudioTrack || !this.muxer || this.sourceDurationMs <= 0 || this.cancelled) {
+  private async forEachAudioFrameSlice(
+    baseGain: number,
+    visitor: (slice: AudioFrameSlice) => Promise<void> | void,
+  ): Promise<void> {
+    if (!this.sourceAudioTrack || this.sourceDurationMs <= 0 || this.cancelled) {
       return;
     }
 
-    const baseGain = clampAudioGain(this.config.audioGain);
     const keptRanges = buildKeptRanges(this.sourceDurationMs, this.config.trimRegions);
     if (keptRanges.length === 0) {
       return;
@@ -465,16 +484,96 @@ export class VideoExporter {
         for (const segment of gainSegments) {
           const startFrame = Math.floor(((segment.startMs - bufferStartMs) / 1000) * sampleRate);
           const endFrame = Math.ceil(((segment.endMs - bufferStartMs) / 1000) * sampleRate);
-          const slice = this.createAudioSlice(sourceBuffer, startFrame, endFrame, segment.gain);
-
-          if (!slice) {
+          if (endFrame <= startFrame) {
             continue;
           }
 
-          await this.muxer.addAudioBuffer(slice);
+          await visitor({
+            sourceBuffer,
+            startFrame,
+            endFrame,
+            gain: segment.gain,
+          });
         }
       }
     }
+  }
+
+  private accumulateAudioEnergyStats(
+    stats: AudioEnergyStats,
+    sourceBuffer: AudioBuffer,
+    startFrame: number,
+    endFrame: number,
+    gain: number,
+  ): void {
+    if (!Number.isFinite(gain) || gain <= 0) {
+      return;
+    }
+
+    const safeStart = Math.max(0, Math.min(startFrame, sourceBuffer.length));
+    const safeEnd = Math.max(safeStart, Math.min(endFrame, sourceBuffer.length));
+    if (safeEnd <= safeStart) {
+      return;
+    }
+
+    for (let channel = 0; channel < sourceBuffer.numberOfChannels; channel += 1) {
+      const source = sourceBuffer.getChannelData(channel);
+      for (let frame = safeStart; frame < safeEnd; frame += 1) {
+        const sample = source[frame] * gain;
+        const absSample = Math.abs(sample);
+        stats.peakAbs = Math.max(stats.peakAbs, absSample);
+        stats.sumSquares += sample * sample;
+        stats.sampleCount += 1;
+      }
+    }
+  }
+
+  private async exportAudioTrack(): Promise<void> {
+    if (!this.sourceAudioTrack || !this.muxer || this.sourceDurationMs <= 0 || this.cancelled) {
+      return;
+    }
+    const muxer = this.muxer;
+
+    const baseGain = clampAudioGain(this.config.audioGain);
+    const stats: AudioEnergyStats = {
+      sampleCount: 0,
+      sumSquares: 0,
+      peakAbs: 0,
+    };
+
+    if (this.audioProcessing.normalizeLoudness) {
+      await this.forEachAudioFrameSlice(baseGain, async (slice) => {
+        this.accumulateAudioEnergyStats(
+          stats,
+          slice.sourceBuffer,
+          slice.startFrame,
+          slice.endFrame,
+          slice.gain,
+        );
+      });
+    }
+
+    const normalization = resolveExportAudioNormalizationGain({
+      stats,
+      processing: this.audioProcessing,
+    });
+    const globalGain = normalization.appliedGain;
+    const limiterLinear = this.audioProcessing.limiterLinear;
+
+    await this.forEachAudioFrameSlice(baseGain, async (slice) => {
+      const sliceGain = slice.gain * globalGain;
+      const audioSlice = this.createAudioSlice(
+        slice.sourceBuffer,
+        slice.startFrame,
+        slice.endFrame,
+        sliceGain,
+        limiterLinear,
+      );
+      if (!audioSlice) {
+        return;
+      }
+      await muxer.addAudioBuffer(audioSlice);
+    });
   }
 
   async export(): Promise<ExportResult> {
