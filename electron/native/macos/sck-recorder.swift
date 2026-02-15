@@ -1064,13 +1064,13 @@ final class SCKRecorder {
     private func mapStreamStartError(_ error: Error, sourceKind: String) -> RecorderError {
         let nsError = error as NSError
         let localized = nsError.localizedDescription
-        let normalized = localized.lowercased()
 
-        if normalized.contains("not authorized") || normalized.contains("permission") || normalized.contains("denied") {
+        if looksLikePermissionError(nsError) {
             return .permissionDenied(permissionGuidance)
         }
 
         if sourceKind == "window" {
+            let normalized = localized.lowercased()
             if normalized.contains("protected")
                 || normalized.contains("not shar")
                 || normalized.contains("cannot be captured")
@@ -1078,22 +1078,51 @@ final class SCKRecorder {
             {
                 return .windowCaptureDenied("macOS marked this window as protected content and blocked capture.")
             }
-            return .windowCaptureDenied("The selected window failed to start capture. Keep the window visible and try again.")
+            return .windowCaptureDenied("The selected window failed to start capture. Keep the window visible and try again. (domain: \(nsError.domain), code: \(nsError.code))")
         }
 
-        return .streamStartFailed(localized)
+        return .streamStartFailed("\(localized) (domain: \(nsError.domain), code: \(nsError.code))")
     }
 
     private func mapShareableContentError(_ error: Error) -> RecorderError {
         let nsError = error as NSError
         let localized = nsError.localizedDescription
-        let normalized = localized.lowercased()
 
-        if normalized.contains("not authorized") || normalized.contains("permission") || normalized.contains("denied") {
+        if looksLikePermissionError(nsError) {
             return .permissionDenied(permissionGuidance)
         }
 
-        return .streamStartFailed("Failed to enumerate shareable content: \(localized)")
+        return .streamStartFailed("Failed to enumerate shareable content: \(localized) (domain: \(nsError.domain), code: \(nsError.code))")
+    }
+
+    private func looksLikePermissionError(_ error: NSError) -> Bool {
+        let normalized = error.localizedDescription.lowercased()
+        let tokens = [
+            "permission",
+            "not authorized",
+            "denied",
+            "not permitted",
+            "unauthorized",
+            "没有权限",
+            "無權限",
+            "无权限",
+            "未授权",
+            "未授權",
+            "拒绝",
+            "拒絕",
+            "不允许",
+            "不允許",
+            "屏幕录制",
+            "螢幕錄製",
+            "screen recording",
+        ]
+        if tokens.contains(where: { normalized.contains($0.lowercased()) }) {
+            return true
+        }
+
+        // ScreenCaptureKit and TCC failures may report localized text; preserve a
+        // domain/code fallback so permission failures don't get misclassified.
+        return error.domain.lowercased().contains("tcc")
     }
 
     private func resolveWindowCaptureSize(window: SCWindow, displays: [SCDisplay]) -> (width: Int, height: Int) {
