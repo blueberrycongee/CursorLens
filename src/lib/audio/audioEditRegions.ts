@@ -1,7 +1,7 @@
 import type { AudioEditRegion } from '@/components/video-editor/types'
 
 const MIN_AUDIO_EDIT_DURATION_MS = 20
-const MAX_PREVIEW_VOLUME = 1
+const MAX_PREVIEW_VOLUME = 2
 const AUDIO_GAIN_EPSILON = 0.0001
 
 function clamp(value: number, min: number, max: number): number {

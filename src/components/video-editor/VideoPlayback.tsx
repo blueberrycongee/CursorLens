@@ -61,6 +61,7 @@ interface VideoPlaybackProps {
   hasAudioTrack?: boolean;
   audioEnabled?: boolean;
   audioGain?: number;
+  audioLimiterDb?: number;
   audioEditRegions?: AudioEditRegion[];
   onVideoDimensionsChange?: (dimensions: { width: number; height: number }) => void;
 }
@@ -109,6 +110,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
   hasAudioTrack = true,
   audioEnabled = true,
   audioGain = 1,
+  audioLimiterDb = -1,
   audioEditRegions = [],
   onVideoDimensionsChange,
 }, ref) => {
@@ -150,6 +152,11 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
   const cursorTrackRef = useRef<CursorTrack | null>(cursorTrack);
   const cursorStyleRef = useRef<Partial<CursorStyleConfig>>(cursorStyle ?? DEFAULT_CURSOR_STYLE);
   const cropRegionRef = useRef(cropRegion);
+  const previewAudioContextRef = useRef<AudioContext | null>(null);
+  const previewAudioSourceRef = useRef<MediaElementAudioSourceNode | null>(null);
+  const previewAudioGainRef = useRef<GainNode | null>(null);
+  const previewAudioLimiterRef = useRef<DynamicsCompressorNode | null>(null);
+  const previewAudioGraphEnabledRef = useRef(false);
 
   const normalizeTickerFps = useCallback((fps: number) => {
     if (!Number.isFinite(fps)) return 60;
@@ -158,6 +165,50 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
 
   const clampFocusToStage = useCallback((focus: ZoomFocus, depth: ZoomDepth) => {
     return clampFocusToStageUtil(focus, depth, stageSizeRef.current);
+  }, []);
+
+  const ensurePreviewAudioGraph = useCallback(() => {
+    const video = videoRef.current;
+    if (!video) return false;
+    if (
+      previewAudioGraphEnabledRef.current
+      && previewAudioContextRef.current
+      && previewAudioGainRef.current
+      && previewAudioLimiterRef.current
+    ) {
+      return true;
+    }
+
+    const AudioContextConstructor = window.AudioContext
+      || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioContextConstructor) {
+      return false;
+    }
+
+    try {
+      const context = new AudioContextConstructor();
+      const sourceNode = context.createMediaElementSource(video);
+      const gainNode = context.createGain();
+      const limiterNode = context.createDynamicsCompressor();
+      limiterNode.knee.value = 0;
+      limiterNode.ratio.value = 20;
+      limiterNode.attack.value = 0.003;
+      limiterNode.release.value = 0.1;
+
+      sourceNode.connect(gainNode);
+      gainNode.connect(limiterNode);
+      limiterNode.connect(context.destination);
+
+      previewAudioContextRef.current = context;
+      previewAudioSourceRef.current = sourceNode;
+      previewAudioGainRef.current = gainNode;
+      previewAudioLimiterRef.current = limiterNode;
+      previewAudioGraphEnabledRef.current = true;
+      return true;
+    } catch (error) {
+      console.warn("Failed to initialize preview audio processing graph; falling back to HTML media volume.", error);
+      return false;
+    }
   }, []);
 
   const updateOverlayForRegion = useCallback((region: ZoomRegion | null, focusOverride?: ZoomFocus) => {
@@ -384,6 +435,25 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
   }, [cropRegion]);
 
   useEffect(() => {
+    return () => {
+      previewAudioSourceRef.current?.disconnect();
+      previewAudioGainRef.current?.disconnect();
+      previewAudioLimiterRef.current?.disconnect();
+      previewAudioSourceRef.current = null;
+      previewAudioGainRef.current = null;
+      previewAudioLimiterRef.current = null;
+      previewAudioGraphEnabledRef.current = false;
+
+      if (previewAudioContextRef.current) {
+        void previewAudioContextRef.current.close().catch((error) => {
+          console.warn("Failed to close preview AudioContext during cleanup.", error);
+        });
+        previewAudioContextRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
 
@@ -395,11 +465,39 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
       regions: audioEditRegions,
     });
 
-    video.muted = nextState.muted;
-    if (Math.abs(video.volume - nextState.volume) > 0.0005) {
-      video.volume = nextState.volume;
+    if (ensurePreviewAudioGraph()) {
+      const context = previewAudioContextRef.current;
+      const gainNode = previewAudioGainRef.current;
+      const limiterNode = previewAudioLimiterRef.current;
+      if (context && gainNode && limiterNode) {
+        const limiterThreshold = Number.isFinite(audioLimiterDb)
+          ? Math.max(-6, Math.min(-0.1, audioLimiterDb))
+          : -1;
+        limiterNode.threshold.value = limiterThreshold;
+        const targetGain = nextState.muted ? 0 : nextState.volume;
+        if (Math.abs(gainNode.gain.value - targetGain) > 0.0005) {
+          gainNode.gain.setValueAtTime(targetGain, context.currentTime);
+        }
+
+        video.muted = false;
+        if (Math.abs(video.volume - 1) > 0.0005) {
+          video.volume = 1;
+        }
+        if (!nextState.muted && context.state === "suspended" && !video.paused) {
+          void context.resume().catch((error) => {
+            console.warn("Failed to resume preview AudioContext during playback.", error);
+          });
+        }
+        return;
+      }
     }
-  }, [hasAudioTrack, audioEnabled, audioGain, currentTime, audioEditRegions, videoPath]);
+
+    video.muted = nextState.muted;
+    const clampedVolume = Math.max(0, Math.min(1, nextState.volume));
+    if (Math.abs(video.volume - clampedVolume) > 0.0005) {
+      video.volume = clampedVolume;
+    }
+  }, [hasAudioTrack, audioEnabled, audioGain, audioLimiterDb, currentTime, audioEditRegions, videoPath, ensurePreviewAudioGraph]);
 
   useEffect(() => {
     preferredFpsRef.current = preferredFps;

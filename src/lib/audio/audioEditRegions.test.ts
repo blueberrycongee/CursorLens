@@ -71,4 +71,16 @@ describe('resolvePreviewAudioState', () => {
     expect(state.muted).toBe(false)
     expect(state.volume).toBeCloseTo(0.2, 4)
   })
+
+  it('allows boosting preview gain up to 200%', () => {
+    const state = resolvePreviewAudioState({
+      hasAudioTrack: true,
+      audioEnabled: true,
+      baseGain: 2.5,
+      timeMs: 120,
+      regions: [],
+    })
+    expect(state.muted).toBe(false)
+    expect(state.volume).toBe(2)
+  })
 })

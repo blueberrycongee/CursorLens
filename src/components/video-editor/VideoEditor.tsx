@@ -1448,6 +1448,7 @@ export default function VideoEditor() {
                       hasAudioTrack={sourceHasAudio}
                       audioEnabled={audioEnabled}
                       audioGain={audioGain}
+                      audioLimiterDb={audioLimiterDb}
                       audioEditRegions={audioEditRegions}
                       onVideoDimensionsChange={setSourceVideoDimensions}
                     />
