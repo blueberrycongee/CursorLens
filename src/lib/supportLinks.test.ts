@@ -1,11 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildIssueReportUrl,
+  GITHUB_REPO_URL,
   GITHUB_ISSUES_URL,
   GITHUB_ISSUE_URL_MAX_LENGTH,
 } from './supportLinks'
 
 describe('buildIssueReportUrl', () => {
+  it('targets this repository issue tracker', () => {
+    expect(GITHUB_ISSUES_URL).toBe(`${GITHUB_REPO_URL}/issues`)
+  })
+
   it('builds a prefilled issue URL against the configured issue tracker', () => {
     const url = buildIssueReportUrl({
       title: '[Bug] source-selector failed',
