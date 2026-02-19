@@ -42,10 +42,10 @@ Download the latest installer for your platform from [GitHub Releases](https://g
 
 ### macOS
 
-If macOS Gatekeeper blocks an unsigned build, run:
+If macOS Gatekeeper blocks an unsigned build, or you see "CursorLens is damaged and can't be opened", run:
 
 ```bash
-xattr -rd com.apple.quarantine /Applications/CursorLens.app
+xattr -rd com.apple.quarantine "/Applications/CursorLens.app"
 ```
 
 Then grant required permissions in **System Settings -> Privacy & Security**:

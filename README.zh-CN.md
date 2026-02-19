@@ -42,10 +42,10 @@ CursorLens 基于优秀的 [OpenScreen](https://github.com/siddharthvaddem/opens
 
 ### macOS
 
-如果未签名构建被 Gatekeeper 拦截，可执行：
+如果未签名构建被 Gatekeeper 拦截，或出现“CursorLens 已损坏，无法打开”的提示，可执行：
 
 ```bash
-xattr -rd com.apple.quarantine /Applications/CursorLens.app
+xattr -rd com.apple.quarantine "/Applications/CursorLens.app"
 ```
 
 然后在 **系统设置 -> 隐私与安全性** 中授予必要权限：
