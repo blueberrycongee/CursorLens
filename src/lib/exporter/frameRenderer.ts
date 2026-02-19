@@ -1,4 +1,4 @@
-import { Application, Container, Sprite, Graphics, BlurFilter, Texture } from 'pixi.js';
+import { Application, Container, Sprite, Graphics, BlurFilter, Texture, VideoSource } from 'pixi.js';
 import type { ZoomRegion, CropRegion, AnnotationRegion } from '@/components/video-editor/types';
 import { ZOOM_DEPTH_SCALES } from '@/components/video-editor/types';
 import { findDominantRegion } from '@/components/video-editor/videoPlayback/zoomRegionUtils';
@@ -49,6 +49,14 @@ interface AnimationState {
 
 interface FrameRenderOptions {
   effectTimeMs?: number;
+}
+
+function isExportAudioDebugEnabled(): boolean {
+  try {
+    return globalThis.localStorage?.getItem('cursorlens.exportDebugAudio') === '1';
+  } catch {
+    return false;
+  }
 }
 
 // Renders video frames with all effects (background, zoom, crop, blur, shadow) to an offscreen canvas for export.
@@ -284,7 +292,7 @@ export class FrameRenderer {
       && this.currentVideoSource === videoSource;
 
     if (!this.videoSprite) {
-      const texture = Texture.from(videoSource as any);
+      const texture = this.createTextureFromVideoSource(videoSource);
       this.videoSprite = new Sprite(texture);
       this.videoContainer.addChild(this.videoSprite);
       this.currentVideoSource = videoSource;
@@ -300,12 +308,42 @@ export class FrameRenderer {
     }
 
     const oldTexture = this.videoSprite.texture;
-    const newTexture = Texture.from(videoSource as any);
+    const newTexture = this.createTextureFromVideoSource(videoSource);
     this.videoSprite.texture = newTexture;
     this.currentVideoSource = videoSource;
     if (oldTexture !== newTexture) {
       oldTexture.destroy(true);
     }
+  }
+
+  private createTextureFromVideoSource(videoSource: HTMLVideoElement | VideoFrame): Texture {
+    if (!(videoSource instanceof HTMLVideoElement)) {
+      return Texture.from(videoSource as any);
+    }
+
+    // Enforce silent source behavior and explicitly disable Pixi auto-play in export pipeline.
+    videoSource.defaultMuted = true;
+    videoSource.muted = true;
+    videoSource.volume = 0;
+
+    if (isExportAudioDebugEnabled()) {
+      console.log('[ExportAudioDebug][FrameRenderer] create video texture', {
+        currentTime: Number(videoSource.currentTime?.toFixed?.(4) ?? videoSource.currentTime ?? 0),
+        paused: videoSource.paused,
+        muted: videoSource.muted,
+        volume: videoSource.volume,
+      });
+    }
+
+    const source = VideoSource.from(videoSource);
+    if ('autoPlay' in source) {
+      (source as { autoPlay?: boolean }).autoPlay = false;
+    }
+    if ('autoUpdate' in source) {
+      (source as { autoUpdate?: boolean }).autoUpdate = true;
+    }
+
+    return Texture.from(source);
   }
 
   async renderFrame(

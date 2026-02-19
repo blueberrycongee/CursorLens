@@ -60,11 +60,12 @@ const DEFAULT_AUDIO_GAIN = 1;
 const MAX_AUDIO_GAIN = 2;
 const EXPORT_WARNING_AUDIO_TRACK_UNAVAILABLE = 'editor.exportWarningAudioTrackUnavailable';
 
-export function hasRecordedCursorSamples(track?: CursorTrack | null): boolean {
-  if (!track?.samples?.length) return false;
-  return track.samples.some((sample) =>
-    Number.isFinite(sample.timeMs) && Number.isFinite(sample.x) && Number.isFinite(sample.y),
-  );
+function isExportAudioDebugEnabled(): boolean {
+  try {
+    return globalThis.localStorage?.getItem('cursorlens.exportDebugAudio') === '1';
+  } catch {
+    return false;
+  }
 }
 
 export function getSeekToleranceSeconds(frameRate: number): number {
@@ -242,8 +243,6 @@ export class VideoExporter {
   private muxingChain: Promise<void> = Promise.resolve();
   private muxingError: Error | null = null;
   private chunkCount = 0;
-  private readonly PLAYBACK_SEEK_THRESHOLD_SECONDS = 0.45;
-  private readonly PLAYBACK_WAIT_TIMEOUT_MS = 900;
   private readonly FINALIZE_TIMEOUT_MS = 120_000;
   private exportStartedAtMs = 0;
   private progressTick = 0;
@@ -254,7 +253,7 @@ export class VideoExporter {
   private lastRenderingFrameCount = 0;
   private lastThroughputLogAtMs = 0;
   private seekCount = 0;
-  private samplingMode: 'playback' | 'seek-only' = 'seek-only';
+  private samplingMode: 'seek-only' = 'seek-only';
   private maxObservedTimingDriftMs = 0;
   private sourceDurationMs = 0;
   private sourceTrimRanges: TimeRangeMs[] = [];
@@ -643,22 +642,11 @@ export class VideoExporter {
       console.log('[VideoExporter] Total frames to export:', totalFrames);
 
       let frameIndex = 0;
-      const shouldUsePlaybackSampling = typeof videoElement.requestVideoFrameCallback === 'function'
-        && !hasRecordedCursorSamples(this.config.cursorTrack);
-      if (shouldUsePlaybackSampling) {
-        this.samplingMode = 'playback';
-        frameIndex = await this.exportFramesWithPlaybackSampling(videoElement, totalFrames);
-        if (frameIndex < totalFrames && !this.cancelled) {
-          console.warn(
-            `[VideoExporter] Playback sampling ended at frame ${frameIndex}/${totalFrames}; falling back to seek mode for the remainder.`,
-          );
-          this.samplingMode = 'seek-only';
-          frameIndex = await this.exportFramesBySeeking(videoElement, totalFrames, frameIndex);
-        }
-      } else {
-        this.samplingMode = 'seek-only';
-        frameIndex = await this.exportFramesBySeeking(videoElement, totalFrames, frameIndex);
+      if (isExportAudioDebugEnabled()) {
+        console.log('[ExportAudioDebug][VideoExporter] mode decision', { mode: 'seek-only', audioEnabled: this.config.audioEnabled });
       }
+      this.samplingMode = 'seek-only';
+      frameIndex = await this.exportFramesBySeeking(videoElement, totalFrames, frameIndex);
 
       if (frameIndex < totalFrames && !this.cancelled) {
         throw new Error(`Export ended early: rendered ${frameIndex} of ${totalFrames} frames.`);
@@ -873,6 +861,15 @@ export class VideoExporter {
     totalFrames: number,
     startFrameIndex = 0,
   ): Promise<number> {
+    if (isExportAudioDebugEnabled()) {
+      console.log('[ExportAudioDebug][VideoExporter] exportFramesBySeeking start', {
+        totalFrames,
+        startFrameIndex,
+        initialPaused: videoElement.paused,
+        initialMuted: videoElement.muted,
+        initialVolume: videoElement.volume,
+      });
+    }
     let frameIndex = startFrameIndex;
 
     while (frameIndex < totalFrames && !this.cancelled) {
@@ -894,96 +891,6 @@ export class VideoExporter {
     }
 
     return frameIndex;
-  }
-
-  private async exportFramesWithPlaybackSampling(videoElement: HTMLVideoElement, totalFrames: number): Promise<number> {
-    let frameIndex = 0;
-    const tolerance = getSeekToleranceSeconds(this.config.frameRate);
-    const seekThreshold = Math.max(this.PLAYBACK_SEEK_THRESHOLD_SECONDS, 4 / this.config.frameRate);
-    const playbackRate = 1;
-    let staleTicks = 0;
-    let previousMediaTime = -1;
-
-    const previousMuted = videoElement.muted;
-    const previousVolume = videoElement.volume;
-    videoElement.pause();
-    videoElement.currentTime = 0;
-    videoElement.playbackRate = playbackRate;
-    videoElement.muted = true;
-    videoElement.volume = 0;
-    await this.waitForVideoFrame(videoElement, 500);
-
-    try {
-      try {
-        await videoElement.play();
-      } catch (error) {
-        console.warn('[VideoExporter] Unable to enter playback sampling mode, using seek mode instead.', error);
-        return frameIndex;
-      }
-
-      while (frameIndex < totalFrames && !this.cancelled) {
-        await this.waitForVideoFrame(videoElement, this.PLAYBACK_WAIT_TIMEOUT_MS);
-        const mediaTime = videoElement.currentTime;
-
-        let renderedInTick = 0;
-        while (frameIndex < totalFrames && !this.cancelled) {
-          const sourceTimeMs = this.getSourceTimeMsForFrame(frameIndex);
-          const sourceTimeSeconds = sourceTimeMs / 1000;
-          if (sourceTimeSeconds > mediaTime + tolerance) {
-            break;
-          }
-          const sampledFrameTimeMs = Math.max(0, mediaTime * 1000);
-          this.maxObservedTimingDriftMs = Math.max(
-            this.maxObservedTimingDriftMs,
-            Math.abs(sampledFrameTimeMs - sourceTimeMs),
-          );
-          await this.renderAndEncodeFrame(
-            videoElement,
-            frameIndex,
-            totalFrames,
-            sampledFrameTimeMs,
-            sourceTimeMs,
-          );
-          frameIndex++;
-          renderedInTick++;
-        }
-
-        if (frameIndex >= totalFrames || this.cancelled) {
-          break;
-        }
-
-        const nextSourceTimeSeconds = this.getSourceTimeMsForFrame(frameIndex) / 1000;
-        const drift = nextSourceTimeSeconds - mediaTime;
-
-        if (!Number.isFinite(mediaTime) || drift > seekThreshold) {
-          await this.seekVideoTo(videoElement, nextSourceTimeSeconds);
-        }
-
-        if (Math.abs(mediaTime - previousMediaTime) < tolerance * 0.5 && renderedInTick === 0) {
-          staleTicks += 1;
-        } else {
-          staleTicks = 0;
-        }
-
-        if (staleTicks >= 3) {
-          await this.seekVideoTo(videoElement, nextSourceTimeSeconds);
-          staleTicks = 0;
-        }
-        previousMediaTime = mediaTime;
-
-        if (videoElement.ended && renderedInTick === 0) {
-          console.warn('[VideoExporter] Playback ended before all frames were sampled.');
-          break;
-        }
-      }
-
-      return frameIndex;
-    } finally {
-      videoElement.pause();
-      videoElement.playbackRate = 1;
-      videoElement.muted = previousMuted;
-      videoElement.volume = previousVolume;
-    }
   }
 
   private enqueueMuxOperation(task: () => Promise<void>): void {

@@ -6,7 +6,6 @@ import {
   VideoExporter,
   estimateRemainingSeconds,
   getSeekToleranceSeconds,
-  hasRecordedCursorSamples,
   normalizeTrimRanges,
   shouldSeekToTime,
   withTimeout,
@@ -132,18 +131,7 @@ describe("videoExporter seek helpers", () => {
     expect(estimateRemainingSeconds(50, 120, Number.NaN)).toBe(0);
   });
 
-  it("detects recorded cursor tracks for export sampling strategy", () => {
-    expect(hasRecordedCursorSamples(null)).toBe(false);
-    expect(hasRecordedCursorSamples({ source: "recorded", samples: [] })).toBe(false);
-    expect(
-      hasRecordedCursorSamples({
-        source: "recorded",
-        samples: [{ timeMs: 0, x: 0.1, y: 0.2 }],
-      }),
-    ).toBe(true);
-  });
-
-  it("uses continuous playback sampling without per-frame play/pause churn", async () => {
+  it("does not call play() in seek-only frame export path", async () => {
     const exporter = new VideoExporter({
       videoUrl: "file:///tmp/mock.webm",
       width: 1920,
@@ -161,52 +149,35 @@ describe("videoExporter seek helpers", () => {
     }) as any;
 
     let playCalls = 0;
-    let pauseCalls = 0;
     let seekCalls = 0;
     let rendered = 0;
 
     const video: any = {
       currentTime: 0,
-      playbackRate: 1,
+      duration: 10,
       paused: true,
       muted: false,
-      volume: 0.7,
-      ended: false,
-      pause() {
-        pauseCalls += 1;
-        this.paused = true;
-      },
-      async play() {
+      volume: 1,
+      play() {
         playCalls += 1;
         this.paused = false;
+        return Promise.resolve();
       },
     };
 
-    exporter.waitForVideoFrame = async (vid: any) => {
-      if (!vid.paused) {
-        vid.currentTime += 1 / 60;
-      } else {
-        vid.currentTime += 1 / 60;
-      }
-      if (vid.currentTime > 5) {
-        vid.ended = true;
-      }
-    };
-    exporter.renderAndEncodeFrame = async () => {
-      rendered += 1;
-    };
     exporter.seekVideoTo = async (vid: any, target: number) => {
       seekCalls += 1;
       vid.currentTime = target;
     };
+    exporter.renderAndEncodeFrame = async () => {
+      rendered += 1;
+    };
 
-    const result = await exporter.exportFramesWithPlaybackSampling(video, 120);
-    expect(result).toBe(120);
-    expect(rendered).toBe(120);
-    expect(playCalls).toBe(1);
-    expect(pauseCalls).toBeLessThanOrEqual(3);
-    expect(seekCalls).toBeLessThan(10);
-    expect(video.muted).toBe(false);
-    expect(video.volume).toBeCloseTo(0.7);
+    const result = await exporter.exportFramesBySeeking(video, 90);
+
+    expect(result).toBe(90);
+    expect(rendered).toBe(90);
+    expect(seekCalls).toBe(90);
+    expect(playCalls).toBe(0);
   });
 });
