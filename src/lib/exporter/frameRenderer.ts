@@ -335,13 +335,15 @@ export class FrameRenderer {
       });
     }
 
-    const source = VideoSource.from(videoSource);
-    if ('autoPlay' in source) {
-      (source as { autoPlay?: boolean }).autoPlay = false;
-    }
-    if ('autoUpdate' in source) {
-      (source as { autoUpdate?: boolean }).autoUpdate = true;
-    }
+    const source = VideoSource.from({
+      resource: videoSource,
+      autoPlay: false,
+      autoUpdate: true,
+      autoLoad: true,
+      muted: true,
+      playsinline: true,
+      preload: false,
+    });
 
     return Texture.from(source);
   }
