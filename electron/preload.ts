@@ -20,6 +20,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getCapturePermissionSnapshot: async () => {
     return await ipcRenderer.invoke('get-capture-permission-snapshot')
   },
+  requestCapturePermissionAccess: async (target: 'screen' | 'camera' | 'microphone' | 'accessibility' | 'input-monitoring') => {
+    return await ipcRenderer.invoke('request-capture-permission-access', target)
+  },
   openScreenCaptureSettings: async () => {
     return await ipcRenderer.invoke('open-screen-capture-settings')
   },

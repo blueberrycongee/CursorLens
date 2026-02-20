@@ -13,6 +13,7 @@ import {
   type CapturePermissionSnapshot,
   type CapturePermissionStatus,
 } from "@/lib/permissions/capturePermissions";
+import { resolvePermissionActionMode } from "@/lib/permissions/permissionActions";
 
 const PERMISSION_ORDER: CapturePermissionKey[] = [
   "screen",
@@ -109,33 +110,33 @@ export function PermissionCheckerWindow() {
     return resolveRecordingPermissionReadiness(snapshot);
   }, [snapshot]);
 
-  const openSettings = useCallback(
+  const handlePermissionAction = useCallback(
     async (item: CapturePermissionItem) => {
-      if (!item.settingsTarget) return;
+      if (isPermissionGranted(item.status)) return;
       try {
-        const result = await window.electronAPI.openPermissionSettings(item.settingsTarget);
+        const result = await window.electronAPI.requestCapturePermissionAccess(item.key);
         if (!result.success) {
           reportUserActionError({
             t,
-            userMessage: t("permission.openSettingsFailed"),
-            error: result.message || "openPermissionSettings returned unsuccessful result",
-            context: "permission-checker.open-settings",
-            details: { key: item.key, settingsTarget: item.settingsTarget },
-            dedupeKey: `permission-checker.open-settings:${item.key}`,
+            userMessage: t("permission.permissionActionFailed"),
+            error: result.message || "requestCapturePermissionAccess returned unsuccessful result",
+            context: "permission-checker.permission-action",
+            details: { key: item.key },
+            dedupeKey: `permission-checker.permission-action:${item.key}`,
           });
           return;
         }
         window.setTimeout(() => {
           void loadSnapshot(true);
-        }, 500);
+        }, result.openedSettings ? 700 : 350);
       } catch (error) {
         reportUserActionError({
           t,
-          userMessage: t("permission.openSettingsFailed"),
+          userMessage: t("permission.permissionActionFailed"),
           error,
-          context: "permission-checker.open-settings",
-          details: { key: item.key, settingsTarget: item.settingsTarget },
-          dedupeKey: `permission-checker.open-settings:${item.key}`,
+          context: "permission-checker.permission-action",
+          details: { key: item.key },
+          dedupeKey: `permission-checker.permission-action:${item.key}`,
         });
       }
     },
@@ -179,9 +180,12 @@ export function PermissionCheckerWindow() {
             const description = t(`permission.row${labelKey}Description`);
             const isGranted = isPermissionGranted(item.status);
             const isBlocked = isPermissionBlocked(item.status);
-            const actionText = isGranted
+            const actionMode = resolvePermissionActionMode(item);
+            const actionText = actionMode === "granted"
               ? t("permission.actionGranted")
-              : item.canOpenSettings && item.settingsTarget
+              : actionMode === "request"
+              ? t("permission.actionRequestAccess")
+              : actionMode === "open-settings"
               ? t("permission.actionOpenSettings")
               : t("permission.actionManualCheck");
 
@@ -212,7 +216,7 @@ export function PermissionCheckerWindow() {
                     {statusText}
                   </div>
                   <Button
-                    onClick={() => void openSettings(item)}
+                    onClick={() => void handlePermissionAction(item)}
                     disabled={isGranted || !item.canOpenSettings || !item.settingsTarget}
                     className={`min-w-[260px] ${
                       isBlocked
@@ -256,4 +260,3 @@ export function PermissionCheckerWindow() {
     </div>
   );
 }
-

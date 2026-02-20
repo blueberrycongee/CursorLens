@@ -149,6 +149,13 @@ type CapturePermissionSnapshot = {
   items: CapturePermissionItem[]
 }
 
+type CapturePermissionActionResult = {
+  success: boolean
+  status?: CapturePermissionStatus
+  openedSettings?: boolean
+  message?: string
+}
+
 const CAMERA_SETTINGS_URL = 'x-apple.systempreferences:com.apple.preference.security?Privacy_Camera'
 const MICROPHONE_SETTINGS_URL = 'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone'
 const ACCESSIBILITY_SETTINGS_URL = 'x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility'
@@ -306,6 +313,101 @@ function getCapturePermissionSnapshot(): CapturePermissionSnapshot {
         settingsTarget: 'input-monitoring',
       },
     ],
+  }
+}
+
+function isBlockedPermissionStatus(status: CapturePermissionStatus): boolean {
+  return status === 'denied' || status === 'restricted'
+}
+
+async function openPermissionSettingsByTarget(target: PermissionSettingsTarget): Promise<void> {
+  await shell.openExternal(PERMISSION_SETTINGS_URLS[target])
+}
+
+async function requestScreenPermissionAccess(): Promise<CapturePermissionActionResult> {
+  const initialStatus = getScreenCaptureAccessStatus()
+  if (initialStatus === 'granted') {
+    return { success: true, status: initialStatus }
+  }
+
+  if (isScreenCaptureAccessBlocked(initialStatus)) {
+    await openPermissionSettingsByTarget('screen-capture')
+    return { success: true, status: initialStatus, openedSettings: true }
+  }
+
+  try {
+    await getSourcesWithFallback({
+      types: ['screen'],
+      thumbnailSize: { width: 1, height: 1 },
+      fetchWindowIcons: false,
+    })
+  } catch {
+    // Permission probing may fail before the system status settles.
+  }
+
+  const latestStatus = getScreenCaptureAccessStatus()
+  if (latestStatus === 'granted') {
+    return { success: true, status: latestStatus }
+  }
+
+  await openPermissionSettingsByTarget('screen-capture')
+  return { success: true, status: latestStatus, openedSettings: true }
+}
+
+async function requestMediaPermissionAccess(
+  mediaType: 'camera' | 'microphone',
+  target: 'camera' | 'microphone',
+): Promise<CapturePermissionActionResult> {
+  const initialStatus = getMediaPermissionStatus(mediaType)
+  if (initialStatus === 'granted') {
+    return { success: true, status: initialStatus }
+  }
+
+  if (isBlockedPermissionStatus(initialStatus)) {
+    await openPermissionSettingsByTarget(target)
+    return { success: true, status: initialStatus, openedSettings: true }
+  }
+
+  await systemPreferences.askForMediaAccess(mediaType)
+  const latestStatus = getMediaPermissionStatus(mediaType)
+  if (latestStatus === 'granted') {
+    return { success: true, status: latestStatus }
+  }
+
+  await openPermissionSettingsByTarget(target)
+  return { success: true, status: latestStatus, openedSettings: true }
+}
+
+async function requestAccessibilityPermissionAccess(): Promise<CapturePermissionActionResult> {
+  const granted = systemPreferences.isTrustedAccessibilityClient(true)
+  if (granted) {
+    return { success: true, status: 'granted' }
+  }
+  await openPermissionSettingsByTarget('accessibility')
+  return { success: true, status: 'denied', openedSettings: true }
+}
+
+async function requestCapturePermissionAccess(
+  target: CapturePermissionKey,
+): Promise<CapturePermissionActionResult> {
+  if (process.platform !== 'darwin') {
+    return { success: false, message: 'Permission request flow is only supported on macOS.' }
+  }
+
+  switch (target) {
+    case 'screen':
+      return requestScreenPermissionAccess()
+    case 'camera':
+      return requestMediaPermissionAccess('camera', 'camera')
+    case 'microphone':
+      return requestMediaPermissionAccess('microphone', 'microphone')
+    case 'accessibility':
+      return requestAccessibilityPermissionAccess()
+    case 'input-monitoring':
+      await openPermissionSettingsByTarget('input-monitoring')
+      return { success: true, status: 'manual-check', openedSettings: true }
+    default:
+      return { success: false, message: `Unknown permission target: ${String(target)}` }
   }
 }
 
@@ -1311,6 +1413,32 @@ export function registerIpcHandlers(
 
   ipcMain.handle('get-capture-permission-snapshot', () => {
     return getCapturePermissionSnapshot()
+  })
+
+  ipcMain.handle('request-capture-permission-access', async (_, target: CapturePermissionKey | string) => {
+    if (process.platform !== 'darwin') {
+      return { success: false, message: 'Permission request flow is only supported on macOS.' }
+    }
+
+    const normalizedTarget = typeof target === 'string' ? target.trim() : ''
+    if (
+      normalizedTarget !== 'screen'
+      && normalizedTarget !== 'camera'
+      && normalizedTarget !== 'microphone'
+      && normalizedTarget !== 'accessibility'
+      && normalizedTarget !== 'input-monitoring'
+    ) {
+      return { success: false, message: `Unknown permission target: ${String(target)}` }
+    }
+
+    try {
+      return await requestCapturePermissionAccess(normalizedTarget)
+    } catch (error) {
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : String(error),
+      }
+    }
   })
 
   ipcMain.handle('open-permission-settings', async (_, target: PermissionSettingsTarget | string) => {
