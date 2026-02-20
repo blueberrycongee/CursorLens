@@ -46,6 +46,13 @@ type CapturePermissionSnapshot = {
   }>;
 };
 
+type CapturePermissionActionResult = {
+  success: boolean;
+  status?: CapturePermissionStatus;
+  openedSettings?: boolean;
+  message?: string;
+};
+
 type CursorTrackMetadata = {
   source?: 'recorded' | 'synthetic';
   samples: Array<{ timeMs: number; x: number; y: number; click?: boolean; visible?: boolean; cursorKind?: 'arrow' | 'ibeam' }>;
@@ -125,6 +132,7 @@ interface Window {
       canOpenSystemSettings: boolean
     }>
     getCapturePermissionSnapshot: () => Promise<CapturePermissionSnapshot>
+    requestCapturePermissionAccess: (target: CapturePermissionKey) => Promise<CapturePermissionActionResult>
     openScreenCaptureSettings: () => Promise<{ success: boolean; message?: string }>
     openPermissionSettings: (target: PermissionSettingsTarget) => Promise<{ success: boolean; message?: string }>
     openPermissionChecker: () => Promise<{ success: boolean }>
