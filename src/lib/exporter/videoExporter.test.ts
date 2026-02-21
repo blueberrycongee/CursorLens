@@ -131,6 +131,73 @@ describe("videoExporter seek helpers", () => {
     expect(estimateRemainingSeconds(50, 120, Number.NaN)).toBe(0);
   });
 
+  describe("buildKeptRanges boundary cases", () => {
+    it("returns full range when no trims", () => {
+      expect(buildKeptRanges(5000, undefined)).toEqual([{ startMs: 0, endMs: 5000 }]);
+      expect(buildKeptRanges(5000, [])).toEqual([{ startMs: 0, endMs: 5000 }]);
+    });
+
+    it("returns empty when trim covers entire duration", () => {
+      expect(buildKeptRanges(1000, [{ id: "a", startMs: 0, endMs: 1000 }])).toEqual([]);
+    });
+
+    it("returns empty for zero, NaN, or negative totalDurationMs", () => {
+      expect(buildKeptRanges(0, undefined)).toEqual([]);
+      expect(buildKeptRanges(Number.NaN, undefined)).toEqual([]);
+      expect(buildKeptRanges(-100, undefined)).toEqual([]);
+    });
+  });
+
+  describe("buildAudioGainSegments boundary cases", () => {
+    it("returns single segment with baseGain when no audioEditRegions", () => {
+      expect(buildAudioGainSegments(0, 1000, 0.8, undefined)).toEqual([
+        { startMs: 0, endMs: 1000, gain: 0.8 },
+      ]);
+      expect(buildAudioGainSegments(0, 1000, 0.8, [])).toEqual([
+        { startMs: 0, endMs: 1000, gain: 0.8 },
+      ]);
+    });
+
+    it("returns empty when rangeStart equals rangeEnd", () => {
+      expect(buildAudioGainSegments(500, 500, 1, undefined)).toEqual([]);
+    });
+
+    it("swaps inverted range and returns a valid segment", () => {
+      // Implementation normalises: safeStart=min(600,400)=400, safeEnd=max(600,400)=600
+      expect(buildAudioGainSegments(600, 400, 1, undefined)).toEqual([
+        { startMs: 400, endMs: 600, gain: 1 },
+      ]);
+    });
+
+    it("falls back to default gain 1 for NaN or undefined baseGain", () => {
+      const result1 = buildAudioGainSegments(0, 100, Number.NaN, undefined);
+      expect(result1).toEqual([{ startMs: 0, endMs: 100, gain: 1 }]);
+
+      const result2 = buildAudioGainSegments(0, 100, undefined as any, undefined);
+      expect(result2).toEqual([{ startMs: 0, endMs: 100, gain: 1 }]);
+    });
+  });
+
+  describe("samplingMode constraint", () => {
+    it("samplingMode is always seek-only", () => {
+      const exporter = new VideoExporter({
+        videoUrl: "file:///tmp/mock.webm",
+        width: 1920,
+        height: 1080,
+        frameRate: 60,
+        bitrate: 20_000_000,
+        wallpaper: "#000",
+        zoomRegions: [],
+        cropRegion: { x: 0, y: 0, width: 1, height: 1 },
+        showShadow: false,
+        shadowIntensity: 0,
+        showBlur: false,
+      }) as any;
+
+      expect(exporter.samplingMode).toBe("seek-only");
+    });
+  });
+
   it("does not call play() in seek-only frame export path", async () => {
     const exporter = new VideoExporter({
       videoUrl: "file:///tmp/mock.webm",
