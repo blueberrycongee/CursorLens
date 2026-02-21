@@ -44,7 +44,12 @@
   ],
 
   "mac": {
+    "hardenedRuntime": true,
+    "gatekeeperAssess": false,
+    "entitlements": "build/entitlements.mac.plist",
+    "entitlementsInherit": "build/entitlements.mac.inherit.plist",
     "extendInfo": {
+      "NSScreenCaptureUsageDescription": "CursorLens needs screen recording access to capture your screen.",
       "NSCameraUsageDescription": "CursorLens needs camera access to render camera overlays while recording.",
       "NSMicrophoneUsageDescription": "CursorLens needs microphone access to record your voice during screen capture.",
       "NSSpeechRecognitionUsageDescription": "CursorLens needs speech recognition access to generate subtitles from recordings."

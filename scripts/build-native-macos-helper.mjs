@@ -9,12 +9,15 @@ if (process.platform !== 'darwin') {
 }
 
 const projectRoot = process.cwd();
+const helperEntitlements = path.join(projectRoot, 'build/entitlements.native-helper.plist');
+const helperEntitlementsAV = path.join(projectRoot, 'build/entitlements.native-helper-av.plist');
 
 const helpers = [
   {
     label: 'ScreenCaptureKit recorder helper',
     sourcePath: path.join(projectRoot, 'electron/native/macos/sck-recorder.swift'),
     outputPath: path.join(projectRoot, 'electron/native/bin/sck-recorder'),
+    entitlements: helperEntitlementsAV,
     frameworks: [
       'ScreenCaptureKit',
       'AVFoundation',
@@ -28,6 +31,7 @@ const helpers = [
     label: 'cursor kind monitor helper',
     sourcePath: path.join(projectRoot, 'electron/native/macos/cursor-kind-monitor.swift'),
     outputPath: path.join(projectRoot, 'electron/native/bin/cursor-kind-monitor'),
+    entitlements: helperEntitlements,
     frameworks: [
       'Foundation',
       'AppKit',
@@ -38,6 +42,7 @@ const helpers = [
     label: 'mouse button monitor helper',
     sourcePath: path.join(projectRoot, 'electron/native/macos/mouse-button-monitor.swift'),
     outputPath: path.join(projectRoot, 'electron/native/bin/mouse-button-monitor'),
+    entitlements: helperEntitlements,
     frameworks: [
       'Foundation',
       'AppKit',
@@ -47,6 +52,7 @@ const helpers = [
     label: 'speech transcriber helper',
     sourcePath: path.join(projectRoot, 'electron/native/macos/speech-transcriber.swift'),
     outputPath: path.join(projectRoot, 'electron/native/bin/speech-transcriber'),
+    entitlements: helperEntitlementsAV,
     frameworks: [
       'Foundation',
       'AVFoundation',
@@ -83,5 +89,27 @@ for (const helper of helpers) {
   }
 
   spawnSync('chmod', ['755', helper.outputPath], { stdio: 'inherit' });
+
+  if (!existsSync(helper.entitlements)) {
+    console.error(`[native-helper] entitlements file not found: ${helper.entitlements}`);
+    process.exit(1);
+  }
+
+  console.log(`[native-helper] signing ${helper.label} with entitlements...`);
+  const signResult = spawnSync('codesign', [
+    '--sign', '-',
+    '--force',
+    '--entitlements', helper.entitlements,
+    helper.outputPath,
+  ], {
+    cwd: projectRoot,
+    stdio: 'inherit',
+  });
+
+  if (signResult.status !== 0) {
+    console.error(`[native-helper] codesign failed for ${helper.outputPath}`);
+    process.exit(signResult.status ?? 1);
+  }
+
   console.log(`[native-helper] built ${helper.outputPath}`);
 }
