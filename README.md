@@ -9,6 +9,9 @@
   <a href="https://github.com/blueberrycongee/CursorLens">
     <img src="https://img.shields.io/badge/GitHub-CursorLens-181717?logo=github" alt="CursorLens on GitHub" />
   </a>
+  <a href="http://www.lelekawaii.com/CursorLens/">
+    <img src="https://img.shields.io/badge/Website-Landing%20Page-blue?logo=astro" alt="CursorLens Landing Page" />
+  </a>
 </p>
 
 # <p align="center">CursorLens</p>
