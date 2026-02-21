@@ -187,7 +187,7 @@ function normalizeScreenCaptureAccessStatus(input: unknown): ScreenCaptureAccess
   }
 }
 
-function getScreenCaptureAccessStatus(): ScreenCaptureAccessStatus {
+function getScreenCaptureAccessStatusSync(): ScreenCaptureAccessStatus {
   if (process.platform !== 'darwin') {
     return 'granted'
   }
@@ -196,6 +196,30 @@ function getScreenCaptureAccessStatus(): ScreenCaptureAccessStatus {
   } catch {
     return 'unknown'
   }
+}
+
+async function getScreenCaptureAccessStatus(): Promise<ScreenCaptureAccessStatus> {
+  const reported = getScreenCaptureAccessStatusSync()
+  if (reported === 'granted') {
+    return 'granted'
+  }
+
+  // macOS TCC status can be stale after a restart. Probe with desktopCapturer
+  // to detect whether the permission was actually granted.
+  try {
+    const sources = await desktopCapturer.getSources({
+      types: ['screen'],
+      thumbnailSize: { width: 1, height: 1 },
+      fetchWindowIcons: false,
+    })
+    if (sources.length > 0) {
+      return 'granted'
+    }
+  } catch {
+    // probe failed – fall through to reported status
+  }
+
+  return reported
 }
 
 function isScreenCaptureAccessBlocked(status: ScreenCaptureAccessStatus): boolean {
@@ -224,7 +248,7 @@ function getAccessibilityPermissionStatus(): CapturePermissionStatus {
   }
 }
 
-function getCapturePermissionSnapshot(): CapturePermissionSnapshot {
+async function getCapturePermissionSnapshot(): Promise<CapturePermissionSnapshot> {
   const checkedAtMs = Date.now()
   const canOpenSystemSettings = process.platform === 'darwin'
   if (process.platform !== 'darwin') {
@@ -279,7 +303,7 @@ function getCapturePermissionSnapshot(): CapturePermissionSnapshot {
     items: [
       {
         key: 'screen',
-        status: getScreenCaptureAccessStatus(),
+        status: await getScreenCaptureAccessStatus(),
         requiredForRecording: true,
         canOpenSettings: canOpenSystemSettings,
         settingsTarget: 'screen-capture',
@@ -325,7 +349,7 @@ async function openPermissionSettingsByTarget(target: PermissionSettingsTarget):
 }
 
 async function requestScreenPermissionAccess(): Promise<CapturePermissionActionResult> {
-  const initialStatus = getScreenCaptureAccessStatus()
+  const initialStatus = await getScreenCaptureAccessStatus()
   if (initialStatus === 'granted') {
     return { success: true, status: initialStatus }
   }
@@ -345,7 +369,7 @@ async function requestScreenPermissionAccess(): Promise<CapturePermissionActionR
     // Permission probing may fail before the system status settles.
   }
 
-  const latestStatus = getScreenCaptureAccessStatus()
+  const latestStatus = await getScreenCaptureAccessStatus()
   if (latestStatus === 'granted') {
     return { success: true, status: latestStatus }
   }
@@ -1377,7 +1401,7 @@ export function registerIpcHandlers(
 
   ipcMain.handle('get-sources', async (_, opts) => {
     const normalized = normalizeGetSourcesOptions(opts)
-    const accessStatus = getScreenCaptureAccessStatus()
+    const accessStatus = await getScreenCaptureAccessStatus()
     if (isScreenCaptureAccessBlocked(accessStatus)) {
       throw new Error(`${SOURCE_PERMISSION_GUIDANCE} (status: ${accessStatus})`)
     }
@@ -1393,7 +1417,7 @@ export function registerIpcHandlers(
         appIcon: source.appIcon ? source.appIcon.toDataURL() : null
       }))
     } catch (error) {
-      const latestStatus = getScreenCaptureAccessStatus()
+      const latestStatus = await getScreenCaptureAccessStatus()
       if (isScreenCaptureAccessBlocked(latestStatus)) {
         throw new Error(`${SOURCE_PERMISSION_GUIDANCE} (status: ${latestStatus})`)
       }
@@ -1403,16 +1427,16 @@ export function registerIpcHandlers(
     }
   })
 
-  ipcMain.handle('get-screen-capture-access-status', () => {
-    const status = getScreenCaptureAccessStatus()
+  ipcMain.handle('get-screen-capture-access-status', async () => {
+    const status = await getScreenCaptureAccessStatus()
     return {
       status,
       canOpenSystemSettings: process.platform === 'darwin',
     }
   })
 
-  ipcMain.handle('get-capture-permission-snapshot', () => {
-    return getCapturePermissionSnapshot()
+  ipcMain.handle('get-capture-permission-snapshot', async () => {
+    return await getCapturePermissionSnapshot()
   })
 
   ipcMain.handle('request-capture-permission-access', async (_, target: CapturePermissionKey | string) => {
