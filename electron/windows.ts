@@ -178,7 +178,7 @@ export function createPermissionCheckerWindow(): BrowserWindow {
     frame: true,
     resizable: true,
     alwaysOnTop: true,
-    backgroundColor: '#0b1020',
+    backgroundColor: '#1c1c22',
     webPreferences: {
       preload: path.join(__dirname, 'preload.mjs'),
       nodeIntegration: false,

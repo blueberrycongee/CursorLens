@@ -35,13 +35,13 @@ function createFallbackItem(key: CapturePermissionKey): CapturePermissionItem {
 function statusTextClass(status: CapturePermissionStatus): string {
   if (status === "granted") return "text-emerald-300";
   if (status === "denied" || status === "restricted") return "text-amber-300";
-  return "text-slate-300";
+  return "text-zinc-300";
 }
 
 function statusBadgeClass(status: CapturePermissionStatus): string {
   if (status === "granted") return "bg-emerald-500/15 border-emerald-400/40";
   if (status === "denied" || status === "restricted") return "bg-amber-500/15 border-amber-400/40";
-  return "bg-slate-500/15 border-slate-300/25";
+  return "bg-zinc-500/15 border-zinc-300/25";
 }
 
 function keyLabelSuffix(key: CapturePermissionKey): string {
@@ -145,8 +145,15 @@ export function PermissionCheckerWindow() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#0b1020] text-slate-100 flex items-center justify-center">
-        <div className="flex items-center gap-3 text-slate-300">
+      <div
+        className="min-h-screen text-zinc-100 flex items-center justify-center"
+        style={{
+          background: 'linear-gradient(135deg, rgba(28,28,34,0.92) 0%, rgba(18,18,22,0.88) 100%)',
+          backdropFilter: 'blur(20px) saturate(160%)',
+          WebkitBackdropFilter: 'blur(20px) saturate(160%)',
+        }}
+      >
+        <div className="flex items-center gap-3 text-zinc-300">
           <RefreshCw className="h-4 w-4 animate-spin" />
           <span>{t("permission.loading")}</span>
         </div>
@@ -155,24 +162,39 @@ export function PermissionCheckerWindow() {
   }
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_10%_0%,rgba(67,56,202,0.18),transparent_42%),radial-gradient(circle_at_100%_100%,rgba(52,178,123,0.12),transparent_44%),#0b1020] text-slate-100 px-8 py-7">
-      <div className="max-w-5xl mx-auto flex flex-col gap-6">
+    <div
+      className="min-h-screen text-zinc-100 px-6 py-5"
+      style={{
+        background: 'linear-gradient(135deg, rgba(28,28,34,0.92) 0%, rgba(18,18,22,0.88) 100%)',
+        backdropFilter: 'blur(20px) saturate(160%)',
+        WebkitBackdropFilter: 'blur(20px) saturate(160%)',
+        boxShadow: '0 4px 16px 0 rgba(0,0,0,0.32), 0 1px 3px 0 rgba(0,0,0,0.18) inset',
+      }}
+    >
+      <div className="max-w-5xl mx-auto flex flex-col gap-4">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight">{t("permission.title")}</h1>
-            <p className="text-sm text-slate-300 mt-2 max-w-4xl leading-relaxed">{t("permission.intro")}</p>
+            <h1 className="text-xl font-semibold tracking-tight">{t("permission.title")}</h1>
+            <p className="text-sm text-zinc-300 mt-2 max-w-4xl leading-relaxed">{t("permission.intro")}</p>
           </div>
           <Button
             onClick={() => void loadSnapshot(true)}
             disabled={refreshing}
-            className="bg-white/10 hover:bg-white/20 text-white border border-white/15 gap-2"
+            className="bg-white/5 hover:bg-white/10 text-white border border-white/10 gap-2"
           >
             <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
             {t("permission.refresh")}
           </Button>
         </div>
 
-        <div className="rounded-2xl border border-white/10 bg-[#0f1529]/85 backdrop-blur-sm overflow-hidden">
+        <div
+          className="rounded-xl overflow-hidden"
+          style={{
+            background: 'linear-gradient(120deg, rgba(38,38,48,0.98) 0%, rgba(24,24,32,0.96) 100%)',
+            border: '1px solid rgba(60,60,80,0.22)',
+            boxShadow: '0 2px 8px 0 rgba(0,0,0,0.18)',
+          }}
+        >
           {orderedItems.map((item) => {
             const statusText = t(`permission.status${item.status.replace(/(^|-)([a-z])/g, (_s, _dash, letter: string) => letter.toUpperCase())}`);
             const labelKey = keyLabelSuffix(item.key);
@@ -192,22 +214,23 @@ export function PermissionCheckerWindow() {
             return (
               <div
                 key={item.key}
-                className="grid grid-cols-12 gap-4 px-6 py-5 border-b border-white/10 last:border-b-0"
+                className="grid grid-cols-12 gap-4 px-5 py-4"
+                style={{ borderBottom: '1px solid rgba(60,60,80,0.18)' }}
               >
                 <div className="col-span-7">
                   <div className="flex items-center gap-2">
-                    <h2 className="text-lg font-semibold text-white">{title}</h2>
+                    <h2 className="text-base font-semibold text-white">{title}</h2>
                     {item.requiredForRecording ? (
                       <span className="text-[11px] px-2 py-0.5 rounded-full border border-amber-300/40 bg-amber-300/15 text-amber-200">
                         {t("permission.required")}
                       </span>
                     ) : (
-                      <span className="text-[11px] px-2 py-0.5 rounded-full border border-slate-400/30 bg-slate-500/10 text-slate-300">
+                      <span className="text-[11px] px-2 py-0.5 rounded-full border border-zinc-400/30 bg-zinc-500/10 text-zinc-300">
                         {t("permission.optional")}
                       </span>
                     )}
                   </div>
-                  <p className="text-sm text-slate-300 mt-1 leading-relaxed">{description}</p>
+                  <p className="text-sm text-zinc-300 mt-1 leading-relaxed">{description}</p>
                 </div>
                 <div className="col-span-5 flex flex-col items-end justify-center gap-3">
                   <div
@@ -221,8 +244,8 @@ export function PermissionCheckerWindow() {
                     className={`min-w-[260px] ${
                       isBlocked
                         ? "bg-amber-500/20 text-amber-100 border border-amber-400/40 hover:bg-amber-500/30"
-                        : "bg-white/10 text-white border border-white/20 hover:bg-white/20"
-                    } disabled:bg-white/5 disabled:text-slate-400 disabled:border-white/10`}
+                        : "bg-white/5 text-white border border-white/10 hover:bg-white/10"
+                    } disabled:bg-white/5 disabled:text-zinc-400 disabled:border-white/10`}
                   >
                     {!isGranted ? <ExternalLink className="h-4 w-4 mr-1" /> : null}
                     {actionText}
@@ -233,7 +256,14 @@ export function PermissionCheckerWindow() {
           })}
         </div>
 
-        <div className="rounded-xl border border-white/10 bg-black/20 px-5 py-4">
+        <div
+          className="rounded-xl px-5 py-4"
+          style={{
+            background: 'linear-gradient(120deg, rgba(38,38,48,0.98) 0%, rgba(24,24,32,0.96) 100%)',
+            border: '1px solid rgba(60,60,80,0.18)',
+            boxShadow: '0 2px 8px 0 rgba(0,0,0,0.18)',
+          }}
+        >
           {readiness.ready ? (
             <div className="flex items-start gap-2 text-emerald-200">
               <ShieldCheck className="h-5 w-5 mt-0.5" />
@@ -245,7 +275,7 @@ export function PermissionCheckerWindow() {
               <p className="text-sm leading-relaxed">{t("permission.missingRequiredHint")}</p>
             </div>
           )}
-          <p className="text-xs text-slate-400 mt-2">{t("permission.relaunchHint")}</p>
+          <p className="text-xs text-zinc-400 mt-2">{t("permission.relaunchHint")}</p>
         </div>
 
         <div className="flex justify-end gap-2">
