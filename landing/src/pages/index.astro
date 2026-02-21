@@ -1,0 +1,20 @@
+---
+import Layout from '../layouts/Layout.astro';
+import Navbar from '../components/Navbar.astro';
+import Hero from '../components/Hero.astro';
+import Features from '../components/Features.astro';
+import Screenshots from '../components/Screenshots.astro';
+import Download from '../components/Download.astro';
+import Footer from '../components/Footer.astro';
+import { t } from '../i18n';
+
+const s = t('en');
+---
+<Layout title="CursorLens – Screen Recording, Reimagined">
+  <Navbar t={s} />
+  <Hero t={s} />
+  <Features t={s} />
+  <Screenshots t={s} />
+  <Download t={s} />
+  <Footer t={s} />
+</Layout>

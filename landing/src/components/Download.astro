@@ -1,0 +1,33 @@
+---
+interface Props {
+  t: any;
+}
+const { t } = Astro.props;
+const releasesUrl = 'https://github.com/blueberrycongee/CursorLens/releases';
+---
+<section id="download" class="py-24 px-4">
+  <div class="max-w-4xl mx-auto">
+    <div class="text-center mb-16" data-animate>
+      <h2 class="text-3xl md:text-4xl font-bold mb-4">{t.download.title}</h2>
+      <p class="text-gray-400 text-lg">{t.download.subtitle}</p>
+    </div>
+    <div class="grid grid-cols-1 sm:grid-cols-3 gap-6 mb-10">
+      {t.download.platforms.map((p: any, i: number) => (
+        <div class="glass p-8 text-center hover:bg-white/10 transition-colors" data-animate style={`animation-delay: ${i * 100}ms`}>
+          <div class="text-4xl mb-4">{p.icon}</div>
+          <h3 class="text-white font-semibold text-lg mb-1">{p.name}</h3>
+          <p class="text-gray-400 text-sm mb-6">{p.note}</p>
+          <a href={p.href} target="_blank" rel="noopener"
+             class="inline-block px-6 py-2 bg-accent hover:bg-accent-light text-white font-medium rounded-full transition-colors">
+            {t.download.button}
+          </a>
+        </div>
+      ))}
+    </div>
+    <p class="text-center" data-animate>
+      <a href={releasesUrl} target="_blank" rel="noopener" class="text-accent-light hover:text-white transition-colors">
+        {t.download.allReleases}
+      </a>
+    </p>
+  </div>
+</section>

@@ -1,0 +1,18 @@
+---
+interface Props {
+  t: any;
+}
+const { t } = Astro.props;
+---
+<footer class="border-t border-white/10 py-10 px-4">
+  <div class="max-w-6xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-gray-500">
+    <span>{t.footer.copyright}</span>
+    <div class="flex gap-6">
+      {t.footer.links.map((link: any) => (
+        <a href={link.href} target="_blank" rel="noopener" class="hover:text-white transition-colors">
+          {link.label}
+        </a>
+      ))}
+    </div>
+  </div>
+</footer>

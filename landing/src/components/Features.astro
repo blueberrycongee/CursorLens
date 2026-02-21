@@ -1,0 +1,23 @@
+---
+interface Props {
+  t: any;
+}
+const { t } = Astro.props;
+---
+<section id="features" class="py-24 px-4">
+  <div class="max-w-6xl mx-auto">
+    <div class="text-center mb-16" data-animate>
+      <h2 class="text-3xl md:text-4xl font-bold mb-4">{t.features.title}</h2>
+      <p class="text-gray-400 text-lg">{t.features.subtitle}</p>
+    </div>
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+      {t.features.items.map((item: any, i: number) => (
+        <div class="glass p-6 hover:bg-white/10 transition-colors" data-animate style={`animation-delay: ${i * 80}ms`}>
+          <div class="text-3xl mb-4">{item.icon}</div>
+          <h3 class="text-white font-semibold mb-2">{item.title}</h3>
+          <p class="text-gray-400 text-sm">{item.desc}</p>
+        </div>
+      ))}
+    </div>
+  </div>
+</section>
