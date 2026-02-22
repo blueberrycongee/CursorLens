@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockTextureFrom, mockVideoSourceFrom } = vi.hoisted(() => ({
-  mockTextureFrom: vi.fn((input: unknown) => ({ source: input })),
-  mockVideoSourceFrom: vi.fn((options: unknown) => ({ options })),
+const { mockTextureConstructor, mockVideoSourceConstructor } = vi.hoisted(() => ({
+  mockTextureConstructor: vi.fn(),
+  mockVideoSourceConstructor: vi.fn(),
 }));
 
 vi.mock("pixi.js", () => {
@@ -20,14 +20,32 @@ vi.mock("pixi.js", () => {
   class MockGraphics {}
   class MockBlurFilter {}
 
+  class MockVideoSource {
+    options: unknown;
+    autoUpdate = false;
+    constructor(options: unknown) {
+      this.options = options;
+      mockVideoSourceConstructor(options);
+    }
+  }
+
+  class MockTexture {
+    source: unknown;
+    constructor(options: { source?: unknown } = {}) {
+      this.source = options.source;
+      mockTextureConstructor(options);
+    }
+    static from = vi.fn((input: unknown) => new MockTexture({ source: input }));
+  }
+
   return {
     Application: MockApplication,
     Container: MockContainer,
     Sprite: MockSprite,
     Graphics: MockGraphics,
     BlurFilter: MockBlurFilter,
-    Texture: { from: mockTextureFrom },
-    VideoSource: { from: mockVideoSourceFrom },
+    Texture: MockTexture,
+    VideoSource: MockVideoSource,
   };
 });
 
@@ -46,8 +64,8 @@ describe("frameRenderer video texture setup", () => {
   });
 
   beforeEach(() => {
-    mockTextureFrom.mockClear();
-    mockVideoSourceFrom.mockClear();
+    mockTextureConstructor.mockClear();
+    mockVideoSourceConstructor.mockClear();
   });
 
   it("creates VideoSource with autoplay disabled before source construction", () => {
@@ -78,12 +96,11 @@ describe("frameRenderer video texture setup", () => {
 
     renderer.createTextureFromVideoSource(videoElement);
 
-    expect(mockVideoSourceFrom).toHaveBeenCalledTimes(1);
-    expect(mockVideoSourceFrom).toHaveBeenCalledWith(
+    expect(mockVideoSourceConstructor).toHaveBeenCalledTimes(1);
+    expect(mockVideoSourceConstructor).toHaveBeenCalledWith(
       expect.objectContaining({
         resource: videoElement,
         autoPlay: false,
-        autoUpdate: true,
         autoLoad: true,
         muted: true,
       }),
@@ -91,6 +108,6 @@ describe("frameRenderer video texture setup", () => {
     expect(videoElement.defaultMuted).toBe(true);
     expect(videoElement.muted).toBe(true);
     expect(videoElement.volume).toBe(0);
-    expect(mockTextureFrom).toHaveBeenCalledTimes(1);
+    expect(mockTextureConstructor).toHaveBeenCalledTimes(1);
   });
 });
