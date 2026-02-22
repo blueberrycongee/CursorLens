@@ -335,17 +335,17 @@ export class FrameRenderer {
       });
     }
 
-    const source = VideoSource.from({
+    const source = new VideoSource({
       resource: videoSource,
       autoPlay: false,
-      autoUpdate: true,
       autoLoad: true,
       muted: true,
       playsinline: true,
       preload: false,
     });
+    source.autoUpdate = true;
 
-    return Texture.from(source);
+    return new Texture({ source });
   }
 
   async renderFrame(
