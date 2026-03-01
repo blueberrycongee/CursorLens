@@ -870,55 +870,66 @@ export function useScreenRecorder(options: UseScreenRecorderOptions = {}): UseSc
         }
 
         if (!nativeStart.success) {
-          nativeStartFailure = {
-            code: nativeStart.code,
-            message: nativeStart.message,
-            sourceId: sourceRef.id,
-          };
-          const userMessage = resolveNativeRecorderStartFailureMessage(nativeStartFailure);
-          console.error("Native ScreenCaptureKit recorder start failed.", {
-            code: nativeStart.code,
-            message: nativeStart.message,
-            sourceId: sourceRef.id,
-          });
-          throw new Error(userMessage);
-        }
-
-        const nativeWidth = Math.max(2, Math.round(nativeStart.width ?? 1920));
-        const nativeHeight = Math.max(2, Math.round(nativeStart.height ?? 1080));
-        const nativeFrameRate = Math.max(24, Math.min(MAX_CAPTURE_FPS, Math.round(nativeStart.frameRate ?? TARGET_CAPTURE_FPS)));
-
-        nativeRecordingMetadata.current = {
-          frameRate: nativeFrameRate,
-          width: nativeWidth,
-          height: nativeHeight,
-          mimeType: "video/mp4",
-          systemCursorMode,
-          hasMicrophoneAudio: nativeStart.hasMicrophoneAudio === true,
-        };
-        nativeRecordingActive.current = true;
-
-        try {
-          const trackingResult = await window.electronAPI.startCursorTracking({
-            source: sourceRef,
-            captureSize: { width: nativeWidth, height: nativeHeight },
-          });
-          cursorTrackingActive.current = Boolean(trackingResult?.success);
-          if (trackingResult?.warningMessage) {
-            console.warn("Cursor tracking warning:", trackingResult.warningCode, trackingResult.warningMessage);
-            toast.warning(trackingResult.warningMessage);
+          // For unsupported OS versions, fall back to WebRTC recorder instead of failing
+          if (nativeStart.code === "os_version_unsupported") {
+            console.warn(
+              "macOS version does not support ScreenCaptureKit, falling back to WebRTC recorder.",
+              nativeStart.message,
+            );
+            // Continue to WebRTC path below
+          } else {
+            nativeStartFailure = {
+              code: nativeStart.code,
+              message: nativeStart.message,
+              sourceId: sourceRef.id,
+            };
+            const userMessage = resolveNativeRecorderStartFailureMessage(nativeStartFailure);
+            console.error("Native ScreenCaptureKit recorder start failed.", {
+              code: nativeStart.code,
+              message: nativeStart.message,
+              sourceId: sourceRef.id,
+            });
+            throw new Error(userMessage);
           }
-        } catch (error) {
-          cursorTrackingActive.current = false;
-          console.warn("Failed to start cursor tracking for native recording.", error);
         }
 
-        startTime.current = Date.now();
-        setRecording(true);
-        setRecordingPhase("recording");
-        window.electronAPI?.setRecordingState(true);
-        transitionInFlight.current = false;
-        return;
+        if (nativeStart.success) {
+          const nativeWidth = Math.max(2, Math.round(nativeStart.width ?? 1920));
+          const nativeHeight = Math.max(2, Math.round(nativeStart.height ?? 1080));
+          const nativeFrameRate = Math.max(24, Math.min(MAX_CAPTURE_FPS, Math.round(nativeStart.frameRate ?? TARGET_CAPTURE_FPS)));
+
+          nativeRecordingMetadata.current = {
+            frameRate: nativeFrameRate,
+            width: nativeWidth,
+            height: nativeHeight,
+            mimeType: "video/mp4",
+            systemCursorMode,
+            hasMicrophoneAudio: nativeStart.hasMicrophoneAudio === true,
+          };
+          nativeRecordingActive.current = true;
+
+          try {
+            const trackingResult = await window.electronAPI.startCursorTracking({
+              source: sourceRef,
+              captureSize: { width: nativeWidth, height: nativeHeight },
+            });
+            cursorTrackingActive.current = Boolean(trackingResult?.success);
+            if (trackingResult?.warningMessage) {
+              console.warn("Cursor tracking warning:", trackingResult.warningCode, trackingResult.warningMessage);
+              toast.warning(trackingResult.warningMessage);
+            }
+          } catch (error) {
+            cursorTrackingActive.current = false;
+            console.warn("Failed to start cursor tracking for native recording.", error);
+          }
+
+          startTime.current = Date.now();
+          setRecording(true);
+          setRecordingPhase("recording");
+          window.electronAPI?.setRecordingState(true);
+          transitionInFlight.current = false;
+          return;
+        }
       }
 
       const desktopStream = await captureDesktopStream(selectedSource, cursorMode);
